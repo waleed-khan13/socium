@@ -635,7 +635,13 @@ test("offers simple prebuilt AI providers without a Socium account", async ({ pa
   const slackCard = page.getByText("Slack approval connector", { exact: true }).locator('xpath=ancestor::div[@data-slot="card"]');
   await expect(slackCard.getByRole("link", { name: "Get bot token" })).toHaveAttribute("href", "https://api.slack.com/apps");
   await expect(slackCard.getByRole("link", { name: "Get app token" })).toHaveAttribute("href", "https://api.slack.com/apps");
-  await expect(page.getByRole("link", { name: "Application password steps", exact: true })).toHaveAttribute("href", "https://developer.wordpress.org/rest-api/using-the-rest-api/authentication/");
+  const wordpressCard = page
+    .getByText("WordPress publisher", { exact: true })
+    .locator('xpath=ancestor::div[@data-slot="card"]');
+  await expect(wordpressCard.getByRole("link", { name: "WordPress Application Password guide", exact: true })).toHaveAttribute(
+    "href",
+    "https://developer.wordpress.org/rest-api/using-the-rest-api/authentication/",
+  );
   await expect(page.getByRole("link", { name: "Get Page token", exact: true })).toHaveAttribute("href", "https://developers.facebook.com/tools/explorer/");
   await expect(page.getByRole("link", { name: "Get permanent token", exact: true })).toHaveAttribute("href", "https://business.facebook.com/settings/system-users");
   await expect(page.getByRole("link", { name: "Get OAuth token", exact: true }).first()).toHaveAttribute("href", "https://www.linkedin.com/developers/tools/oauth/token-generator");

@@ -6,6 +6,12 @@ Socium is a downloadable, open-source, localhost-only application. It is not a h
 
 The first stable release is intentionally social-first. The default navigation contains content creation, the approval queue, media, scheduling, integrations, and activity. Milestones 3 and 4 remain available only through the opt-in Labs flag until their remaining acceptance work is complete. This is a scope boundary, not a deletion or rewrite.
 
+## v1.1 local-first consumer line
+
+The next release keeps the v1.0 publishing core and replaces documentation-led setup with a guided consumer workflow. Local AI is recommended, hosted AI remains optional, storage is operator-selectable, background work becomes resource-bounded, and updates move into the product. Dashboard, Telegram, and Slack are the only approval paths; WhatsApp is removed. Lead intelligence and Local SEO remain Labs-only.
+
+The implementation order, fixed boundaries, storage and recovery rules, and release acceptance are defined in [V1_1_RELEASE.md](V1_1_RELEASE.md). Phase 0 evidence is recorded in [V1_1_BASELINE.md](V1_1_BASELINE.md).
+
 ## Milestone 0 — working product shell
 
 - [x] Responsive localhost dashboard with custom shadcn-based UI.

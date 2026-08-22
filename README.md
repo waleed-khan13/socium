@@ -6,7 +6,7 @@ Socium is an open-source, localhost-only control plane for AI-assisted social pu
 
 The default v1.0 product surface focuses on one complete workflow: connect an AI model, create channel-aware drafts, obtain human approval, and publish or schedule the exact approved revision. Lead intelligence and Local SEO remain in the repository as opt-in previews so they can mature through later updates without weakening the first stable release. Set `SOCIUM_ENABLE_LABS=1` before launch to show those preview workspaces.
 
-See [docs/V1_RELEASE.md](docs/V1_RELEASE.md) for the release contract and [docs/RELEASING.md](docs/RELEASING.md) for the maintainer dry-run, tagging, and publication procedure.
+See [docs/V1_RELEASE.md](docs/V1_RELEASE.md) for the current stable contract, [docs/V1_1_RELEASE.md](docs/V1_1_RELEASE.md) for the local-first consumer plan, and [docs/RELEASING.md](docs/RELEASING.md) for the maintainer dry-run, tagging, and publication procedure.
 
 ## What works today
 
@@ -253,6 +253,8 @@ pnpm check
 - `backend/tests` — local API, connector-vault redaction, crawler safety, lead discovery, approval, scheduling, and publishing tests.
 - `docs/PRODUCT.md` — product boundaries, features, and core concepts.
 - `docs/ARCHITECTURE.md` — localhost runtime and adapter contracts.
+- `docs/V1_1_RELEASE.md` — frozen v1.1 scope, delivery order, and release acceptance.
+- `docs/V1_1_BASELINE.md` — Phase 0 branch point, toolchain, and baseline verification evidence.
 - `docs/ROADMAP.md` — milestones and acceptance criteria.
 - `docs/CREDENTIALS.md` — exact official credential portals, connector requirements, and token-safety steps.
 - `docs/COMPLIANCE.md` — discovery, publishing, outreach, and retention guardrails.
