@@ -259,6 +259,23 @@ class SchedulerUpdate(ApiModel):
     paused: bool
 
 
+class JobRecoveryRequest(ApiModel):
+    decision: Literal["run_now", "reschedule", "skip"]
+    run_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_recovery_time(self) -> Self:
+        if self.decision == "reschedule" and self.run_at is None:
+            raise ValueError("runAt is required when rescheduling.")
+        if self.decision != "reschedule" and self.run_at is not None:
+            raise ValueError("runAt is only accepted when rescheduling.")
+        if self.run_at is not None:
+            if self.run_at.tzinfo is None or self.run_at.utcoffset() is None:
+                raise ValueError("runAt must include a timezone offset.")
+            self.run_at = self.run_at.astimezone(UTC)
+        return self
+
+
 class MediaAssetUpdate(ApiModel):
     alt_text: str = Field(default="", max_length=500)
     public_source_url: str | None = Field(default=None, max_length=2_048)

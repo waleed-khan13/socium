@@ -11,6 +11,19 @@ from pathlib import Path
 import pytest
 
 
+def _confirm_missed_publish(client, job_id: str) -> dict:
+    state = client.get("/api/state").json()
+    missed = next(item for item in state["jobs"] if item["id"] == job_id)
+    assert missed["status"] == "missed"
+    assert missed["recoveryRequiredAt"]
+    assert state["scheduler"]["recoveryPending"] >= 1
+    recovered = client.post(f"/api/jobs/{job_id}/recover", json={"decision": "run_now"})
+    assert recovered.status_code == 200
+    assert recovered.json()["job"]["status"] == "queued"
+    assert recovered.json()["job"]["recoveryRequiredAt"] is None
+    return recovered.json()["state"]
+
+
 def test_health_state_and_encrypted_settings(client) -> None:
     health = client.get("/api/health")
     assert health.status_code == 200
@@ -1025,9 +1038,9 @@ def test_durable_scheduler_is_idempotent_and_publishes_after_resume(client, monk
 
     resumed = client.put("/api/scheduler", json={"paused": False})
     assert resumed.status_code == 200
+    final_state = _confirm_missed_publish(client, scheduled.json()["job"]["id"])
 
     deadline = time.monotonic() + 3
-    final_state = resumed.json()["state"]
     while time.monotonic() < deadline:
         final_state = client.get("/api/state").json()
         final_post = next(post for post in final_state["posts"] if post["id"] == due["id"])
@@ -1478,6 +1491,7 @@ def test_wordpress_connector_publishes_exact_approved_blog_revision(client, monk
     )
     assert scheduled.status_code == 200
     client.put("/api/scheduler", json={"paused": False})
+    _confirm_missed_publish(client, scheduled.json()["job"]["id"])
 
     deadline = time.monotonic() + 3
     scheduled_state = client.get("/api/state").json()
@@ -1673,6 +1687,7 @@ def test_meta_connector_publishes_exact_approved_facebook_revision(client, monke
     )
     assert scheduled.status_code == 200
     client.put("/api/scheduler", json={"paused": False})
+    _confirm_missed_publish(client, scheduled.json()["job"]["id"])
 
     deadline = time.monotonic() + 3
     scheduled_state = client.get("/api/state").json()
@@ -1928,6 +1943,7 @@ def test_instagram_connector_publishes_exact_approved_image_revision(client, mon
     )
     assert scheduled.status_code == 200
     client.put("/api/scheduler", json={"paused": False})
+    _confirm_missed_publish(client, scheduled.json()["job"]["id"])
 
     deadline = time.monotonic() + 3
     scheduled_state = client.get("/api/state").json()
@@ -2229,6 +2245,7 @@ def test_linkedin_connector_publishes_exact_approved_member_revision(client, mon
     )
     assert scheduled.status_code == 200
     client.put("/api/scheduler", json={"paused": False})
+    _confirm_missed_publish(client, scheduled.json()["job"]["id"])
 
     deadline = time.monotonic() + 3
     scheduled_state = client.get("/api/state").json()
@@ -2505,6 +2522,7 @@ def test_linkedin_company_connector_publishes_exact_approved_page_revision(clien
     )
     assert scheduled.status_code == 200
     client.put("/api/scheduler", json={"paused": False})
+    _confirm_missed_publish(client, scheduled.json()["job"]["id"])
 
     deadline = time.monotonic() + 3
     scheduled_state = client.get("/api/state").json()

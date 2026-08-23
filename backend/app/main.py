@@ -75,6 +75,7 @@ from app.schemas import (
     IcpProfileUpdate,
     ImageGenerateRequest,
     ImageProviderUpdate,
+    JobRecoveryRequest,
     LeadComplianceUpdate,
     LeadDeleteRequest,
     LeadImportRequest,
@@ -156,6 +157,7 @@ from app.store import (
     public_state,
     record_approval_sent,
     record_provider_verified,
+    recover_missed_job,
     reserve_publish,
     retry_job,
     schedule_post,
@@ -178,6 +180,9 @@ local_scheduler = LocalScheduler(
     settings.scheduler_interval,
     settings.scheduler_catch_up_hours,
     settings.scheduler_stale_minutes,
+    lease_seconds=settings.scheduler_lease_seconds,
+    worker_timeout_seconds=settings.scheduler_worker_timeout_seconds,
+    crash_limit=settings.scheduler_crash_limit,
 )
 
 
@@ -696,6 +701,7 @@ async def generate_post(payload: GeneratePostRequest) -> dict[str, Any]:
                     approval["id"],
                 )
                 record_approval_sent(approval["id"], message_id)
+                telegram_poller.wake()
             except AppError as error:
                 fail_approval_delivery(approval["id"], error.message)
                 raise
@@ -709,6 +715,7 @@ async def generate_post(payload: GeneratePostRequest) -> dict[str, Any]:
             try:
                 delivery = await send_saved_slack_approval(post, approval["id"])
                 record_approval_sent(approval["id"], delivery["messageTs"])
+                slack_listener.wake()
             except AppError as error:
                 fail_approval_delivery(approval["id"], error.message)
                 raise
@@ -729,18 +736,24 @@ async def generate_post(payload: GeneratePostRequest) -> dict[str, Any]:
 @app.patch("/api/posts/{post_id}")
 def update_post(post_id: str, payload: EditPostRequest) -> dict[str, Any]:
     edit_post(post_id, payload)
+    telegram_poller.wake()
+    slack_listener.wake()
     return {"ok": True, "state": state_response()}
 
 
 @app.post("/api/posts/{post_id}/decision")
 def post_decision(post_id: str, payload: DecisionRequest) -> dict[str, Any]:
     decide_post(post_id, payload.revision, payload.decision)
+    telegram_poller.wake()
+    slack_listener.wake()
     return {"ok": True, "state": state_response()}
 
 
 @app.post("/api/posts/{post_id}/regenerate")
 async def regenerate_post(post_id: str, payload: RevisionRequest) -> dict[str, Any]:
     post = await regenerate_post_revision(post_id, payload.revision)
+    telegram_poller.wake()
+    slack_listener.wake()
     return {
         "ok": True,
         "post": post,
@@ -762,6 +775,7 @@ async def request_slack_approval(post_id: str, payload: ApprovalRequest) -> dict
     try:
         delivery = await send_saved_slack_approval(post, approval["id"])
         record_approval_sent(approval["id"], delivery["messageTs"])
+        slack_listener.wake()
     except AppError as error:
         fail_approval_delivery(approval["id"], error.message)
         raise
@@ -816,6 +830,18 @@ async def job_retry(job_id: str) -> dict[str, Any]:
     job = retry_job(job_id)
     local_scheduler.wake()
     return {"ok": True, "job": job, "state": state_response()}
+
+
+@app.post("/api/jobs/{job_id}/recover")
+async def job_recover(job_id: str, payload: JobRecoveryRequest) -> dict[str, Any]:
+    job = recover_missed_job(job_id, payload)
+    local_scheduler.wake()
+    messages = {
+        "run_now": "Missed publish confirmed to run now.",
+        "reschedule": "Missed publish rescheduled.",
+        "skip": "Missed publish skipped; nothing was sent.",
+    }
+    return {"ok": True, "job": job, "message": messages[payload.decision], "state": state_response()}
 
 
 @app.put("/api/scheduler")

@@ -87,12 +87,15 @@ const mockServer = createServer(async (request, response) => {
       const linkedinDraft = generationPrompt.includes("Channel: linkedin\n");
       const linkedinOrganizationDraft = generationPrompt.includes("Channel: linkedin-company");
       const skipDraft = generationPrompt.includes("Topic: Phase eight skip");
+      const recoveryDraft = generationPrompt.includes("Topic: Phase nine recovery");
       sendJson(response, 200, {
         choices: [
           {
             message: {
               content: JSON.stringify({
-                title: skipDraft
+                title: recoveryDraft
+                  ? "A restart-safe scheduled draft"
+                  : skipDraft
                   ? "A skippable X review draft"
                   : linkedinOrganizationDraft
                   ? "A reviewed LinkedIn Company Page update"
@@ -103,7 +106,9 @@ const mockServer = createServer(async (request, response) => {
                   : facebookDraft
                     ? "A useful Facebook Page update"
                     : "A practical local growth checklist",
-                body: skipDraft
+                body: recoveryDraft
+                  ? "This approved revision must wait for an explicit recovery decision if its local deadline is missed."
+                  : skipDraft
                   ? "This revision exists only to verify an explicit non-publication decision."
                   : linkedinOrganizationDraft
                   ? "Share one useful company lesson, make the customer value clear, and publish only the exact reviewed Page update."
@@ -114,7 +119,9 @@ const mockServer = createServer(async (request, response) => {
                   : facebookDraft
                   ? "Share one useful local insight, invite a relevant response, and keep the final post human-reviewed."
                   : "Start with one clear customer problem, publish a useful answer, and review the result before the next post.",
-                hashtags: skipDraft
+                hashtags: recoveryDraft
+                  ? ["#Socium", "#RestartSafe"]
+                  : skipDraft
                   ? ["#Socium", "#SkipReview"]
                   : linkedinOrganizationDraft
                   ? ["#CompanyGrowth", "#HumanReviewed"]
@@ -129,7 +136,9 @@ const mockServer = createServer(async (request, response) => {
                 imagePrompt: "A dark editorial small-business workspace with amber and emerald lighting, authentic tools, clear composition, no embedded text",
                 imageNegativePrompt: "watermark, distorted logo, unreadable text, duplicate objects",
                 imageAltText: "Small-business workspace arranged for a practical marketing workflow review",
-                rationale: skipDraft
+                rationale: recoveryDraft
+                  ? "A missed local deadline proves that Socium asks before catch-up publication."
+                  : skipDraft
                   ? "A disposable draft proves that Skip is distinct from approval and publication."
                   : linkedinOrganizationDraft
                   ? "A concise Page post exercises permission-verified LinkedIn organization publishing."

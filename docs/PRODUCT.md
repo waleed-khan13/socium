@@ -101,7 +101,9 @@ It borrows the useful control-plane ideas from agent-management products—goals
 ### Operations and governance
 
 - Visual workflow recipes and local event/schedule/connector triggers.
-- Queue health, retries, dead-letter runs, idempotency keys, and rate limits.
+- Event-driven queue health with one local worker, durable leases, bounded timeouts/retries, crash-loop protection, and no idle rapid polling.
+- Explicit Run now, Reschedule, or Skip recovery for overdue publication; missed work never auto-publishes after restart.
+- Dead-letter runs, idempotency keys, and rate limits.
 - Per-workspace/provider/agent budgets and stop switches.
 - Encrypted local secret vault, scoped connector permissions, and audit export.
 - Local multi-workspace agency view with strict data isolation.

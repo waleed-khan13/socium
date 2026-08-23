@@ -57,6 +57,7 @@ const jobStatusStyles: Record<LocalJobStatus, string> = {
   failed: "border-red-500/25 bg-red-500/8 text-red-300",
   cancelled: "border-zinc-800 bg-zinc-950 text-zinc-500",
   missed: "border-orange-500/25 bg-orange-500/8 text-orange-300",
+  skipped: "border-zinc-800 bg-zinc-950 text-zinc-500",
 };
 
 const checkStatusStyles = {

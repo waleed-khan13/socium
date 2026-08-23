@@ -201,7 +201,7 @@ const pageMeta: Record<ViewId, { eyebrow: string; title: string; description: st
   scheduler: {
     eyebrow: "Durable local jobs",
     title: "Scheduler",
-    description: "Restart-safe publishing with pause, catch-up, and duplicate protection.",
+    description: "Restart-safe publishing with explicit missed-work recovery and duplicate protection.",
   },
   integrations: {
     eyebrow: "Bring your own stack",
@@ -253,6 +253,7 @@ const jobStatusStyles: Record<LocalJobStatus, string> = {
   failed: "border-red-500/25 bg-red-500/8 text-red-300",
   cancelled: "border-zinc-800 bg-zinc-950 text-zinc-500",
   missed: "border-orange-500/25 bg-orange-500/8 text-orange-300",
+  skipped: "border-zinc-800 bg-zinc-950 text-zinc-500",
 };
 
 function formatDate(value: string) {
@@ -609,6 +610,10 @@ export function GrowthConsole() {
   } | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<GeneratedPost | null>(null);
   const [scheduleAt, setScheduleAt] = useState(defaultScheduleAt);
+  const [selectedRecoveryJobId, setSelectedRecoveryJobId] = useState<string | null>(null);
+  const [dismissedRecoveryIds, setDismissedRecoveryIds] = useState<string[]>([]);
+  const [recoveryMode, setRecoveryMode] = useState<"choice" | "reschedule">("choice");
+  const [recoveryAt, setRecoveryAt] = useState(defaultScheduleAt);
   const [providerVerified, setProviderVerified] = useState(false);
   const [telegramVerified, setTelegramVerified] = useState(false);
   const [providerModels, setProviderModels] = useState<string[]>([]);
@@ -886,6 +891,15 @@ export function GrowthConsole() {
     }, 5_000);
     return () => window.clearInterval(interval);
   }, [acceptAppState, appState?.telegram.pollingEnabled, schedulerShouldRefresh, slackShouldRefresh]);
+
+  const recoveryJob = useMemo(() => {
+    const jobs = appState?.jobs.filter(
+      (job) => job.status === "missed" && Boolean(job.recoveryRequiredAt),
+    ) ?? [];
+    return jobs.find((job) => job.id === selectedRecoveryJobId)
+      ?? jobs.find((job) => !dismissedRecoveryIds.includes(job.id))
+      ?? null;
+  }, [appState?.jobs, dismissedRecoveryIds, selectedRecoveryJobId]);
 
   const counts = useMemo(() => {
     const posts = appState?.posts ?? [];
@@ -1305,6 +1319,62 @@ export function GrowthConsole() {
       toast.success("Scheduled publish requeued", { description: "Review possible prior delivery before retrying." });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not retry this job.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function openRecovery(job: LocalJob, mode: "choice" | "reschedule" = "choice") {
+    setDismissedRecoveryIds((current) => current.filter((id) => id !== job.id));
+    setSelectedRecoveryJobId(job.id);
+    setRecoveryMode(mode);
+    setRecoveryAt(defaultScheduleAt());
+  }
+
+  function dismissRecovery() {
+    if (recoveryJob) {
+      setDismissedRecoveryIds((current) => (
+        current.includes(recoveryJob.id) ? current : [...current, recoveryJob.id]
+      ));
+    }
+    setSelectedRecoveryJobId(null);
+    setRecoveryMode("choice");
+  }
+
+  async function recoverScheduledJob(
+    job: LocalJob,
+    decision: "run_now" | "reschedule" | "skip",
+  ) {
+    let runAt: string | undefined;
+    if (decision === "reschedule") {
+      const selected = new Date(recoveryAt);
+      if (Number.isNaN(selected.getTime()) || selected.getTime() <= Date.now()) {
+        toast.error("Choose a future publish time.");
+        return;
+      }
+      runAt = selected.toISOString();
+    }
+    setBusy(`recover-job-${job.id}-${decision}`);
+    try {
+      const response = await requestJson<StateResponse & { message: string }>(
+        `/api/jobs/${job.id}/recover`,
+        {
+          method: "POST",
+          body: JSON.stringify({ decision, ...(runAt ? { runAt } : {}) }),
+        },
+      );
+      acceptAppState(response.state);
+      setSelectedRecoveryJobId(null);
+      setRecoveryMode("choice");
+      toast.success(response.message, {
+        description: decision === "run_now"
+          ? "The single local worker will start it safely."
+          : decision === "skip"
+            ? "The approved draft remains available; no publisher was called."
+            : formatDate(runAt ?? ""),
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not recover this scheduled job.");
     } finally {
       setBusy(null);
     }
@@ -2275,21 +2345,35 @@ export function GrowthConsole() {
                     <div><CardTitle>Local job worker</CardTitle><CardDescription>SQLite-backed queue that survives app and computer restarts.</CardDescription></div>
                   </div>
                   <CardAction>
-                    <Badge className={cn(appState.scheduler.paused ? "border-amber-500/25 bg-amber-500/8 text-amber-300" : "border-emerald-500/25 bg-emerald-500/8 text-emerald-300")} variant="outline">
-                      {appState.scheduler.paused ? "Paused" : appState.scheduler.active ? "Running" : "Enabled"}
+                    <Badge className={cn(
+                      appState.scheduler.resourceMode === "needs_attention"
+                        ? "border-red-500/25 bg-red-500/8 text-red-300"
+                        : appState.scheduler.paused
+                          ? "border-amber-500/25 bg-amber-500/8 text-amber-300"
+                          : "border-emerald-500/25 bg-emerald-500/8 text-emerald-300",
+                    )} variant="outline">
+                      {appState.scheduler.resourceMode.replace("_", " ")}
                     </Badge>
                   </CardAction>
                 </CardHeader>
-                <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="grid gap-1 text-xs text-zinc-500">
-                    <p>Overdue jobs run automatically inside a {appState.scheduler.catchUpHours}-hour catch-up window.</p>
-                    <p>Revision keys prevent duplicate local jobs. Ambiguous remote failures require an explicit retry.</p>
-                    {appState.scheduler.lastError ? <p className="text-red-400">{appState.scheduler.lastError}</p> : null}
+                <CardContent className="space-y-4">
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <div className="rounded-md border border-zinc-900 bg-black p-3"><p className="text-[10px] uppercase tracking-[0.14em] text-zinc-700">Worker use</p><p className="mt-2 font-mono text-sm text-zinc-200">{appState.scheduler.workersActive} / {appState.scheduler.workerLimit}</p></div>
+                    <div className="rounded-md border border-zinc-900 bg-black p-3"><p className="text-[10px] uppercase tracking-[0.14em] text-zinc-700">Recovery</p><p className={cn("mt-2 font-mono text-sm", appState.scheduler.recoveryPending ? "text-orange-300" : "text-zinc-200")}>{appState.scheduler.recoveryPending} waiting</p></div>
+                    <div className="rounded-md border border-zinc-900 bg-black p-3"><p className="text-[10px] uppercase tracking-[0.14em] text-zinc-700">Next wake</p><p className="mt-2 truncate text-xs text-zinc-300">{appState.scheduler.nextWakeAt ? formatDate(appState.scheduler.nextWakeAt) : "Event only"}</p></div>
+                    <div className="rounded-md border border-zinc-900 bg-black p-3"><p className="text-[10px] uppercase tracking-[0.14em] text-zinc-700">Idle since</p><p className="mt-2 truncate text-xs text-zinc-300">{appState.scheduler.idleSince ? formatCompactDate(appState.scheduler.idleSince) : "Working"}</p></div>
                   </div>
-                  <Button disabled={busy === "scheduler-state"} onClick={() => void configureScheduler(!appState.scheduler.paused)} variant={appState.scheduler.paused ? "default" : "outline"}>
-                    {busy === "scheduler-state" ? <Loader2 className="animate-spin" /> : appState.scheduler.paused ? <Play /> : <Pause />}
-                    {appState.scheduler.paused ? "Resume worker" : "Pause worker"}
-                  </Button>
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="grid gap-1 text-xs text-zinc-500">
+                      <p>Idle mode waits for the exact next deadline or a local event; no rapid scheduler polling runs.</p>
+                      <p>Only one bounded worker runs at a time. Overdue publishes always require Run now, Reschedule, or Skip.</p>
+                      {appState.scheduler.lastError ? <p className="text-red-400">{appState.scheduler.lastError}</p> : null}
+                    </div>
+                    <Button disabled={busy === "scheduler-state"} onClick={() => void configureScheduler(!appState.scheduler.paused)} variant={appState.scheduler.paused ? "default" : "outline"}>
+                      {busy === "scheduler-state" ? <Loader2 className="animate-spin" /> : appState.scheduler.paused ? <Play /> : <Pause />}
+                      {appState.scheduler.paused ? "Resume worker" : "Pause worker"}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
 
@@ -2318,10 +2402,11 @@ export function GrowthConsole() {
                             <div><p className="text-zinc-600">Run time</p><p className="mt-1 text-zinc-300">{formatDate(job.runAt)}</p><p className="mt-1 text-[10px] text-zinc-600">{formatCompactDate(job.runAt)}</p></div>
                             <div><p className="text-zinc-600">Attempts</p><p className="mt-1 font-mono text-zinc-300">{job.attempts} / {job.maxAttempts}</p></div>
                           </div>
-                          {job.lastError ? <div className="flex gap-2 rounded-md border border-red-500/20 bg-red-500/5 p-3 text-xs leading-5 text-red-300"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />{job.lastError}</div> : null}
+                          {job.lastError ? <div className={cn("flex gap-2 rounded-md p-3 text-xs leading-5", job.status === "missed" ? "border border-orange-500/20 bg-orange-500/5 text-orange-200" : "border border-red-500/20 bg-red-500/5 text-red-300")}><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />{job.lastError}</div> : null}
                           <div className="flex flex-wrap justify-end gap-2">
                             {["queued", "retrying"].includes(job.status) ? <Button disabled={busy === `cancel-job-${job.id}`} onClick={() => void cancelScheduledJob(job)} size="sm" variant="outline">{busy === `cancel-job-${job.id}` ? <Loader2 className="animate-spin" /> : <X />} Cancel</Button> : null}
-                            {["failed", "missed"].includes(job.status) ? <Button disabled={busy === `retry-job-${job.id}`} onClick={() => void retryScheduledJob(job)} size="sm">{busy === `retry-job-${job.id}` ? <Loader2 className="animate-spin" /> : <RefreshCw />} Retry after review</Button> : null}
+                            {job.status === "failed" ? <Button disabled={busy === `retry-job-${job.id}`} onClick={() => void retryScheduledJob(job)} size="sm">{busy === `retry-job-${job.id}` ? <Loader2 className="animate-spin" /> : <RefreshCw />} Retry after review</Button> : null}
+                            {job.status === "missed" ? <Button onClick={() => openRecovery(job)} size="sm"><AlertTriangle /> Review missed publish</Button> : null}
                           </div>
                         </CardContent>
                       </Card>
@@ -2901,11 +2986,51 @@ export function GrowthConsole() {
             <Field htmlFor="schedule-at" label="Publish time" hint="Your computer's local timezone">
               <Input id="schedule-at" onChange={(event) => setScheduleAt(event.target.value)} required type="datetime-local" value={scheduleAt} />
             </Field>
-            <div className="flex gap-2 rounded-md border border-sky-500/20 bg-sky-500/5 p-3 text-xs leading-5 text-sky-200"><ShieldCheck className="mt-0.5 size-4 shrink-0" />If the app was closed, an overdue job catches up after restart within the configured safety window.</div>
+            <div className="flex gap-2 rounded-md border border-sky-500/20 bg-sky-500/5 p-3 text-xs leading-5 text-sky-200"><ShieldCheck className="mt-0.5 size-4 shrink-0" />If Socium is closed or paused at this time, nothing is posted automatically. You will choose Run now, Reschedule, or Skip after restart.</div>
           </form>
           <DialogFooter className="border-zinc-800 bg-[#090909]">
             <Button onClick={() => setScheduleTarget(null)} type="button" variant="ghost">Cancel</Button>
             <Button disabled={Boolean(scheduleTarget && busy === `schedule-${scheduleTarget.id}`)} form="schedule-draft-form" type="submit">{scheduleTarget && busy === `schedule-${scheduleTarget.id}` ? <Loader2 className="animate-spin" /> : <Clock3 />} Schedule locally</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog onOpenChange={(open) => !open && dismissRecovery()} open={Boolean(recoveryJob)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Missed scheduled publish</DialogTitle>
+            <DialogDescription>Socium did not silently catch up. Review this exact approved revision before anything is sent.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-md border border-orange-500/20 bg-orange-500/5 p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0 text-orange-300" />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-zinc-100">{recoveryJob ? appState?.posts.find((post) => post.id === recoveryJob.payload.post_id)?.title ?? "Approved draft" : "Approved draft"}</p>
+                  <p className="mt-1 font-mono text-[10px] text-zinc-600">revision {recoveryJob?.payload.revision} · scheduled {recoveryJob ? formatDate(recoveryJob.runAt) : ""}</p>
+                  <p className="mt-3 text-xs leading-5 text-orange-100/80">{recoveryJob?.recoveryReason ?? "The scheduled time passed while the local worker was unavailable."}</p>
+                </div>
+              </div>
+            </div>
+            {recoveryMode === "reschedule" ? (
+              <Field htmlFor="recovery-at" label="New publish time" hint="Choose a future time in your local timezone">
+                <Input id="recovery-at" onChange={(event) => setRecoveryAt(event.target.value)} required type="datetime-local" value={recoveryAt} />
+              </Field>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-3">
+                <Button disabled={Boolean(recoveryJob && busy?.startsWith(`recover-job-${recoveryJob.id}`))} onClick={() => recoveryJob && void recoverScheduledJob(recoveryJob, "run_now")} type="button"><Play /> Run now</Button>
+                <Button disabled={Boolean(recoveryJob && busy?.startsWith(`recover-job-${recoveryJob.id}`))} onClick={() => setRecoveryMode("reschedule")} type="button" variant="outline"><Clock3 /> Reschedule</Button>
+                <Button disabled={Boolean(recoveryJob && busy?.startsWith(`recover-job-${recoveryJob.id}`))} onClick={() => recoveryJob && void recoverScheduledJob(recoveryJob, "skip")} type="button" variant="ghost"><X /> Skip</Button>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="border-zinc-800 bg-[#090909]">
+            {recoveryMode === "reschedule" ? (
+              <>
+                <Button onClick={() => setRecoveryMode("choice")} type="button" variant="ghost">Back</Button>
+                <Button disabled={Boolean(recoveryJob && busy === `recover-job-${recoveryJob.id}-reschedule`)} onClick={() => recoveryJob && void recoverScheduledJob(recoveryJob, "reschedule")} type="button">{recoveryJob && busy === `recover-job-${recoveryJob.id}-reschedule` ? <Loader2 className="animate-spin" /> : <Clock3 />} Confirm new time</Button>
+              </>
+            ) : <Button onClick={dismissRecovery} type="button" variant="ghost">Decide later</Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -22,6 +22,9 @@ class Settings:
     scheduler_interval: float
     scheduler_catch_up_hours: int
     scheduler_stale_minutes: int
+    scheduler_lease_seconds: int
+    scheduler_worker_timeout_seconds: int
+    scheduler_crash_limit: int
     slack_socket_enabled: bool
     labs_enabled: bool
 
@@ -60,6 +63,15 @@ def get_settings() -> Settings:
     scheduler_interval = max(0.1, min(float(os.getenv("SOCIUM_SCHEDULER_INTERVAL", "1")), 10))
     scheduler_catch_up_hours = max(1, min(int(os.getenv("SOCIUM_SCHEDULER_CATCH_UP_HOURS", "24")), 168))
     scheduler_stale_minutes = max(1, min(int(os.getenv("SOCIUM_SCHEDULER_STALE_MINUTES", "10")), 60))
+    scheduler_worker_timeout_seconds = max(
+        5,
+        min(int(os.getenv("SOCIUM_WORKER_TIMEOUT_SECONDS", "300")), 3_600),
+    )
+    scheduler_lease_seconds = max(
+        scheduler_worker_timeout_seconds + 30,
+        min(int(os.getenv("SOCIUM_WORKER_LEASE_SECONDS", "360")), 7_200),
+    )
+    scheduler_crash_limit = max(1, min(int(os.getenv("SOCIUM_SUPERVISOR_CRASH_LIMIT", "3")), 10))
     slack_socket_enabled = os.getenv("SOCIUM_SLACK_SOCKET_MODE", "1").strip().lower() not in {
         "0",
         "false",
@@ -87,6 +99,9 @@ def get_settings() -> Settings:
         scheduler_interval=scheduler_interval,
         scheduler_catch_up_hours=scheduler_catch_up_hours,
         scheduler_stale_minutes=scheduler_stale_minutes,
+        scheduler_lease_seconds=scheduler_lease_seconds,
+        scheduler_worker_timeout_seconds=scheduler_worker_timeout_seconds,
+        scheduler_crash_limit=scheduler_crash_limit,
         slack_socket_enabled=slack_socket_enabled,
         labs_enabled=labs_enabled,
     )

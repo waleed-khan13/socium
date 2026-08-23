@@ -63,6 +63,9 @@ def _job_dict(job: LocalJob) -> dict[str, Any]:
         "attempts": job.attempts,
         "maxAttempts": job.max_attempts,
         "lockedAt": job.locked_at,
+        "leaseExpiresAt": job.lease_expires_at,
+        "recoveryRequiredAt": job.recovery_required_at,
+        "recoveryReason": job.recovery_reason,
         "completedAt": job.completed_at,
         "lastError": job.last_error,
         "createdAt": job.created_at,
@@ -239,6 +242,10 @@ def retry_seo_job(job_id: str) -> dict[str, Any]:
         job.run_at = now
         job.attempts = 0
         job.locked_at = None
+        job.lease_token = None
+        job.lease_expires_at = None
+        job.recovery_required_at = None
+        job.recovery_reason = None
         job.completed_at = None
         job.last_error = None
         job.updated_at = now

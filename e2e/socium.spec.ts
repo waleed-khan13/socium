@@ -609,6 +609,67 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
     publishedAt: null,
   });
 
+  await navigate(page, "Create content", "Create a draft");
+  await page.getByLabel("Topic or source brief").fill("Phase nine recovery: ask before a missed publish.");
+  await page.getByLabel("Channel").click();
+  await page.getByRole("option", { name: "Blog" }).click();
+  const recoveryGenerateResponse = page.waitForResponse(
+    (response) => response.url().endsWith("/api/posts/generate") && response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Generate review draft" }).click();
+  await expect((await recoveryGenerateResponse).status()).toBe(200);
+  await page.getByRole("button", { name: /^all / }).click();
+  const recoveryTitle = "A restart-safe scheduled draft";
+  const recoveryCard = page
+    .getByRole("heading", { level: 2, name: recoveryTitle })
+    .locator('xpath=ancestor::div[@data-slot="card"]');
+  await recoveryCard.getByRole("button", { name: "Approve" }).click();
+  await expect(recoveryCard.getByText("approved", { exact: true })).toBeVisible();
+
+  const beforeRecovery = (await (await page.request.get("/api/state")).json()) as PublicAppState;
+  const recoveryPost = beforeRecovery.posts.find((post) => post.title === recoveryTitle);
+  expect(recoveryPost).toBeTruthy();
+  expect((await page.request.put("/api/scheduler", { data: { paused: true } })).ok()).toBeTruthy();
+  const scheduledRecovery = await page.request.post(`/api/posts/${recoveryPost?.id}/schedule`, {
+    data: {
+      revision: recoveryPost?.revision,
+      runAt: new Date(Date.now() - 2_000).toISOString(),
+    },
+  });
+  expect(scheduledRecovery.ok()).toBeTruthy();
+  const scheduledJob = (await scheduledRecovery.json()).job as { id: string };
+  expect((await page.request.put("/api/scheduler", { data: { paused: false } })).ok()).toBeTruthy();
+
+  await page.reload();
+  const recoveryDialog = page.getByRole("dialog", { name: "Missed scheduled publish" });
+  await expect(recoveryDialog).toBeVisible();
+  await expect(recoveryDialog.getByText(recoveryTitle, { exact: true })).toBeVisible();
+  await expect(recoveryDialog.getByRole("button", { name: "Run now" })).toBeVisible();
+  await expect(recoveryDialog.getByRole("button", { name: "Reschedule" })).toBeVisible();
+  await expect(recoveryDialog.getByRole("button", { name: "Skip" })).toBeVisible();
+  await expectNoAccessibilityViolations(page, testInfo, "missed-publish-recovery");
+  await recoveryDialog.getByRole("button", { name: "Reschedule" }).click();
+  const newRecoveryTime = new Date(Date.now() + 60 * 60 * 1_000);
+  const localRecoveryTime = new Date(newRecoveryTime.getTime() - newRecoveryTime.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 16);
+  await recoveryDialog.getByLabel("New publish time").fill(localRecoveryTime);
+  await recoveryDialog.getByRole("button", { name: "Confirm new time" }).click();
+  await expect(recoveryDialog).toHaveCount(0);
+  const recoveredState = (await (await page.request.get("/api/state")).json()) as PublicAppState;
+  expect(recoveredState.scheduler.recoveryPending).toBe(0);
+  expect(recoveredState.scheduler.workerLimit).toBe(1);
+  expect(recoveredState.jobs.find((job) => job.id === scheduledJob.id)).toMatchObject({
+    status: "queued",
+    recoveryRequiredAt: null,
+  });
+  expect((await page.request.post(`/api/jobs/${scheduledJob.id}/cancel`)).ok()).toBeTruthy();
+
+  await navigate(page, "Scheduler", "Scheduler");
+  await expect(page.getByText("Worker use", { exact: true })).toBeVisible();
+  await expect(page.getByText("0 / 1", { exact: true })).toBeVisible();
+  await expect(page.getByText(/no rapid scheduler polling runs/i)).toBeVisible();
+
 });
 
 test("offers simple prebuilt AI providers without a Socium account", async ({ page }) => {

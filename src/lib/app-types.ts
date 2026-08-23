@@ -10,7 +10,7 @@ export type ProviderKind =
 export type ImageProviderKind = "openai-images" | "automatic1111" | "comfyui";
 export type ContentChannel = "linkedin" | "linkedin-company" | "instagram" | "facebook" | "x" | "telegram" | "blog";
 export type PostStatus = "pending" | "approved" | "skipped" | "rejected" | "publishing" | "published" | "failed";
-export type LocalJobStatus = "queued" | "retrying" | "running" | "completed" | "failed" | "cancelled" | "missed";
+export type LocalJobStatus = "queued" | "retrying" | "running" | "completed" | "failed" | "cancelled" | "missed" | "skipped";
 export type ConnectorCapability = "approval" | "notification" | "publish" | "leads" | "analytics" | "cms";
 export type ConnectorAvailability = "available" | "planned" | "access-gated" | "notification-only" | "built-in";
 export type LeadSource = "csv" | "linkedin-export" | "crm-export" | "manual" | "website-crawl";
@@ -200,6 +200,9 @@ export interface MediaGenerationJob {
   attempts: number;
   maxAttempts: number;
   lockedAt: string | null;
+  leaseExpiresAt: string | null;
+  recoveryRequiredAt: string | null;
+  recoveryReason: string | null;
   completedAt: string | null;
   lastError: string | null;
   progressPercent: number;
@@ -224,6 +227,9 @@ export interface LocalJob {
   attempts: number;
   maxAttempts: number;
   lockedAt: string | null;
+  leaseExpiresAt: string | null;
+  recoveryRequiredAt: string | null;
+  recoveryReason: string | null;
   completedAt: string | null;
   lastError: string | null;
   createdAt: string;
@@ -236,6 +242,13 @@ export interface PublicSchedulerState {
   status: string;
   lastError: string | null;
   catchUpHours: number;
+  resourceMode: "idle" | "working" | "paused" | "needs_attention";
+  workerLimit: number;
+  workersActive: number;
+  nextWakeAt: string | null;
+  idleSince: string | null;
+  crashCount: number;
+  recoveryPending: number;
 }
 
 export interface ConnectorFieldSpec {
@@ -275,7 +288,7 @@ export interface ConnectorAccount {
   lastError: string | null;
   listener: {
     active: boolean;
-    status: "stopped" | "starting" | "connecting" | "listening" | "retrying";
+    status: "stopped" | "idle" | "starting" | "connecting" | "listening" | "retrying";
     lastError: string | null;
   };
   createdAt: string;

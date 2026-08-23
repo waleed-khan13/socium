@@ -22,6 +22,9 @@ def _job_dict(job: LocalJob) -> dict[str, Any]:
         "attempts": job.attempts,
         "maxAttempts": job.max_attempts,
         "lockedAt": job.locked_at,
+        "leaseExpiresAt": job.lease_expires_at,
+        "recoveryRequiredAt": job.recovery_required_at,
+        "recoveryReason": job.recovery_reason,
         "completedAt": job.completed_at,
         "lastError": job.last_error,
         "progressPercent": job.progress_percent,
@@ -106,10 +109,15 @@ def update_media_generation_progress(
     message: str,
     *,
     remote_ref: str | None = None,
+    lease_token: str | None = None,
 ) -> None:
     with write_session() as session:
         job = session.get(LocalJob, job_id)
-        if job is None or job.status != "running":
+        if (
+            job is None
+            or job.status != "running"
+            or (lease_token is not None and job.lease_token != lease_token)
+        ):
             return
         job.progress_percent = max(job.progress_percent, min(max(percent, 0), 99))
         job.progress_message = message[:500]
@@ -118,17 +126,28 @@ def update_media_generation_progress(
         job.updated_at = utc_now()
 
 
-def complete_media_generation_job(job_id: str, asset_id: str, deduplicated: bool) -> None:
+def complete_media_generation_job(
+    job_id: str,
+    asset_id: str,
+    deduplicated: bool,
+    lease_token: str | None = None,
+) -> bool:
     with write_session() as session:
         job = session.get(LocalJob, job_id)
-        if job is None or job.status != "running":
-            return
+        if (
+            job is None
+            or job.status != "running"
+            or (lease_token is not None and job.lease_token != lease_token)
+        ):
+            return False
         now = utc_now()
         job.status = "completed"
         job.progress_percent = 100
         job.progress_message = "Image saved privately and ready for review."
         job.result_ref = asset_id
         job.locked_at = None
+        job.lease_token = None
+        job.lease_expires_at = None
         job.completed_at = now
         job.updated_at = now
         append_audit(
@@ -142,18 +161,21 @@ def complete_media_generation_job(job_id: str, asset_id: str, deduplicated: bool
                 else "Queued image generation completed and was saved privately."
             ),
         )
+        return True
 
 
-def finish_cancelled_media_generation(job_id: str) -> None:
+def finish_cancelled_media_generation(job_id: str, lease_token: str | None = None) -> bool:
     with write_session() as session:
         job = session.get(LocalJob, job_id)
-        if job is None:
-            return
+        if job is None or (lease_token is not None and job.lease_token != lease_token):
+            return False
         now = utc_now()
         job.status = "cancelled"
         job.progress_message = "Generation cancelled by the local operator."
         job.last_error = None
         job.locked_at = None
+        job.lease_token = None
+        job.lease_expires_at = None
         job.completed_at = now
         job.updated_at = now
         append_audit(
@@ -163,6 +185,7 @@ def finish_cancelled_media_generation(job_id: str) -> None:
             entity_id=job.id,
             summary="Private image generation cancelled by the local operator.",
         )
+        return True
 
 
 def cancel_media_generation(job_id: str) -> dict[str, Any]:
@@ -215,6 +238,10 @@ def retry_media_generation(job_id: str) -> dict[str, Any]:
         job.run_at = now
         job.attempts = 0
         job.locked_at = None
+        job.lease_token = None
+        job.lease_expires_at = None
+        job.recovery_required_at = None
+        job.recovery_reason = None
         job.completed_at = None
         job.last_error = None
         job.progress_percent = 0

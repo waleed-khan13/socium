@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 
 from app import __version__
@@ -31,6 +31,7 @@ from app.schemas import (
     BrandProfileUpdate,
     EditPostRequest,
     ImageProviderUpdate,
+    JobRecoveryRequest,
     OnboardingUpdate,
     ProviderUpdate,
     SchedulePostRequest,
@@ -78,12 +79,20 @@ def initialize_storage() -> None:
         if session.get(Workspace, 1) is not None:
             _ensure_singletons(session)
             _recover_interrupted_approval_actions(session)
+            _mark_overdue_jobs_for_recovery(
+                session,
+                "Socium was not running at the scheduled time. Choose Run now, Reschedule, or Skip.",
+            )
             return
         if settings.legacy_json_path.exists():
             _import_legacy_json(session, settings.legacy_json_path)
         else:
             _seed_defaults(session)
         _recover_interrupted_approval_actions(session)
+        _mark_overdue_jobs_for_recovery(
+            session,
+            "Socium was not running at the scheduled time. Choose Run now, Reschedule, or Skip.",
+        )
 
 
 def _recover_interrupted_approval_actions(session: Session) -> None:
@@ -359,6 +368,9 @@ def _job_dict(job: LocalJob) -> dict[str, Any]:
         "attempts": job.attempts,
         "maxAttempts": job.max_attempts,
         "lockedAt": job.locked_at,
+        "leaseExpiresAt": job.lease_expires_at,
+        "recoveryRequiredAt": job.recovery_required_at,
+        "recoveryReason": job.recovery_reason,
         "completedAt": job.completed_at,
         "lastError": job.last_error,
         "progressPercent": job.progress_percent,
@@ -667,6 +679,15 @@ def public_state(
             ).all()
         )
         paused = session.get(AppMetadata, "scheduler_paused")
+        recovery_pending = len(
+            session.scalars(
+                select(LocalJob.id).where(
+                    LocalJob.kind == "post.publish",
+                    LocalJob.status == "missed",
+                    LocalJob.recovery_required_at.is_not(None),
+                )
+            ).all()
+        )
         provider_verified = bool(
             provider.base_url
             and provider.model
@@ -729,6 +750,13 @@ def public_state(
                 "status": str(scheduler.get("status") or "stopped"),
                 "lastError": scheduler.get("lastError"),
                 "catchUpHours": int(scheduler.get("catchUpHours") or 24),
+                "resourceMode": str(scheduler.get("resourceMode") or "idle"),
+                "workerLimit": int(scheduler.get("workerLimit") or 1),
+                "workersActive": int(scheduler.get("workersActive") or 0),
+                "nextWakeAt": scheduler.get("nextWakeAt"),
+                "idleSince": scheduler.get("idleSince"),
+                "crashCount": int(scheduler.get("crashCount") or 0),
+                "recoveryPending": recovery_pending,
             },
             "audit": [
                 {
@@ -1568,6 +1596,72 @@ def set_scheduler_paused(paused: bool) -> None:
             entity_id="local",
             summary="Local scheduler paused." if paused else "Local scheduler resumed.",
         )
+    if not paused:
+        mark_overdue_jobs_for_recovery(
+            "The local worker was paused at the scheduled time. Choose Run now, Reschedule, or Skip."
+        )
+
+
+def _mark_overdue_jobs_for_recovery(session: Session, reason: str) -> int:
+    now = utc_now()
+    jobs = list(
+        session.scalars(
+            select(LocalJob).where(
+                LocalJob.kind == "post.publish",
+                LocalJob.status.in_({"queued", "retrying"}),
+                LocalJob.run_at < now,
+            )
+        ).all()
+    )
+    for job in jobs:
+        job.status = "missed"
+        job.locked_at = None
+        job.lease_token = None
+        job.lease_expires_at = None
+        job.completed_at = None
+        job.recovery_required_at = now
+        job.recovery_reason = reason[:500]
+        job.last_error = job.recovery_reason
+        job.updated_at = now
+        _append_audit(
+            session,
+            action="job.recovery_required",
+            entity_type="scheduler",
+            entity_id=job.id,
+            summary=job.recovery_reason,
+        )
+    return len(jobs)
+
+
+def mark_overdue_jobs_for_recovery(reason: str) -> int:
+    with write_session() as session:
+        return _mark_overdue_jobs_for_recovery(session, reason)
+
+
+def recovery_pending_count() -> int:
+    with read_session() as session:
+        return len(
+            session.scalars(
+                select(LocalJob.id).where(
+                    LocalJob.kind == "post.publish",
+                    LocalJob.status == "missed",
+                    LocalJob.recovery_required_at.is_not(None),
+                )
+            ).all()
+        )
+
+
+def pending_approval_action_count(transport: Literal["telegram", "slack"]) -> int:
+    with read_session() as session:
+        return len(
+            session.scalars(
+                select(ApprovalAction.id).where(
+                    ApprovalAction.transport == transport,
+                    ApprovalAction.status == "sent",
+                    ApprovalAction.expires_at > utc_now(),
+                )
+            ).all()
+        )
 
 
 def schedule_post(
@@ -1648,8 +1742,8 @@ def retry_job(job_id: str) -> dict[str, Any]:
         job = session.get(LocalJob, job_id)
         if job is None:
             raise AppError("Scheduled job not found.", 404)
-        if job.status not in {"failed", "missed"}:
-            raise AppError(f"Only failed or missed jobs can be retried. Current status: {job.status}.")
+        if job.status != "failed":
+            raise AppError(f"Only failed jobs can be retried here. Current status: {job.status}.")
         post_id = str((job.payload or {}).get("post_id") or "")
         revision = int((job.payload or {}).get("revision") or 0)
         post = session.get(Post, post_id)
@@ -1668,6 +1762,10 @@ def retry_job(job_id: str) -> dict[str, Any]:
         job.run_at = now
         job.attempts = 0
         job.locked_at = None
+        job.lease_token = None
+        job.lease_expires_at = None
+        job.recovery_required_at = None
+        job.recovery_reason = None
         job.completed_at = None
         job.last_error = None
         job.updated_at = now
@@ -1681,39 +1779,86 @@ def retry_job(job_id: str) -> dict[str, Any]:
         return _job_dict(job)
 
 
-def expire_missed_jobs(catch_up_hours: int) -> int:
-    cutoff = _utc_iso(datetime.now(UTC) - timedelta(hours=catch_up_hours))
+def recover_missed_job(job_id: str, payload: JobRecoveryRequest) -> dict[str, Any]:
     with write_session() as session:
-        jobs = list(
-            session.scalars(
-                select(LocalJob).where(
-                    LocalJob.status.in_({"queued", "retrying"}),
-                    LocalJob.run_at < cutoff,
-                )
-            ).all()
-        )
-        now = utc_now()
-        for job in jobs:
-            job.status = "missed"
+        job = session.get(LocalJob, job_id)
+        if job is None or job.kind != "post.publish":
+            raise AppError("Scheduled publish not found.", 404)
+        if job.status != "missed" or not job.recovery_required_at:
+            raise AppError(f"This job does not require recovery. Current status: {job.status}.")
+
+        post_id = str((job.payload or {}).get("post_id") or "")
+        revision = int((job.payload or {}).get("revision") or 0)
+        post = session.get(Post, post_id)
+        if payload.decision != "skip":
+            if post is None or post.revision != revision:
+                raise AppError("The scheduled draft changed or no longer exists. Skip this stale job.")
+            if post.status == "published":
+                raise AppError("This exact draft is already published; duplicate recovery was blocked.")
+            if post.status not in {"approved", "failed"}:
+                raise AppError(f"Draft must still be approved. Current status: {post.status}.")
+
+        now_dt = datetime.now(UTC)
+        now = _utc_iso(now_dt)
+        if payload.decision == "reschedule":
+            assert payload.run_at is not None
+            if payload.run_at <= now_dt:
+                raise AppError("Choose a future time when rescheduling.")
+            if payload.run_at > now_dt + timedelta(days=366):
+                raise AppError("Rescheduled time must be within the next year.")
+            job.status = "queued"
+            job.run_at = _utc_iso(payload.run_at)
+            action = "job.recovery_rescheduled"
+            summary = f"Missed publish rescheduled for {job.run_at}."
+        elif payload.decision == "run_now":
+            job.status = "queued"
+            job.run_at = now
+            action = "job.recovery_run_now"
+            summary = "Operator confirmed that the missed publish should run now."
+        else:
+            job.status = "skipped"
             job.completed_at = now
-            job.updated_at = now
-            job.last_error = f"Missed the {catch_up_hours}-hour catch-up window."
-            _append_audit(
-                session,
-                action="job.missed",
-                entity_type="scheduler",
-                entity_id=job.id,
-                summary=job.last_error,
-            )
-        return len(jobs)
+            action = "job.recovery_skipped"
+            summary = "Operator skipped the missed publish; nothing was sent."
+
+        if payload.decision != "skip":
+            job.completed_at = None
+            job.last_error = None
+            if post is not None and post.status == "failed":
+                post.status = "approved"
+                post.last_error = None
+                post.updated_at = now
+        else:
+            job.last_error = "Skipped by the local operator after restart recovery."
+        job.locked_at = None
+        job.lease_token = None
+        job.lease_expires_at = None
+        job.recovery_required_at = None
+        job.recovery_reason = None
+        job.updated_at = now
+        _append_audit(
+            session,
+            action=action,
+            entity_type="scheduler",
+            entity_id=job.id,
+            summary=summary,
+        )
+        return _job_dict(job)
 
 
 def recover_stale_jobs(stale_minutes: int) -> int:
     cutoff = _utc_iso(datetime.now(UTC) - timedelta(minutes=stale_minutes))
+    now_iso = utc_now()
     with write_session() as session:
         jobs = list(
             session.scalars(
-                select(LocalJob).where(LocalJob.status == "running", LocalJob.locked_at < cutoff)
+                select(LocalJob).where(
+                    LocalJob.status == "running",
+                    or_(
+                        LocalJob.lease_expires_at < now_iso,
+                        and_(LocalJob.lease_expires_at.is_(None), LocalJob.locked_at < cutoff),
+                    ),
+                )
             ).all()
         )
         now = utc_now()
@@ -1738,6 +1883,8 @@ def recover_stale_jobs(stale_minutes: int) -> int:
                 job.completed_at = now
                 job.last_error = "The local worker stopped before this job could finish."
             job.locked_at = None
+            job.lease_token = None
+            job.lease_expires_at = None
             job.updated_at = now
             _append_audit(
                 session,
@@ -1749,7 +1896,17 @@ def recover_stale_jobs(stale_minutes: int) -> int:
         return len(jobs)
 
 
-def claim_due_job() -> dict[str, Any] | None:
+def next_job_run_at() -> str | None:
+    with read_session() as session:
+        return session.scalar(
+            select(LocalJob.run_at)
+            .where(LocalJob.status.in_({"queued", "retrying"}))
+            .order_by(LocalJob.run_at.asc())
+            .limit(1)
+        )
+
+
+def claim_due_job(lease_seconds: int = 360) -> dict[str, Any] | None:
     with write_session() as session:
         metadata = session.get(AppMetadata, "scheduler_paused")
         if metadata is not None and metadata.value == "true":
@@ -1763,27 +1920,38 @@ def claim_due_job() -> dict[str, Any] | None:
         if job is None:
             return None
         now = utc_now()
+        lease_token = str(uuid4())
         job.status = "running"
         job.attempts += 1
         job.locked_at = now
+        job.lease_token = lease_token
+        job.lease_expires_at = _utc_iso(datetime.now(UTC) + timedelta(seconds=lease_seconds))
         job.updated_at = now
         job.last_error = None
         if job.kind == "media.generate":
             job.progress_percent = max(job.progress_percent, 5)
             job.progress_message = "Local image worker started."
         session.flush()
-        return _job_dict(job)
+        claimed = _job_dict(job)
+        claimed["leaseToken"] = lease_token
+        return claimed
 
 
-def complete_job(job_id: str) -> None:
+def _lease_matches(job: LocalJob, lease_token: str | None) -> bool:
+    return lease_token is None or bool(job.lease_token and job.lease_token == lease_token)
+
+
+def complete_job(job_id: str, lease_token: str | None = None) -> bool:
     with write_session() as session:
         job = session.get(LocalJob, job_id)
-        if job is None or job.status != "running":
-            return
+        if job is None or job.status != "running" or not _lease_matches(job, lease_token):
+            return False
         now = utc_now()
         job.status = "completed"
         job.completed_at = now
         job.locked_at = None
+        job.lease_token = None
+        job.lease_expires_at = None
         job.updated_at = now
         job.last_error = None
         _append_audit(
@@ -1793,13 +1961,20 @@ def complete_job(job_id: str) -> None:
             entity_id=job.id,
             summary="Scheduled local job completed.",
         )
+        return True
 
 
-def fail_job(job_id: str, message: str, *, retryable: bool) -> None:
+def fail_job(
+    job_id: str,
+    message: str,
+    *,
+    retryable: bool,
+    lease_token: str | None = None,
+) -> bool:
     with write_session() as session:
         job = session.get(LocalJob, job_id)
-        if job is None or job.status != "running":
-            return
+        if job is None or job.status != "running" or not _lease_matches(job, lease_token):
+            return False
         now = datetime.now(UTC)
         if retryable and job.attempts < job.max_attempts:
             delay_seconds = min(60, 5 * (2 ** max(job.attempts - 1, 0)))
@@ -1815,6 +1990,8 @@ def fail_job(job_id: str, message: str, *, retryable: bool) -> None:
             action = "job.failed"
             summary = "Scheduled local job failed and requires review."
         job.locked_at = None
+        job.lease_token = None
+        job.lease_expires_at = None
         job.updated_at = _utc_iso(now)
         job.last_error = message[:2_000]
         if job.kind == "media.generate":
@@ -1830,3 +2007,10 @@ def fail_job(job_id: str, message: str, *, retryable: bool) -> None:
             entity_id=job.id,
             summary=summary,
         )
+        return True
+
+
+def publish_reservation_active(post_id: str, revision: int) -> bool:
+    with read_session() as session:
+        post = session.get(Post, post_id)
+        return bool(post is not None and post.revision == revision and post.status == "publishing")

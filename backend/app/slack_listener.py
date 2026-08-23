@@ -14,7 +14,12 @@ from app.approval_actions import apply_remote_approval_action
 from app.connector_store import connector_runtimes
 from app.errors import AppError, ExternalServiceError
 from app.services.slack import open_socket_url, send_approval_message, send_decision_feedback
-from app.store import create_approval_action, fail_approval_delivery, record_approval_sent
+from app.store import (
+    create_approval_action,
+    fail_approval_delivery,
+    pending_approval_action_count,
+    record_approval_sent,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,13 +132,16 @@ class SlackSocketListener:
         while True:
             self._wake_event.clear()
             self._sync_workers()
-            try:
-                await asyncio.wait_for(self._wake_event.wait(), timeout=2.0)
-            except TimeoutError:
-                pass
+            await self._wake_event.wait()
 
     def _sync_workers(self) -> None:
-        runtimes = {item["id"]: item for item in connector_runtimes("slack", verified_only=True)}
+        available_items = connector_runtimes("slack", verified_only=True)
+        available = {item["id"]: item for item in available_items}
+        runtimes = (
+            {available_items[0]["id"]: available_items[0]}
+            if available_items and pending_approval_action_count("slack") > 0
+            else {}
+        )
         for account_id, (fingerprint, task) in list(self._workers.items()):
             runtime = runtimes.get(account_id)
             next_fingerprint = str(runtime.get("updated_at") or "") if runtime else ""
@@ -141,7 +149,7 @@ class SlackSocketListener:
                 if not task.done():
                     task.cancel()
                 self._workers.pop(account_id, None)
-                self._set_status(account_id, False, "stopped", None)
+                self._set_status(account_id, False, "idle" if account_id in available else "stopped", None)
 
         for account_id, runtime in runtimes.items():
             if account_id in self._workers:
@@ -152,12 +160,16 @@ class SlackSocketListener:
                 self._listen(runtime),
                 name=f"slack-socket-{account_id[:8]}",
             )
+            task.add_done_callback(lambda _task: self._wake_event.set())
             self._workers[account_id] = (fingerprint, task)
 
         active_ids = set(runtimes)
         with self._status_lock:
             for account_id in set(self._statuses) - active_ids - set(self._workers):
                 self._statuses.pop(account_id, None)
+        if not runtimes:
+            for account_id in available:
+                self._set_status(account_id, False, "idle", None)
 
     async def _listen(self, runtime: dict[str, Any]) -> None:
         account_id = str(runtime["id"])
@@ -284,6 +296,7 @@ class SlackSocketListener:
             self._set_status(account_id, True, "listening", error.message)
         else:
             self._set_status(account_id, True, "listening", None)
+        self._wake_event.set()
         return False
 
     def _set_status(

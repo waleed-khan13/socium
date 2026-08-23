@@ -15,6 +15,7 @@ from app.services.telegram import (
 from app.store import (
     create_approval_action,
     fail_approval_delivery,
+    pending_approval_action_count,
     process_telegram_update,
     record_approval_sent,
     telegram_runtime,
@@ -25,6 +26,8 @@ class TelegramPoller:
     def __init__(self, poll_timeout: int) -> None:
         self.poll_timeout = poll_timeout
         self._task: asyncio.Task[None] | None = None
+        self._wake = asyncio.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._active = False
         self._status = "stopped"
         self._last_error: str | None = None
@@ -38,6 +41,7 @@ class TelegramPoller:
 
     def start(self) -> None:
         if self._task is None or self._task.done():
+            self._loop = asyncio.get_running_loop()
             self._task = asyncio.create_task(self._run(), name="telegram-local-poller")
 
     async def stop(self) -> None:
@@ -48,29 +52,46 @@ class TelegramPoller:
                 await task
         self._active = False
         self._status = "stopped"
+        self._loop = None
 
     async def refresh(self) -> None:
         await self.stop()
         self._status = "starting"
         self.start()
 
+    def wake(self) -> None:
+        if self._loop is not None and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._wake.set)
+        else:
+            self._wake.set()
+
+    async def _wait_for_work(self) -> None:
+        await self._wake.wait()
+
     async def _run(self) -> None:
         backoff = 2
         try:
             while True:
+                self._wake.clear()
                 runtime = telegram_runtime()
                 if not runtime["polling_enabled"]:
                     self._active = False
                     self._status = "stopped"
                     self._last_error = None
-                    await asyncio.sleep(1)
+                    await self._wait_for_work()
                     continue
                 token = str(runtime["bot_token"])
                 if not token or not runtime["chat_id"]:
                     self._active = False
                     self._status = "configuration_required"
                     self._last_error = "Telegram token and chat ID are required."
-                    await asyncio.sleep(2)
+                    await self._wait_for_work()
+                    continue
+                if pending_approval_action_count("telegram") == 0:
+                    self._active = False
+                    self._status = "idle"
+                    self._last_error = None
+                    await self._wait_for_work()
                     continue
 
                 self._active = True

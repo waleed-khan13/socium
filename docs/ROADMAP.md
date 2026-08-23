@@ -30,7 +30,7 @@ The implementation order, fixed boundaries, storage and recovery rules, and rele
 - [x] One-time import from the v0.2 JSON store without exposing saved secrets.
 - [x] Next.js same-origin proxy so the browser exposes only port `3000`.
 - [x] Telegram long-polling approvals with no public webhook or tunnel.
-- [x] Persistent local jobs, retries, idempotency, pause, and catch-up rules for Telegram publishing.
+- [x] Persistent local jobs, durable leases, bounded retries, idempotency, pause, and explicit missed-publication recovery for Telegram publishing.
 - [x] Native launcher that starts the API, worker, and web console together.
 - [x] Backend unit/integration tests and a real localhost browser workflow suite.
 

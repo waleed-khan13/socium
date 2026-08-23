@@ -29,7 +29,7 @@ A new operator can install Socium, choose where durable data and local models li
 6. [x] Make local AI installation and hosted/custom provider discovery guided and testable.
 7. [x] Generate brand-aware posts, hashtags, calls to action, and image prompts.
 8. [x] Add revision-bound Approve, Regenerate, Edit, and Skip actions to dashboard, Telegram, and Slack.
-9. [ ] Replace always-heavy execution with a lightweight supervisor and bounded workers.
+9. [x] Replace always-heavy execution with a lightweight supervisor and bounded workers.
 10. [ ] Add native autostart, tray controls, in-product updates, backup, and rollback.
 11. [ ] Pass release hardening and publish `v1.1.0`.
 
@@ -96,6 +96,16 @@ A new operator can install Socium, choose where durable data and local models li
 - A remote Edit request is durable across restart, opens the matching dashboard dialog during the next local state refresh, and is acknowledged only after the browser receives it. Saving includes the expected revision and cannot overwrite a newer draft.
 - Backend acceptance coverage exercises all four actions, migration compatibility, expiry, transport binding, replay rejection, remote-edit recovery, and interrupted-action recovery. The real Chromium workflow covers dashboard Regenerate, Edit, Approve, Skip, stale-decision rejection, and exact approved publication.
 - The complete `pnpm check` passed on 2026-08-23: TypeScript, ESLint, Ruff, CLI 15 of 15, backend 60 of 60, Playwright 6 of 6 including accessibility and mobile-keyboard coverage, and the optimized production build.
+
+### Phase 9 evidence
+
+- The SQLite scheduler is now an event-and-deadline supervisor. With no queued deadline it waits indefinitely; due work starts one bounded worker and that worker exits after the job reaches a durable state.
+- Durable lease tokens reject stale worker completion, recover after expiry, and are cleared on retry or completion. External work has a configurable timeout, bounded exponential retry for safe failures, and crash-loop protection that stops the supervisor in `Needs attention` after repeated control-loop failures.
+- Alembic revision `20260823_0017` adds lease and recovery metadata. Any publication overdue after restart or pause is marked `missed`; the exact revision cannot run until the operator chooses **Run now**, **Reschedule**, or **Skip**. A changed revision and a repeated recovery action fail closed.
+- Telegram long polling and Slack Socket Mode sleep without a live approval action. Slack activation is capped at one Socket Mode worker, and both transports wake only when approval work is created or changed.
+- The scheduler card reports idle/working/faulted mode, the next wake, active worker count, idle time, and recovery count. A reload-safe accessible dialog exposes all three overdue decisions and never silently publishes.
+- Phase-specific backend tests cover explicit recovery, revision rejection, leases, expiry recovery, timeouts, exponential retry, one-worker concurrency, crash loops, listener hibernation, and a 20,000-wake memory/coalescing soak. The real Chromium workflow covers restart-style reload, WCAG A/AA recovery UI, rescheduling, cancellation, and scheduler telemetry.
+- The complete `pnpm check` passed on 2026-08-24: TypeScript, ESLint, Ruff, CLI 15 of 15, backend 67 of 67, Playwright 6 of 6 including accessibility and mobile-keyboard coverage, and the optimized production build.
 
 ## Storage contract
 

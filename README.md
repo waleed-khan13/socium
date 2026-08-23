@@ -19,7 +19,7 @@ See [docs/V1_RELEASE.md](docs/V1_RELEASE.md) for the current stable contract, [d
 - Approve, regenerate, edit, or skip exact draft revisions; every content change requires fresh approval and Skip is an explicit non-publication decision.
 - Send 72-hour, one-time Telegram approval actions and receive decisions through local long polling.
 - Publish an approved Telegram draft exactly once and record its remote message ID.
-- Schedule approved Telegram revisions with a restart-safe SQLite job queue, pause/resume, catch-up, cancellation, and reviewed retries.
+- Schedule approved revisions with a restart-safe SQLite queue, an event-driven one-worker supervisor, cancellation, reviewed retries, and explicit **Run now / Reschedule / Skip** recovery for anything missed while Socium was stopped or paused.
 - Save a scoped Slack connector in the local vault and verify its bot identity and Socket Mode app token against Slack's real API.
 - Send revision-bound Slack Approve, Regenerate, Edit, and Skip buttons through an outbound-only Socket Mode listener.
 - Save and verify a WordPress connector with encrypted Application Password credentials.
