@@ -20,12 +20,14 @@ from app.models import (
     IcpProfile,
     ImageProviderSettings,
     LocalJob,
+    MediaAsset,
     Post,
     ProviderSettings,
     TelegramSettings,
     Workspace,
 )
 from app.schemas import (
+    BrandProfileUpdate,
     EditPostRequest,
     ImageProviderUpdate,
     ProviderUpdate,
@@ -339,6 +341,73 @@ def _job_dict(job: LocalJob) -> dict[str, Any]:
     }
 
 
+def _brand_missing(workspace: Workspace) -> list[str]:
+    required = {
+        "businessName": workspace.business_name,
+        "description": workspace.description,
+        "productsServices": workspace.products_services,
+        "targetAudience": workspace.target_audience,
+        "goals": workspace.goals,
+        "callToAction": workspace.call_to_action,
+        "language": workspace.language,
+        "tone": workspace.tone,
+        "contentPillars": workspace.content_pillars,
+    }
+    return [field for field, value in required.items() if not value]
+
+
+def _brand_asset(asset: MediaAsset | None) -> dict[str, Any] | None:
+    if asset is None:
+        return None
+    return {
+        "id": asset.id,
+        "originalName": asset.original_name,
+        "previewUrl": f"/api/media/{asset.id}/preview",
+        "altText": asset.alt_text,
+    }
+
+
+def _workspace_dict(session: Session, workspace: Workspace) -> dict[str, Any]:
+    missing = _brand_missing(workspace)
+    logo = session.get(MediaAsset, workspace.logo_media_id) if workspace.logo_media_id else None
+    references = [
+        asset
+        for asset_id in (workspace.reference_media_ids or [])
+        if (asset := session.get(MediaAsset, asset_id)) is not None
+    ]
+    return {
+        "name": workspace.name,
+        "businessName": workspace.business_name,
+        "description": workspace.description,
+        "timezone": workspace.timezone,
+        "website": workspace.website,
+        "industry": workspace.industry,
+        "productsServices": workspace.products_services,
+        "targetAudience": workspace.target_audience,
+        "location": workspace.location,
+        "goals": list(workspace.goals or []),
+        "callToAction": workspace.call_to_action,
+        "language": workspace.language,
+        "tone": workspace.tone,
+        "contentPillars": list(workspace.content_pillars or []),
+        "restrictedClaims": list(workspace.restricted_claims or []),
+        "brandedHashtags": list(workspace.branded_hashtags or []),
+        "logoMediaId": workspace.logo_media_id if logo else None,
+        "logo": _brand_asset(logo),
+        "referenceMediaIds": [asset.id for asset in references],
+        "referenceMedia": [_brand_asset(asset) for asset in references],
+        "primaryColor": workspace.primary_color,
+        "secondaryColor": workspace.secondary_color,
+        "accentColor": workspace.accent_color,
+        "visualStyle": workspace.visual_style,
+        "profileVersion": workspace.profile_version,
+        "confirmedAt": workspace.confirmed_at,
+        "updatedAt": workspace.updated_at,
+        "profileComplete": bool(workspace.confirmed_at and not missing),
+        "missingFields": missing,
+    }
+
+
 def public_state(
     polling: dict[str, Any] | None = None,
     scheduler: dict[str, Any] | None = None,
@@ -366,12 +435,7 @@ def public_state(
         )
         paused = session.get(AppMetadata, "scheduler_paused")
         return {
-            "workspace": {
-                "name": workspace.name,
-                "businessName": workspace.business_name,
-                "description": workspace.description,
-                "timezone": workspace.timezone,
-            },
+            "workspace": _workspace_dict(session, workspace),
             "provider": {
                 "kind": provider.kind,
                 "baseUrl": provider.base_url,
@@ -445,12 +509,62 @@ def update_workspace(payload: WorkspaceUpdate) -> None:
         workspace.business_name = payload.business_name
         workspace.description = payload.description
         workspace.timezone = payload.timezone or "Asia/Karachi"
+        workspace.confirmed_at = None
+        workspace.updated_at = utc_now()
         _append_audit(
             session,
             action="workspace.updated",
             entity_type="settings",
             entity_id="workspace",
             summary="Business profile updated.",
+        )
+
+
+def update_brand_profile(payload: BrandProfileUpdate) -> None:
+    with write_session() as session:
+        workspace = session.get(Workspace, 1)
+        if workspace is None:
+            raise RuntimeError("Workspace settings are missing.")
+        media_ids = [
+            media_id
+            for media_id in [payload.logo_media_id, *payload.reference_media_ids]
+            if media_id
+        ]
+        missing_assets = [media_id for media_id in media_ids if session.get(MediaAsset, media_id) is None]
+        if missing_assets:
+            raise AppError("One or more selected brand images no longer exist in the media library.")
+        now = utc_now()
+        workspace.name = payload.name
+        workspace.business_name = payload.business_name
+        workspace.description = payload.description
+        workspace.timezone = payload.timezone
+        workspace.website = payload.website
+        workspace.industry = payload.industry
+        workspace.products_services = payload.products_services
+        workspace.target_audience = payload.target_audience
+        workspace.location = payload.location
+        workspace.goals = payload.goals
+        workspace.call_to_action = payload.call_to_action
+        workspace.language = payload.language
+        workspace.tone = payload.tone
+        workspace.content_pillars = payload.content_pillars
+        workspace.restricted_claims = payload.restricted_claims
+        workspace.branded_hashtags = payload.branded_hashtags
+        workspace.logo_media_id = payload.logo_media_id
+        workspace.reference_media_ids = payload.reference_media_ids
+        workspace.primary_color = payload.primary_color.lower()
+        workspace.secondary_color = payload.secondary_color.lower()
+        workspace.accent_color = payload.accent_color.lower()
+        workspace.visual_style = payload.visual_style
+        workspace.profile_version += 1
+        workspace.confirmed_at = now
+        workspace.updated_at = now
+        _append_audit(
+            session,
+            action="brand_profile.confirmed",
+            entity_type="settings",
+            entity_id="brand-profile",
+            summary=f"Confirmed brand profile revision {workspace.profile_version}.",
         )
 
 
@@ -596,15 +710,42 @@ def telegram_runtime() -> dict[str, Any]:
         }
 
 
-def workspace_runtime() -> dict[str, str]:
+def workspace_runtime() -> dict[str, Any]:
     with read_session() as session:
         workspace = session.get(Workspace, 1)
         if workspace is None:
             raise RuntimeError("Workspace settings are missing.")
-        return {
+        confirmed = bool(workspace.confirmed_at and not _brand_missing(workspace))
+        runtime: dict[str, Any] = {
             "business_name": workspace.business_name,
             "business_description": workspace.description,
+            "profile_confirmed": confirmed,
         }
+        if confirmed:
+            runtime.update(
+                {
+                    "website": workspace.website,
+                    "industry": workspace.industry,
+                    "products_services": workspace.products_services,
+                    "target_audience": workspace.target_audience,
+                    "location": workspace.location,
+                    "goals": list(workspace.goals or []),
+                    "call_to_action": workspace.call_to_action,
+                    "language": workspace.language,
+                    "tone": workspace.tone,
+                    "content_pillars": list(workspace.content_pillars or []),
+                    "restricted_claims": list(workspace.restricted_claims or []),
+                    "branded_hashtags": list(workspace.branded_hashtags or []),
+                    "brand_colors": [
+                        workspace.primary_color,
+                        workspace.secondary_color,
+                        workspace.accent_color,
+                    ],
+                    "visual_style": workspace.visual_style,
+                    "profile_version": workspace.profile_version,
+                }
+            )
+        return runtime
 
 
 def create_post(

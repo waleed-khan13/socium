@@ -11,7 +11,7 @@ See [docs/V1_RELEASE.md](docs/V1_RELEASE.md) for the current stable contract, [d
 ## What works today
 
 - Start with private local AI or select a ready-made OpenAI, Google Gemini, Anthropic Claude, OpenRouter, or NVIDIA NIM connection; safe custom OpenAI-compatible and Anthropic-compatible discovery remains available for advanced servers.
-- Save a business profile and generate channel-aware content with the selected model.
+- Confirm a durable brand profile with business facts, audience, voice, content rules, colors, logo, and reference media; every confirmed revision becomes reusable generation context.
 - Persist settings, drafts, revisions, and audit events in a local SQLite WAL database.
 - Encrypt AI, Telegram, and multi-secret connector credentials with an automatically generated local master key.
 - Import the previous v0.2 JSON store on first launch without deleting the original file.
@@ -151,7 +151,7 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000). `pnpm dev` starts both the 
 
 Complete the checklist in the dashboard:
 
-1. Add the business profile.
+1. Open **Integrations → Brand profile**, enter the business facts and content preferences, choose optional logo/reference assets from the private Media Library, then select **Save & confirm profile**. Required fields are shown in the form, and confirmation creates an auditable revision.
 2. Open **Integrations → AI provider** and choose **Local AI - Recommended** or **Cloud API**. Local setup inspects this computer, recommends a model, and downloads it with 1% progress when Ollama is running. Cloud setup needs only the selected provider's API key.
 3. Generate a draft and approve it in the built-in dashboard; no approval connector is required.
 4. Optionally connect Telegram or Slack if approvals should also reach another app.
@@ -161,6 +161,8 @@ Complete the checklist in the dashboard:
 Every credential field in the UI includes its official **Get key/token** page and short setup instructions. The complete provider-by-provider directory is in [Connector credentials](docs/CREDENTIALS.md).
 
 Socium fills the official endpoint and a working default model for OpenAI, Gemini, Claude, OpenRouter, and NVIDIA. Ollama needs no API key; Socium detects hardware and installed models, shows the separate model-storage path, verifies downloads, and asks Ollama to release heavy inference memory after an idle timeout. Open **Advanced settings** only to change the model or local port.
+
+Only a confirmed brand-profile revision supplies the AI with the expanded audience, offer, goals, voice, content pillars, calls to action, branded hashtags, restricted claims, colors, and visual direction. Editing the legacy basic workspace fields invalidates that confirmation until the complete profile is reviewed and confirmed again. Logo and reference-image bytes stay in the local Media Library; Phase 4 stores their IDs with the profile but does not upload those bytes to a text provider.
 
 For another server, choose **Cloud API → Custom / I'm not sure**, enter its base URL, and select **Detect API & models**. Automatic discovery sends no secret. If the server requires authentication before it can identify itself, Socium asks you to select OpenAI-compatible, Anthropic-compatible, or Ollama first, then sends the key only to that one protocol on the entered origin. Saved keys are encrypted before SQLite storage and remain on this computer. Socium has no hosted login or cloud account requirement.
 

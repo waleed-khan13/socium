@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from datetime import UTC, date, datetime
 from typing import Any, Literal, Self
+from urllib.parse import urlsplit, urlunsplit
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
 from app.errors import ExternalServiceError
@@ -29,6 +31,74 @@ class WorkspaceUpdate(ApiModel):
     business_name: str = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=2_000)
     timezone: str = Field(default="Asia/Karachi", max_length=80)
+
+
+class BrandProfileUpdate(ApiModel):
+    name: str = Field(min_length=1, max_length=80)
+    business_name: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1, max_length=2_000)
+    timezone: str = Field(default="Asia/Karachi", min_length=1, max_length=80)
+    website: str = Field(default="", max_length=2_048)
+    industry: str = Field(default="", max_length=160)
+    products_services: str = Field(min_length=1, max_length=4_000)
+    target_audience: str = Field(min_length=1, max_length=3_000)
+    location: str = Field(default="", max_length=240)
+    goals: list[str] = Field(min_length=1, max_length=12)
+    call_to_action: str = Field(min_length=1, max_length=500)
+    language: str = Field(min_length=1, max_length=80)
+    tone: str = Field(min_length=1, max_length=240)
+    content_pillars: list[str] = Field(min_length=1, max_length=12)
+    restricted_claims: list[str] = Field(default_factory=list, max_length=20)
+    branded_hashtags: list[str] = Field(default_factory=list, max_length=20)
+    logo_media_id: str | None = Field(default=None, max_length=36, pattern=r"^[0-9a-fA-F-]{36}$")
+    reference_media_ids: list[str] = Field(default_factory=list, max_length=12)
+    primary_color: str = Field(default="#f59e0b", pattern=r"^#[0-9a-fA-F]{6}$")
+    secondary_color: str = Field(default="#18181b", pattern=r"^#[0-9a-fA-F]{6}$")
+    accent_color: str = Field(default="#10b981", pattern=r"^#[0-9a-fA-F]{6}$")
+    visual_style: str = Field(default="", max_length=2_000)
+
+    @field_validator("website")
+    @classmethod
+    def validate_website(cls, value: str) -> str:
+        if not value:
+            return ""
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("Website must be a valid http or https URL.")
+        if parsed.username or parsed.password:
+            raise ValueError("Website URL must not contain credentials.")
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), parsed.query, ""))
+
+    @field_validator(
+        "goals",
+        "content_pillars",
+        "restricted_claims",
+        "branded_hashtags",
+        "reference_media_ids",
+    )
+    @classmethod
+    def normalize_lists(cls, values: list[str], info: ValidationInfo) -> list[str]:
+        maximum = 36 if info.field_name == "reference_media_ids" else 240
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for raw in values:
+            value = raw.strip()
+            if info.field_name == "branded_hashtags" and value:
+                value = f"#{value.lstrip('#')}"
+                if not value[1:].replace("_", "").isalnum():
+                    raise ValueError("Branded hashtags may contain only letters, numbers, or underscores.")
+            if info.field_name == "reference_media_ids":
+                try:
+                    value = str(UUID(value))
+                except ValueError as error:
+                    raise ValueError("Reference media contains an invalid asset ID.") from error
+            if not value or len(value) > maximum:
+                raise ValueError(f"{info.field_name.replace('_', ' ').title()} contains an invalid item.")
+            identity = value.casefold()
+            if identity not in seen:
+                cleaned.append(value)
+                seen.add(identity)
+        return cleaned
 
 
 class ProviderUpdate(ApiModel):

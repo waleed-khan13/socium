@@ -21,11 +21,43 @@ export type OutreachDraftStatus = "draft" | "approved" | "rejected" | "exported"
 export type SeoCheckStatus = "passed" | "warning" | "failed";
 export type SeoCheckCategory = "technical" | "onPage" | "content" | "social";
 
+export interface BrandMediaSummary {
+  id: string;
+  originalName: string;
+  previewUrl: string;
+  altText: string;
+}
+
 export interface WorkspaceSettings {
   name: string;
   businessName: string;
   description: string;
   timezone: string;
+  website: string;
+  industry: string;
+  productsServices: string;
+  targetAudience: string;
+  location: string;
+  goals: string[];
+  callToAction: string;
+  language: string;
+  tone: string;
+  contentPillars: string[];
+  restrictedClaims: string[];
+  brandedHashtags: string[];
+  logoMediaId: string | null;
+  logo: BrandMediaSummary | null;
+  referenceMediaIds: string[];
+  referenceMedia: BrandMediaSummary[];
+  primaryColor: string;
+  secondaryColor: string;
+  accentColor: string;
+  visualStyle: string;
+  profileVersion: number;
+  confirmedAt: string | null;
+  updatedAt: string | null;
+  profileComplete: boolean;
+  missingFields: string[];
 }
 
 export interface PublicProviderSettings {

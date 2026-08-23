@@ -5,6 +5,7 @@ import json
 import sqlite3
 import time
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -59,6 +60,81 @@ def test_health_state_and_encrypted_settings(client) -> None:
     with sqlite3.connect(database_path) as connection:
         encrypted = connection.execute("SELECT api_key FROM provider_settings WHERE id = 1").fetchone()[0]
     assert "do-not-store-in-plaintext" not in encrypted
+
+
+def test_confirmed_brand_profile_persists_assets_preferences_and_revision(client) -> None:
+    from PIL import Image
+
+    logo_bytes = BytesIO()
+    Image.new("RGB", (48, 48), color=(245, 158, 11)).save(logo_bytes, format="PNG")
+    uploaded = client.post(
+        "/api/media",
+        files={"file": ("brand-logo.png", logo_bytes.getvalue(), "image/png")},
+    )
+    assert uploaded.status_code == 200
+    logo = uploaded.json()["asset"]
+
+    payload = {
+        "name": "Northstar workspace",
+        "businessName": "Northstar Studio",
+        "description": "A local-first marketing systems studio.",
+        "timezone": "Asia/Karachi",
+        "website": "https://northstar.example/about#team",
+        "industry": "Marketing technology",
+        "productsServices": "Private marketing automation and reviewed publishing workflows.",
+        "targetAudience": "Small service businesses that value privacy and human review.",
+        "location": "Lahore, Pakistan",
+        "goals": ["Build useful awareness", "Earn qualified conversations"],
+        "callToAction": "Book a practical workflow review.",
+        "language": "English and Roman Urdu",
+        "tone": "Clear, practical, and calm",
+        "contentPillars": ["Local-first AI", "Human approval", "Useful marketing systems"],
+        "restrictedClaims": ["Guaranteed growth", "Invented customer results"],
+        "brandedHashtags": ["Socium", "#LocalFirstAI", "Socium"],
+        "logoMediaId": logo["id"],
+        "referenceMediaIds": [logo["id"]],
+        "primaryColor": "#F59E0B",
+        "secondaryColor": "#18181B",
+        "accentColor": "#10B981",
+        "visualStyle": "Dark structured layouts with authentic product imagery.",
+    }
+    saved = client.put("/api/settings/brand-profile", json=payload)
+    assert saved.status_code == 200
+    profile = saved.json()["state"]["workspace"]
+    assert profile["profileComplete"] is True
+    assert profile["profileVersion"] == 1
+    assert profile["confirmedAt"]
+    assert profile["website"] == "https://northstar.example/about"
+    assert profile["brandedHashtags"] == ["#Socium", "#LocalFirstAI"]
+    assert profile["primaryColor"] == "#f59e0b"
+    assert profile["logo"] == {
+        "id": logo["id"],
+        "originalName": "brand-logo.png",
+        "previewUrl": f"/api/media/{logo['id']}/preview",
+        "altText": "",
+    }
+    assert profile["referenceMediaIds"] == [logo["id"]]
+    assert profile["missingFields"] == []
+
+    second = client.put(
+        "/api/settings/brand-profile",
+        json={**payload, "goals": ["Publish consistently"], "logoMediaId": None},
+    )
+    assert second.status_code == 200
+    assert second.json()["state"]["workspace"]["profileVersion"] == 2
+    assert second.json()["state"]["workspace"]["logo"] is None
+    assert any(
+        event["action"] == "brand_profile.confirmed"
+        for event in second.json()["state"]["audit"]
+    )
+
+    missing_asset = client.put(
+        "/api/settings/brand-profile",
+        json={**payload, "logoMediaId": "00000000-0000-4000-8000-000000000000"},
+    )
+    assert missing_asset.status_code == 400
+    assert "no longer exist" in missing_asset.json()["error"]
+    assert client.delete(f"/api/media/{logo['id']}").status_code == 200
 
 
 def test_labs_require_an_explicit_environment_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:

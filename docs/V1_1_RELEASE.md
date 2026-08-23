@@ -24,7 +24,7 @@ A new operator can install Socium, choose where durable data and local models li
 1. [x] Freeze the baseline and release contract.
 2. [x] Remove WhatsApp and narrow approval scope.
 3. [x] Separate runtime, durable data, and AI-model storage.
-4. [ ] Add the durable brand profile and content preferences.
+4. [x] Add the durable brand profile and content preferences.
 5. [ ] Replace documentation-led setup with a first-run wizard.
 6. [x] Make local AI installation and hosted/custom provider discovery guided and testable.
 7. [ ] Generate brand-aware posts, hashtags, calls to action, and image prompts.
@@ -58,6 +58,15 @@ A new operator can install Socium, choose where durable data and local models li
 - `Custom / I'm not sure` performs credential-free discovery first. It recognizes Ollama, OpenAI-compatible, and Anthropic-compatible model contracts; when authentication prevents discovery, the operator must select one protocol before the key can be sent to exactly that contract.
 - Provider and local-AI contracts have deterministic backend coverage, including the full 1% download sequence and secret-safe discovery. The focused browser tests prove the local/cloud mode switch, all hosted presets, custom discovery, and the existing complete generate/approve/publish workflow.
 - The complete `pnpm check` passed on 2026-08-23: TypeScript, ESLint, Ruff, CLI 15 of 15, backend 50 of 50, Playwright 6 of 6 including accessibility and mobile-keyboard coverage, and the optimized production build.
+
+### Phase 4 evidence
+
+- Alembic revision `20260823_0014` extends the singleton workspace with durable identity, audience, offer, goal, voice, content-rule, color, logo, reference-media, visual-style, confirmation, and profile-revision fields while preserving existing workspace rows.
+- The Integrations screen provides one complete brand editor built from the existing design system. It validates required facts and preferences, accepts optional verified Media Library assets, reports missing fields, and creates an audit event for every confirmed revision.
+- The database stores only media IDs in the profile. Missing asset IDs are rejected, filesystem paths are never exposed, and deleting or changing unrelated credentials is outside the profile transaction.
+- Rich brand context enters a generation prompt only when the profile is complete and confirmed. The prompt identifies the exact revision and carries target audience, offer, goals, call to action, voice, pillars, branded hashtags, visual direction, and explicit restricted-claim guardrails.
+- Backend tests cover legacy-row migration, validation, asset binding, persistence, revision increments, audit history, and the confirmed-context boundary. A real Chromium workflow confirms the profile and proves that its revision and guardrails reach generation before the exact draft is approved and published.
+- The complete `pnpm check` passed on 2026-08-23: TypeScript, ESLint, Ruff, CLI 15 of 15, backend 52 of 52, Playwright 6 of 6 including the expanded accessibility audit and mobile-keyboard coverage, and the optimized production build.
 
 ## Storage contract
 

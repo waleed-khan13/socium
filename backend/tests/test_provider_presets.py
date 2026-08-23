@@ -81,6 +81,55 @@ def test_hosted_preset_rejects_a_non_official_endpoint() -> None:
         provider.validate_provider_base_url("openai", "https://credential-capture.example/v1")
 
 
+def test_generation_prompt_uses_only_confirmed_brand_preferences() -> None:
+    request = {
+        "channel": "linkedin",
+        "topic": "A useful workflow",
+        "objective": "Teach one practical lesson",
+        "tone": "Direct",
+    }
+    unconfirmed = provider._generation_prompt(
+        request,
+        {
+            "business_name": "Northstar",
+            "business_description": "A private marketing tool.",
+            "profile_confirmed": False,
+            "restricted_claims": ["This must stay private"],
+        },
+    )
+    assert "Northstar" in unconfirmed
+    assert "This must stay private" not in unconfirmed
+    assert "Confirmed brand profile revision" not in unconfirmed
+
+    confirmed = provider._generation_prompt(
+        request,
+        {
+            "business_name": "Northstar",
+            "business_description": "A private marketing tool.",
+            "profile_confirmed": True,
+            "profile_version": 3,
+            "website": "https://northstar.example",
+            "industry": "Marketing technology",
+            "products_services": "Reviewed social publishing",
+            "target_audience": "Privacy-conscious service businesses",
+            "location": "Pakistan",
+            "goals": ["Build trust"],
+            "call_to_action": "Book a workflow review",
+            "language": "Roman Urdu",
+            "tone": "Practical and calm",
+            "content_pillars": ["Local AI", "Human approval"],
+            "restricted_claims": ["Guaranteed growth"],
+            "branded_hashtags": ["#Socium"],
+            "visual_style": "Dark editorial",
+            "brand_colors": ["#f59e0b", "#18181b", "#10b981"],
+        },
+    )
+    assert "Confirmed brand profile revision: 3" in confirmed
+    assert "Preferred language: Roman Urdu" in confirmed
+    assert "Restricted claims or topics: Guaranteed growth" in confirmed
+    assert "Branded hashtags: #Socium" in confirmed
+
+
 def test_anthropic_generation_uses_the_native_messages_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

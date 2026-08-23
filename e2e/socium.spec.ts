@@ -76,9 +76,18 @@ test("runs real publishing and approval workflows", async ({ page }) => {
   await page
     .getByLabel("What the business does")
     .fill("Northstar Studio helps local service businesses build clear, useful marketing systems.");
+  await page.getByLabel("Products or services").fill("Private social publishing workflows with human approval.");
+  await page.getByLabel("Target audience").fill("Privacy-conscious local service businesses.");
+  await page.getByLabel("Marketing goals").fill("Build useful awareness\nEarn qualified conversations");
+  await page.getByLabel("Content pillars").fill("Local-first AI\nHuman-reviewed publishing");
+  await page.getByLabel("Default call to action").fill("Book a practical workflow review.");
+  await page.getByLabel("Restricted claims or topics").fill("Guaranteed growth\nInvented customer results");
+  await page.getByLabel("Branded hashtags").fill("#NorthstarStudio #HumanReviewed");
+  await page.getByLabel("Preferred visual style").fill("Dark, clear layouts with authentic product imagery.");
   await page.getByLabel("Timezone").fill("Asia/Karachi");
-  await page.getByRole("button", { name: "Save profile" }).click();
-  await expect(page.getByText("Business profile saved")).toBeVisible();
+  await page.getByRole("button", { name: "Save & confirm profile" }).click();
+  await expect(page.getByText("Brand profile revision 1 confirmed")).toBeVisible();
+  await expect(page.getByText("CONFIRMED · R1")).toBeVisible();
 
   await page.getByRole("button", { name: "Use cloud API" }).click();
   await page.getByLabel("AI service").click();
@@ -169,6 +178,7 @@ test("runs real publishing and approval workflows", async ({ page }) => {
     modelRequests: number;
     wordpressAuthChecks: number;
     wordpressPublishes: number;
+    lastGenerationRequest: { messages: Array<{ role: string; content: string }> };
   };
   expect(mockState).toMatchObject({
     generationRequests: 1,
@@ -179,6 +189,11 @@ test("runs real publishing and approval workflows", async ({ page }) => {
   expect(mockState.lastPublishedPost).toMatchObject({ status: "publish", title: editedTitle });
   expect(mockState.lastPublishedPost.content).toContain("Define one customer problem");
   expect(mockState.lastPublishedPost.content).toContain("#Reviewed");
+  const brandPrompt = mockState.lastGenerationRequest.messages.find((message) => message.role === "user")?.content ?? "";
+  expect(brandPrompt).toContain("Confirmed brand profile revision: 1");
+  expect(brandPrompt).toContain("Target audience: Privacy-conscious local service businesses.");
+  expect(brandPrompt).toContain("Restricted claims or topics: Guaranteed growth; Invented customer results");
+  expect(brandPrompt).toContain("Branded hashtags: #NorthstarStudio #HumanReviewed");
 
   await navigate(page, "Integrations", "Connections");
   const metaForm = page.getByLabel("Facebook Page ID").locator("xpath=ancestor::form");

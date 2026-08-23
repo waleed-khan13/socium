@@ -37,6 +37,7 @@ const mockState = {
   lastLinkedInOrganizationPost: null,
   lastLinkedInOrganizationHeaders: null,
   lastImageGeneration: null,
+  lastGenerationRequest: null,
 };
 
 function sendJson(response, statusCode, payload) {
@@ -77,7 +78,7 @@ const mockServer = createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
       mockState.generationRequests += 1;
-      await readJson(request);
+      mockState.lastGenerationRequest = await readJson(request);
       const facebookDraft = mockState.generationRequests === 2;
       const instagramDraft = mockState.generationRequests === 3;
       const linkedinDraft = mockState.generationRequests === 4;

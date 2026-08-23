@@ -253,9 +253,8 @@ async def discover_provider(
     }
 
 
-def _generation_prompt(request: dict[str, Any], workspace: dict[str, str]) -> str:
-    return "\n".join(
-        [
+def _generation_prompt(request: dict[str, Any], workspace: dict[str, Any]) -> str:
+    lines = [
             "You are the senior social media copywriter inside a human-approved marketing workflow.",
             "Return only valid JSON with this exact shape:",
             '{"title":"short internal title","body":"publish-ready post","hashtags":["#tag"],"rationale":"one sentence explaining the angle"}',
@@ -263,6 +262,30 @@ def _generation_prompt(request: dict[str, Any], workspace: dict[str, str]) -> st
             "Avoid generic AI phrases, excessive punctuation, and engagement bait.",
             f"Business: {workspace['business_name'] or 'Not provided'}",
             f"Business context: {workspace['business_description'] or 'Not provided'}",
+    ]
+    if workspace.get("profile_confirmed"):
+        lines.extend(
+            [
+                f"Confirmed brand profile revision: {workspace.get('profile_version')}",
+                f"Website: {workspace.get('website') or 'Not provided'}",
+                f"Industry: {workspace.get('industry') or 'Not provided'}",
+                f"Products or services: {workspace.get('products_services')}",
+                f"Target audience: {workspace.get('target_audience')}",
+                f"Business location: {workspace.get('location') or 'Not provided'}",
+                f"Marketing goals: {'; '.join(workspace.get('goals') or [])}",
+                f"Default call to action: {workspace.get('call_to_action')}",
+                f"Preferred language: {workspace.get('language')}",
+                f"Brand voice: {workspace.get('tone')}",
+                f"Content pillars: {'; '.join(workspace.get('content_pillars') or [])}",
+                f"Restricted claims or topics: {'; '.join(workspace.get('restricted_claims') or []) or 'None provided'}",
+                f"Branded hashtags: {' '.join(workspace.get('branded_hashtags') or []) or 'None provided'}",
+                f"Visual direction: {workspace.get('visual_style') or 'Not provided'}",
+                f"Brand colors: {', '.join(workspace.get('brand_colors') or [])}",
+                "Treat restricted claims as prohibited. Use the default CTA and branded hashtags only when relevant.",
+            ]
+        )
+    lines.extend(
+        [
             f"Channel: {request['channel']}",
             f"Topic: {request['topic']}",
             f"Objective: {request['objective'] or 'Build useful awareness'}",
@@ -270,6 +293,7 @@ def _generation_prompt(request: dict[str, Any], workspace: dict[str, str]) -> st
             "Adapt length, structure, and hashtag count to the selected channel.",
         ]
     )
+    return "\n".join(lines)
 
 
 def _parse_content(value: str) -> GeneratedContent:
@@ -404,7 +428,7 @@ async def _generate_json_text(
 
 
 async def generate_content(
-    settings: dict[str, str], request: dict[str, Any], workspace: dict[str, str]
+    settings: dict[str, str], request: dict[str, Any], workspace: dict[str, Any]
 ) -> GeneratedContent:
     if not settings["model"]:
         raise ExternalServiceError("Select a model before generating content.")

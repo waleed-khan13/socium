@@ -65,6 +65,7 @@ from app.poller import TelegramPoller
 from app.scheduler import LocalScheduler
 from app.schemas import (
     ApprovalRequest,
+    BrandProfileUpdate,
     ConnectorAccountUpsert,
     DecisionRequest,
     EditPostRequest,
@@ -153,6 +154,7 @@ from app.store import (
     set_scheduler_paused,
     set_telegram_polling,
     telegram_runtime,
+    update_brand_profile,
     update_image_provider,
     update_provider,
     update_telegram,
@@ -529,6 +531,12 @@ def delete_lead(lead_id: str, payload: LeadDeleteRequest) -> dict[str, object]:
 @app.put("/api/settings/workspace")
 def save_workspace(payload: WorkspaceUpdate) -> dict[str, Any]:
     update_workspace(payload)
+    return {"ok": True, "state": state_response()}
+
+
+@app.put("/api/settings/brand-profile")
+def save_brand_profile(payload: BrandProfileUpdate) -> dict[str, Any]:
+    update_brand_profile(payload)
     return {"ok": True, "state": state_response()}
 
 

@@ -36,7 +36,6 @@ import {
   ShieldCheck,
   Sparkles,
   SquareArrowOutUpRight,
-  TerminalSquare,
   UsersRound,
   RadioTower,
   X,
@@ -46,6 +45,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { LeadsWorkspace } from "@/components/leads-workspace";
+import { BrandProfileCard } from "@/components/brand-profile-card";
 import { MediaLibrary } from "@/components/media-library";
 import { CredentialHelp } from "@/components/credential-help";
 import {
@@ -600,12 +600,6 @@ export function GrowthConsole() {
   const [protocolChoiceRequired, setProtocolChoiceRequired] = useState(false);
   const [discoveryMessage, setDiscoveryMessage] = useState("");
 
-  const [workspaceForm, setWorkspaceForm] = useState({
-    name: "My workspace",
-    businessName: "",
-    description: "",
-    timezone: "Asia/Karachi",
-  });
   const [providerForm, setProviderForm] = useState<{
     kind: ProviderKind;
     baseUrl: string;
@@ -723,7 +717,6 @@ export function GrowthConsole() {
       .then((next) => {
         if (cancelled) return;
         setAppState(next);
-        setWorkspaceForm(next.workspace);
         setProviderForm({
           kind: next.provider.kind,
           baseUrl: next.provider.baseUrl,
@@ -734,6 +727,7 @@ export function GrowthConsole() {
         setTelegramForm({ chatId: next.telegram.chatId, botToken: "" });
         setGenerateForm((current) => ({
           ...current,
+          tone: current.tone === "Clear and confident" ? next.workspace.tone || current.tone : current.tone,
           notifyTelegram: next.telegram.configured,
         }));
         const slack = next.connectors.accounts.find((account) => account.adapterId === "slack");
@@ -842,7 +836,7 @@ export function GrowthConsole() {
   }, [appState?.posts]);
 
   const setup = useMemo(() => {
-    const business = Boolean(appState?.workspace.businessName && appState.workspace.description);
+    const business = Boolean(appState?.workspace.profileComplete);
     const provider = Boolean(appState?.provider.configured);
     const telegram = Boolean(appState?.telegram.configured && appState.telegram.pollingEnabled);
     return { business, provider, telegram, complete: [business, provider, telegram].filter(Boolean).length };
@@ -895,23 +889,6 @@ export function GrowthConsole() {
       void refreshLocalAi(providerForm.baseUrl);
     }
     window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  async function saveWorkspace(event: FormEvent) {
-    event.preventDefault();
-    setBusy("workspace");
-    try {
-      const response = await requestJson<StateResponse>("/api/settings/workspace", {
-        method: "PUT",
-        body: JSON.stringify(workspaceForm),
-      });
-      setAppState(response.state);
-      toast.success("Business profile saved");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save the workspace.");
-    } finally {
-      setBusy(null);
-    }
   }
 
   async function connectProvider(nextForm = providerForm) {
@@ -2305,24 +2282,14 @@ export function GrowthConsole() {
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader className="border-b border-zinc-900">
-                  <div className="flex items-center gap-3">
-                    <IntegrationIcon><TerminalSquare className="size-4" /></IntegrationIcon>
-                    <div><CardTitle>Business context</CardTitle><CardDescription>Grounds the model in your real company information.</CardDescription></div>
-                  </div>
-                  <CardAction><ConnectionStatus configured={setup.business} verified={setup.business} /></CardAction>
-                </CardHeader>
-                <CardContent>
-                  <form className="grid gap-4 lg:grid-cols-2" onSubmit={saveWorkspace}>
-                    <Field htmlFor="workspace-name" label="Workspace name"><Input id="workspace-name" maxLength={80} onChange={(event) => setWorkspaceForm((current) => ({ ...current, name: event.target.value }))} required value={workspaceForm.name} /></Field>
-                    <Field htmlFor="business-name" label="Business name"><Input id="business-name" maxLength={120} onChange={(event) => setWorkspaceForm((current) => ({ ...current, businessName: event.target.value }))} placeholder="Acme Services" required value={workspaceForm.businessName} /></Field>
-                    <div className="lg:col-span-2"><Field htmlFor="business-description" label="What the business does" hint="Facts only"><Textarea id="business-description" maxLength={2000} onChange={(event) => setWorkspaceForm((current) => ({ ...current, description: event.target.value }))} placeholder="Products, audience, location, differentiators and claims the AI may safely use." required rows={4} value={workspaceForm.description} /></Field></div>
-                    <Field htmlFor="timezone" label="Timezone"><Input id="timezone" maxLength={80} onChange={(event) => setWorkspaceForm((current) => ({ ...current, timezone: event.target.value }))} value={workspaceForm.timezone} /></Field>
-                    <div className="flex items-end justify-end"><Button disabled={busy === "workspace"} type="submit">{busy === "workspace" ? <Loader2 className="animate-spin" /> : <Check />} Save profile</Button></div>
-                  </form>
-                </CardContent>
-              </Card>
+              <BrandProfileCard
+                key={`${appState.workspace.profileVersion}-${appState.workspace.updatedAt ?? "new"}`}
+                onStateChange={(state) => {
+                  setAppState(state);
+                  setGenerateForm((current) => ({ ...current, tone: state.workspace.tone || current.tone }));
+                }}
+                workspace={appState.workspace}
+              />
 
               <div className="grid gap-4 xl:grid-cols-2">
                 <Card>
