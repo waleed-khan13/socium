@@ -26,7 +26,7 @@ A new operator can install Socium, choose where durable data and local models li
 3. [x] Separate runtime, durable data, and AI-model storage.
 4. [ ] Add the durable brand profile and content preferences.
 5. [ ] Replace documentation-led setup with a first-run wizard.
-6. [ ] Make local AI installation and hosted/custom provider discovery guided and testable.
+6. [x] Make local AI installation and hosted/custom provider discovery guided and testable.
 7. [ ] Generate brand-aware posts, hashtags, calls to action, and image prompts.
 8. [ ] Add revision-bound Approve, Regenerate, Edit, and Skip actions to dashboard, Telegram, and Slack.
 9. [ ] Replace always-heavy execution with a lightweight supervisor and bounded workers.
@@ -49,6 +49,15 @@ A new operator can install Socium, choose where durable data and local models li
 - `socium storage move` requires the managed runtime to be stopped, copies SQLite/WAL, encryption keys, media, logs, exports, backups, and models, verifies file sizes and SHA-256 hashes, atomically activates the destinations, and preserves both sources.
 - The dashboard reports all three locations, storage type, category usage, drive free space, and low-space/network/removable/cloud-sync warnings.
 - The complete `pnpm check` passed on 2026-08-23: CLI 14 of 14, backend 43 of 43, Playwright 6 of 6 including accessibility and mobile-keyboard coverage, and the optimized production build. A follow-up unsafe-model-directory guard increased the CLI suite to 15 of 15 and its focused rerun also passed.
+
+### Phase 3 evidence
+
+- Integrations now starts with an explicit `Local AI - Recommended` or `Cloud API` choice. Local setup reports detected memory/GPU, Ollama availability, installed models, the configured model directory, and a hardware-sized recommendation.
+- Socium can stream an Ollama model pull through the localhost proxy, reports every crossed percentage from 0 through 100, verifies the installed model, saves it as the selected provider, and requests Ollama to release inference memory after two idle minutes.
+- Hosted presets remain available for OpenRouter, NVIDIA NIM, OpenAI, Gemini, and Anthropic without requiring a Socium account.
+- `Custom / I'm not sure` performs credential-free discovery first. It recognizes Ollama, OpenAI-compatible, and Anthropic-compatible model contracts; when authentication prevents discovery, the operator must select one protocol before the key can be sent to exactly that contract.
+- Provider and local-AI contracts have deterministic backend coverage, including the full 1% download sequence and secret-safe discovery. The focused browser tests prove the local/cloud mode switch, all hosted presets, custom discovery, and the existing complete generate/approve/publish workflow.
+- The complete `pnpm check` passed on 2026-08-23: TypeScript, ESLint, Ruff, CLI 15 of 15, backend 50 of 50, Playwright 6 of 6 including accessibility and mobile-keyboard coverage, and the optimized production build.
 
 ## Storage contract
 

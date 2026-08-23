@@ -90,6 +90,7 @@ async function proxyRequest(request: Request, context: RouteContext) {
       `/api/${path.map(encodeURIComponent).join("/")}${sourceUrl.search}`,
       baseUrl,
     );
+    const isLocalModelPull = path.join("/") === "providers/local/pull";
     const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer();
     const upstream = await fetch(targetUrl, {
       method: request.method,
@@ -97,7 +98,7 @@ async function proxyRequest(request: Request, context: RouteContext) {
       body,
       cache: "no-store",
       redirect: "manual",
-      signal: AbortSignal.timeout(130_000),
+      signal: AbortSignal.timeout(isLocalModelPull ? 6 * 60 * 60_000 : 130_000),
     });
     const responseHeaders = new Headers(upstream.headers);
     for (const header of ["content-encoding", "content-length", "transfer-encoding"]) {

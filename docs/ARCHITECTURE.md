@@ -110,7 +110,11 @@ The connector registry is the public catalog and validation boundary. Account ro
 
 ### AI provider
 
-The text-provider setting stores a provider kind, endpoint, model ID, and encrypted key. Hosted presets pin their official API root so a credential cannot be redirected to a different host through the normal settings API. OpenAI, Gemini, OpenRouter, and NVIDIA use their OpenAI-compatible chat contracts; Anthropic uses its native Messages contract and required version header. Ollama and the custom adapter retain editable local/base URLs. Public state contains only a key-presence flag.
+The text-provider setting stores a provider kind, endpoint, model ID, and encrypted key. Hosted presets pin their official API root so a credential cannot be redirected to a different host through the normal settings API. OpenAI, Gemini, OpenRouter, and NVIDIA use their OpenAI-compatible chat contracts; Anthropic and custom Anthropic-compatible servers use the Messages contract and required version header. Ollama and custom adapters retain editable local/base URLs. Public state contains only a key-presence flag.
+
+Local-AI inspection reports system memory, an optional NVIDIA GPU, Ollama process/API availability, installed models, and the configured durable model directory. A bounded recommendation selects a compact model tier. Ollama pulls stream newline-delimited progress through the loopback proxy; the service fills every crossed integer percentage, verifies the model through `/api/tags`, and only then stores it. Generation sets a short Ollama `keep_alive` so inference memory can unload while Socium is idle.
+
+Custom provider discovery is deliberately two-stage. Credential-free auto mode probes only the entered origin for Ollama and standard `/v1/models` shapes. If the endpoint requires authentication or remains ambiguous, the API returns candidate protocols without accepting a secret. An operator-selected protocol then performs one minimal model-list request with the key and never sprays it across candidate contracts.
 
 ```python
 class ModelProvider(Protocol):

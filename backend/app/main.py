@@ -6,7 +6,7 @@ from typing import Annotated, Any
 
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from app import __version__
 from app.config import get_settings
@@ -79,6 +79,7 @@ from app.schemas import (
     LeadScoreOverrideUpdate,
     LeadStatusUpdate,
     LeadSuppressionUpdate,
+    LocalModelPullRequest,
     MediaAssetUpdate,
     MediaTransformRequest,
     OutreachDecisionRequest,
@@ -86,6 +87,7 @@ from app.schemas import (
     OutreachExportRequest,
     OutreachGenerateRequest,
     PollingUpdate,
+    ProviderDiscoveryRequest,
     ProviderUpdate,
     PublishRequest,
     SchedulePostRequest,
@@ -114,7 +116,9 @@ from app.services.image_generation import (
     test_image_provider,
     validate_image_base_url,
 )
+from app.services.local_ai import local_ai_status, stream_ollama_pull
 from app.services.provider import (
+    discover_provider,
     generate_content,
     generate_outreach,
     test_provider,
@@ -544,6 +548,37 @@ async def provider_health() -> JSONResponse:
     return JSONResponse(
         result.model_dump(by_alias=True, exclude_none=True),
         status_code=200 if result.ok else 502,
+    )
+
+
+@app.post("/api/providers/discover")
+async def provider_discovery(payload: ProviderDiscoveryRequest) -> dict[str, Any]:
+    try:
+        return await discover_provider(payload.base_url, payload.protocol_hint, payload.api_key)
+    except ExternalServiceError as error:
+        raise AppError(error.message) from error
+
+
+@app.get("/api/providers/local/status")
+async def get_local_ai_status(base_url: str = "http://127.0.0.1:11434") -> dict[str, Any]:
+    try:
+        return await local_ai_status(base_url)
+    except ExternalServiceError as error:
+        raise AppError(error.message) from error
+
+
+@app.post("/api/providers/local/pull")
+async def pull_local_model(payload: LocalModelPullRequest) -> StreamingResponse:
+    try:
+        status = await local_ai_status(payload.base_url)
+    except ExternalServiceError as error:
+        raise AppError(error.message) from error
+    if not status["ollamaRunning"]:
+        raise AppError("Ollama is not running. Start Ollama, then try the download again.", 502)
+    return StreamingResponse(
+        stream_ollama_pull(payload.base_url, payload.model),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
 
 

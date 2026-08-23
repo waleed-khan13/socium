@@ -80,8 +80,9 @@ test("runs real publishing and approval workflows", async ({ page }) => {
   await page.getByRole("button", { name: "Save profile" }).click();
   await expect(page.getByText("Business profile saved")).toBeVisible();
 
+  await page.getByRole("button", { name: "Use cloud API" }).click();
   await page.getByLabel("AI service").click();
-  await page.getByRole("option", { name: "Custom OpenAI-compatible" }).click();
+  await page.getByRole("option", { name: "Custom / I'm not sure" }).click();
   await page.getByLabel("Base URL").fill(mockBaseUrl);
   await page.getByLabel("Model").fill("e2e-model");
   await page.getByLabel("API key").fill("e2e-provider-key");
@@ -510,6 +511,7 @@ test("offers simple prebuilt AI providers without a Socium account", async ({ pa
     .locator('xpath=ancestor::div[@data-slot="card"]');
   const providerSelect = providerCard.getByLabel("AI service");
 
+  await providerCard.getByRole("button", { name: "Use cloud API" }).click();
   await providerSelect.click();
   await page.getByRole("option", { name: "OpenAI", exact: true }).click();
   await expect(providerCard.getByText("gpt-5.6-luna", { exact: true })).toBeVisible();
@@ -531,6 +533,7 @@ test("offers simple prebuilt AI providers without a Socium account", async ({ pa
     await expect(providerCard.getByRole("link", { name: credentialLabel })).toHaveAttribute("href", credentialUrl);
   }
 
+  await providerCard.getByRole("button", { name: "Use local AI" }).click();
   await providerSelect.click();
   await page.getByRole("option", { name: "Local AI (Ollama)" }).click();
   await expect(providerCard.getByText("Model auto-detect", { exact: true })).toBeVisible();
@@ -538,10 +541,15 @@ test("offers simple prebuilt AI providers without a Socium account", async ({ pa
   await expect(providerCard.getByRole("button", { name: "Find local model" })).toBeEnabled();
   await expect(providerCard.getByLabel("API key")).toHaveCount(0);
 
+  await providerCard.getByRole("button", { name: "Use cloud API" }).click();
   await providerSelect.click();
-  await page.getByRole("option", { name: "Custom OpenAI-compatible" }).click();
+  await page.getByRole("option", { name: "Custom / I'm not sure" }).click();
   await expect(providerCard.getByLabel("Base URL")).toBeVisible();
   await expect(providerCard.getByLabel("Model")).toBeVisible();
+  await providerCard.getByLabel("Base URL").fill(`${mockBaseUrl}/v1`);
+  await providerCard.getByRole("button", { name: "Detect API & models" }).click();
+  await expect(providerCard.getByText("Provider detected with 1 model(s).")).toBeVisible();
+  await expect(providerCard.getByLabel("Model")).toHaveValue("e2e-model");
 
   const telegramCard = page.getByText("Telegram", { exact: true }).locator('xpath=ancestor::div[@data-slot="card"]');
   await expect(telegramCard.getByRole("link", { name: "Get bot token" })).toHaveAttribute("href", "https://t.me/BotFather");

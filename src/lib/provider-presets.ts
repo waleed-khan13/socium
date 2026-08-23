@@ -95,8 +95,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   },
   {
     kind: "openai-compatible",
-    label: "Custom OpenAI-compatible",
-    description: "Advanced option for LM Studio, LocalAI, or another compatible endpoint.",
+    label: "Custom / I'm not sure",
+    description: "Detect Ollama, LM Studio, LocalAI, or another compatible endpoint without guessing where a secret belongs.",
     baseUrl: "http://127.0.0.1:1234/v1",
     defaultModel: "",
     apiKeyRequired: false,
@@ -104,6 +104,18 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     credentialUrl: "https://github.com/ggml-org/llama.cpp/blob/master/examples/server/README.md",
     credentialLabel: "Setup guide",
     credentialHelp: "LocalAI, LM Studio, llama.cpp, and other compatible servers usually need no key. Use the documentation for your chosen server.",
+  },
+  {
+    kind: "anthropic-compatible",
+    label: "Custom Anthropic-compatible",
+    description: "Uses an Anthropic Messages-compatible gateway after you explicitly select that protocol.",
+    baseUrl: "http://127.0.0.1:4000/v1",
+    defaultModel: "",
+    apiKeyRequired: false,
+    keyPlaceholder: "Optional provider key",
+    credentialUrl: "https://docs.anthropic.com/en/api/messages",
+    credentialLabel: "Messages API contract",
+    credentialHelp: "Use the key issued by your gateway. Socium sends it only after you select the Anthropic-compatible protocol.",
   },
 ];
 

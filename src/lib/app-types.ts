@@ -3,6 +3,7 @@ export type ProviderKind =
   | "openai"
   | "gemini"
   | "anthropic"
+  | "anthropic-compatible"
   | "openrouter"
   | "nvidia"
   | "openai-compatible";
@@ -510,4 +511,37 @@ export interface ProviderConnectionResult {
   message: string;
   models?: string[];
   latencyMs?: number;
+}
+
+export type ProviderProtocolHint = "auto" | "ollama" | "openai-compatible" | "anthropic-compatible";
+
+export interface ProviderDiscoveryResult {
+  ok: boolean;
+  status: "detected" | "failed" | "needs-protocol";
+  detectedKind: ProviderKind | null;
+  normalizedBaseUrl: string;
+  models: string[];
+  message: string;
+  requiresProtocolChoice: boolean;
+  candidates: ProviderProtocolHint[];
+  local: boolean;
+  latencyMs: number;
+}
+
+export interface LocalAiStatus {
+  platform: string;
+  architecture: string;
+  memoryBytes: number;
+  gpu: { name: string; memoryBytes: number } | null;
+  recommendedModel: string;
+  recommendationTier: string;
+  recommendationReason: string;
+  ollamaInstalled: boolean;
+  ollamaRunning: boolean;
+  baseUrl: string;
+  models: string[];
+  selectedRecommendation: string;
+  recommendedModelInstalled: boolean;
+  modelsDirectory: string;
+  error: string | null;
 }

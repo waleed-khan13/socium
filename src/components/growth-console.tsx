@@ -10,8 +10,11 @@ import {
   Check,
   ChevronRight,
   CircleDot,
+  Cloud,
   Clock3,
+  Cpu,
   Database,
+  Download,
   FilePenLine,
   Inbox,
   Images,
@@ -114,9 +117,12 @@ import type {
   GeneratedPost,
   LocalJob,
   LocalJobStatus,
+  LocalAiStatus,
   PostStatus,
   ProviderConnectionResult,
+  ProviderDiscoveryResult,
   ProviderKind,
+  ProviderProtocolHint,
   PublicAppState,
 } from "@/lib/app-types";
 import { requestJson } from "@/lib/api";
@@ -587,6 +593,12 @@ export function GrowthConsole() {
   const [providerVerified, setProviderVerified] = useState(false);
   const [telegramVerified, setTelegramVerified] = useState(false);
   const [providerModels, setProviderModels] = useState<string[]>([]);
+  const [aiSetupMode, setAiSetupMode] = useState<"local" | "cloud">("local");
+  const [localAi, setLocalAi] = useState<LocalAiStatus | null>(null);
+  const [localPull, setLocalPull] = useState<{ percentage: number; status: string } | null>(null);
+  const [customProtocol, setCustomProtocol] = useState<ProviderProtocolHint>("auto");
+  const [protocolChoiceRequired, setProtocolChoiceRequired] = useState(false);
+  const [discoveryMessage, setDiscoveryMessage] = useState("");
 
   const [workspaceForm, setWorkspaceForm] = useState({
     name: "My workspace",
@@ -612,7 +624,7 @@ export function GrowthConsole() {
   const providerCanConnect = Boolean(
     providerForm.baseUrl.trim()
       && !providerNeedsKey
-      && (providerForm.kind !== "openai-compatible" || providerForm.model.trim()),
+      && (!["openai-compatible", "anthropic-compatible"].includes(providerForm.kind) || providerForm.model.trim()),
   );
   const [telegramForm, setTelegramForm] = useState({ botToken: "", chatId: "" });
   const [slackForm, setSlackForm] = useState({
@@ -690,6 +702,21 @@ export function GrowthConsole() {
     }
   }, []);
 
+  const refreshLocalAi = useCallback(async (baseUrl: string) => {
+    try {
+      const status = await requestJson<LocalAiStatus>(
+        `/api/providers/local/status?base_url=${encodeURIComponent(baseUrl)}`,
+        { cache: "no-store" },
+      );
+      setLocalAi(status);
+      setProviderModels(status.models);
+      return status;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not inspect local AI.");
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void requestJson<PublicAppState>("/api/state", { cache: "no-store" })
@@ -703,6 +730,7 @@ export function GrowthConsole() {
           model: next.provider.model,
           apiKey: "",
         });
+        setAiSetupMode(next.provider.kind === "ollama" ? "local" : "cloud");
         setTelegramForm({ chatId: next.telegram.chatId, botToken: "" });
         setGenerateForm((current) => ({
           ...current,
@@ -863,6 +891,9 @@ export function GrowthConsole() {
   function navigate(id: ViewId) {
     setActiveView(id);
     setMobileOpen(false);
+    if (id === "integrations" && aiSetupMode === "local" && !localAi) {
+      void refreshLocalAi(providerForm.baseUrl);
+    }
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -883,14 +914,13 @@ export function GrowthConsole() {
     }
   }
 
-  async function testProviderConnection(event?: FormEvent) {
-    event?.preventDefault();
+  async function connectProvider(nextForm = providerForm) {
     setBusy("provider-test");
     setProviderVerified(false);
     try {
       const saved = await requestJson<StateResponse>("/api/settings/provider", {
         method: "PUT",
-        body: JSON.stringify(providerForm),
+        body: JSON.stringify(nextForm),
       });
       setAppState(saved.state);
       setProviderForm((current) => ({ ...current, apiKey: "" }));
@@ -899,21 +929,120 @@ export function GrowthConsole() {
       const models = result.models ?? [];
       setProviderModels(models);
 
-      if (providerForm.kind === "ollama" && !providerForm.model && models[0]) {
+      if (nextForm.kind === "ollama" && !nextForm.model && models[0]) {
         const detectedModel = models[0];
         const selected = await requestJson<StateResponse>("/api/settings/provider", {
           method: "PUT",
-          body: JSON.stringify({ ...providerForm, apiKey: "", model: detectedModel }),
+          body: JSON.stringify({ ...nextForm, apiKey: "", model: detectedModel }),
         });
         setAppState(selected.state);
         setProviderForm((current) => ({ ...current, apiKey: "", model: detectedModel }));
       }
 
-      setProviderVerified(Boolean(providerForm.model || models[0]));
+      setProviderVerified(Boolean(nextForm.model || models[0]));
       toast.success(result.message, { description: result.latencyMs ? `${result.latencyMs} ms` : undefined });
+      return true;
     } catch (error) {
       setProviderVerified(false);
       toast.error(error instanceof Error ? error.message : "Provider test failed.");
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function testProviderConnection(event?: FormEvent) {
+    event?.preventDefault();
+    await connectProvider();
+  }
+
+  async function discoverCustomProvider() {
+    setBusy("provider-discover");
+    setProviderVerified(false);
+    setDiscoveryMessage("");
+    try {
+      const result = await requestJson<ProviderDiscoveryResult>("/api/providers/discover", {
+        method: "POST",
+        body: JSON.stringify({
+          baseUrl: providerForm.baseUrl,
+          protocolHint: customProtocol,
+          apiKey: customProtocol === "auto" ? "" : providerForm.apiKey,
+        }),
+      });
+      setDiscoveryMessage(result.message);
+      setProtocolChoiceRequired(result.requiresProtocolChoice);
+      if (!result.ok || !result.detectedKind) {
+        toast.warning("Choose the API protocol", { description: result.message });
+        return;
+      }
+      const model = result.models.includes(providerForm.model) ? providerForm.model : result.models[0] ?? "";
+      const detectedForm = {
+        ...providerForm,
+        kind: result.detectedKind,
+        baseUrl: result.normalizedBaseUrl,
+        model,
+      };
+      setProviderModels(result.models);
+      setProviderForm(detectedForm);
+      setCustomProtocol(result.detectedKind === "ollama" ? "ollama" : result.detectedKind as ProviderProtocolHint);
+      setAiSetupMode(result.detectedKind === "ollama" ? "local" : "cloud");
+      const saved = await requestJson<StateResponse>("/api/settings/provider", {
+        method: "PUT",
+        body: JSON.stringify(detectedForm),
+      });
+      setAppState(saved.state);
+      setProviderForm((current) => ({ ...current, apiKey: "" }));
+      setProviderVerified(Boolean(model));
+      toast.success(result.message, { description: model ? `Selected ${model}` : "Choose or download a model next." });
+      if (result.detectedKind === "ollama") await refreshLocalAi(result.normalizedBaseUrl);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not detect this provider.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function downloadRecommendedModel() {
+    if (!localAi?.ollamaRunning) return;
+    const model = localAi.selectedRecommendation;
+    setBusy("local-model-pull");
+    setLocalPull({ percentage: 0, status: `Preparing ${model}` });
+    try {
+      const response = await fetch("/api/providers/local/pull", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ baseUrl: providerForm.baseUrl, model }),
+      });
+      if (!response.ok || !response.body) {
+        const payload = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(payload.error || `Model download failed (${response.status}).`);
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffered = "";
+      let verified = false;
+      while (true) {
+        const { done, value } = await reader.read();
+        buffered += decoder.decode(value, { stream: !done });
+        const lines = buffered.split("\n");
+        buffered = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const update = JSON.parse(line) as { ok: boolean; status?: string; percentage?: number; verified?: boolean; error?: string };
+          if (!update.ok) throw new Error(update.error || "Model download failed.");
+          setLocalPull({ percentage: update.percentage ?? 0, status: update.status || "Downloading model" });
+          verified ||= Boolean(update.verified);
+        }
+        if (done) break;
+      }
+      if (!verified) throw new Error("The model download ended before verification.");
+      const nextForm = { ...providerForm, kind: "ollama" as const, model, apiKey: "" };
+      setProviderForm(nextForm);
+      await connectProvider(nextForm);
+      await refreshLocalAi(providerForm.baseUrl);
+      toast.success(`${model} is installed and ready`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not download the local model.");
     } finally {
       setBusy(null);
     }
@@ -2206,6 +2335,43 @@ export function GrowthConsole() {
                   </CardHeader>
                   <CardContent>
                     <form className="space-y-4" onSubmit={(event) => void testProviderConnection(event)}>
+                      <div className="grid gap-3 sm:grid-cols-2" role="group" aria-label="AI setup type">
+                        <button
+                          aria-label="Use local AI"
+                          aria-pressed={aiSetupMode === "local"}
+                          className={cn("rounded-lg border p-3 text-left transition-colors", aiSetupMode === "local" ? "border-emerald-500/35 bg-emerald-500/8" : "border-zinc-800 bg-black hover:border-zinc-700")}
+                          onClick={() => {
+                            const preset = getProviderPreset("ollama");
+                            setAiSetupMode("local");
+                            setProviderForm({ kind: preset.kind, baseUrl: preset.baseUrl, model: "", apiKey: "" });
+                            setProviderModels([]);
+                            setProviderVerified(false);
+                            setLocalAi(null);
+                            void refreshLocalAi(preset.baseUrl);
+                          }}
+                          type="button"
+                        >
+                          <div className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-xs font-semibold text-zinc-100"><Cpu className="size-4 text-emerald-400" />Local AI</span><Badge className="border-emerald-500/25 bg-emerald-500/8 text-[9px] text-emerald-300" variant="outline">RECOMMENDED</Badge></div>
+                          <p className="mt-2 text-[10px] leading-4 text-zinc-500">Private, no per-post API bill, and your business context stays on this computer.</p>
+                        </button>
+                        <button
+                          aria-label="Use cloud API"
+                          aria-pressed={aiSetupMode === "cloud"}
+                          className={cn("rounded-lg border p-3 text-left transition-colors", aiSetupMode === "cloud" ? "border-sky-500/35 bg-sky-500/8" : "border-zinc-800 bg-black hover:border-zinc-700")}
+                          onClick={() => {
+                            const preset = providerForm.kind === "ollama" ? getProviderPreset("openrouter") : getProviderPreset(providerForm.kind);
+                            setAiSetupMode("cloud");
+                            setProviderForm({ kind: preset.kind, baseUrl: preset.baseUrl, model: preset.defaultModel, apiKey: "" });
+                            setProviderModels([]);
+                            setProviderVerified(false);
+                          }}
+                          type="button"
+                        >
+                          <div className="flex items-center gap-2 text-xs font-semibold text-zinc-100"><Cloud className="size-4 text-sky-400" />Cloud API</div>
+                          <p className="mt-2 text-[10px] leading-4 text-zinc-500">Use OpenRouter, NVIDIA, OpenAI, Gemini, Anthropic, or your own API.</p>
+                        </button>
+                      </div>
+
                       <Field htmlFor="provider-kind" label="AI service">
                         <Select
                           onValueChange={(value) => {
@@ -2219,12 +2385,20 @@ export function GrowthConsole() {
                             });
                             setProviderModels([]);
                             setProviderVerified(false);
+                            setAiSetupMode(preset.kind === "ollama" ? "local" : "cloud");
+                            setCustomProtocol(preset.kind === "anthropic-compatible" ? "anthropic-compatible" : preset.kind === "openai-compatible" ? "auto" : "auto");
+                            setProtocolChoiceRequired(false);
+                            setDiscoveryMessage("");
+                            if (preset.kind === "ollama") {
+                              setLocalAi(null);
+                              void refreshLocalAi(preset.baseUrl);
+                            }
                           }}
                           value={providerForm.kind}
                         >
                           <SelectTrigger className="h-10 w-full rounded-md border-input bg-[#080808]" id="provider-kind"><SelectValue /></SelectTrigger>
                           <SelectContent className="border border-zinc-700 bg-[#0c0c0c]">
-                            {PROVIDER_PRESETS.map((preset) => <SelectItem key={preset.kind} value={preset.kind}>{preset.label}</SelectItem>)}
+                            {PROVIDER_PRESETS.filter((preset) => aiSetupMode === "local" ? preset.kind === "ollama" : preset.kind !== "ollama").map((preset) => <SelectItem key={preset.kind} value={preset.kind}>{preset.label}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       </Field>
@@ -2239,6 +2413,37 @@ export function GrowthConsole() {
                           <span>No Socium account required</span>
                         </div>
                       </div>
+
+                      {providerForm.kind === "ollama" ? (
+                        <div className="space-y-3 rounded-lg border border-emerald-500/15 bg-emerald-500/[0.03] p-3">
+                          {!localAi ? <div className="flex items-center gap-2 text-xs text-zinc-500"><Loader2 className="size-3 animate-spin" />Inspecting this computer and Ollama…</div> : (
+                            <>
+                              <div className="grid gap-2 sm:grid-cols-3">
+                                <div className="rounded-md border border-zinc-900 bg-black p-2"><p className="text-[9px] uppercase tracking-wider text-zinc-600">Memory</p><p className="mt-1 text-xs text-zinc-200">{formatBytes(localAi.memoryBytes)}</p></div>
+                                <div className="rounded-md border border-zinc-900 bg-black p-2"><p className="text-[9px] uppercase tracking-wider text-zinc-600">Graphics</p><p className="mt-1 truncate text-xs text-zinc-200" title={localAi.gpu?.name}>{localAi.gpu?.name || "CPU / unified memory"}</p></div>
+                                <div className="rounded-md border border-zinc-900 bg-black p-2"><p className="text-[9px] uppercase tracking-wider text-zinc-600">Ollama</p><p className={cn("mt-1 text-xs", localAi.ollamaRunning ? "text-emerald-300" : "text-amber-300")}>{localAi.ollamaRunning ? "Running" : localAi.ollamaInstalled ? "Installed, not running" : "Not detected"}</p></div>
+                              </div>
+                              <div className="rounded-md border border-zinc-900 bg-black p-3">
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div><p className="text-xs font-medium text-zinc-200">Recommended: {localAi.selectedRecommendation}</p><p className="mt-1 max-w-xl text-[10px] leading-4 text-zinc-500">{localAi.recommendationReason}</p></div>
+                                  <Badge className="border-zinc-800 text-[9px] text-zinc-500" variant="outline">{localAi.recommendationTier}</Badge>
+                                </div>
+                                <p className="mt-2 truncate font-mono text-[9px] text-zinc-700" title={localAi.modelsDirectory}>Models: {localAi.modelsDirectory}</p>
+                              </div>
+                              {localAi.ollamaRunning && !localAi.recommendedModelInstalled ? (
+                                <div className="space-y-2">
+                                  <Button disabled={busy === "local-model-pull"} onClick={() => void downloadRecommendedModel()} type="button" variant="outline">
+                                    {busy === "local-model-pull" ? <Loader2 className="animate-spin" /> : <Download />} Download {localAi.selectedRecommendation}
+                                  </Button>
+                                  {localPull ? <div className="space-y-1"><div className="flex justify-between text-[10px] text-zinc-500"><span>{localPull.status}</span><span>{localPull.percentage}%</span></div><Progress aria-label="Local model download" value={localPull.percentage} /></div> : null}
+                                </div>
+                              ) : null}
+                              {!localAi.ollamaRunning ? <p className="text-[10px] leading-4 text-amber-300">Start Ollama after installing it, then select Check again. Socium will not start or elevate software without your approval.</p> : null}
+                              <Button onClick={() => { setLocalAi(null); void refreshLocalAi(providerForm.baseUrl); }} size="sm" type="button" variant="ghost"><RefreshCw />Check again</Button>
+                            </>
+                          )}
+                        </div>
+                      ) : null}
 
                       {providerForm.kind !== "ollama" ? (
                         <Field
@@ -2271,14 +2476,36 @@ export function GrowthConsole() {
                         />
                       ) : null}
 
+                      {["openai-compatible", "anthropic-compatible"].includes(providerForm.kind) ? (
+                        <div className="space-y-3 rounded-md border border-violet-500/20 bg-violet-500/[0.04] p-3">
+                          <div className="flex items-start gap-2"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-violet-300" /><div><p className="text-xs font-medium text-zinc-200">Safe API detection</p><p className="mt-1 text-[10px] leading-4 text-zinc-500">Auto detection sends no key. If authentication blocks detection, choose one protocol below; your key is then sent only to that contract on this exact origin.</p></div></div>
+                          {protocolChoiceRequired || providerForm.kind === "anthropic-compatible" ? (
+                            <Field htmlFor="provider-protocol" label="API protocol" hint="Choose what your provider documents">
+                              <Select onValueChange={(value) => value && setCustomProtocol(value as ProviderProtocolHint)} value={customProtocol}>
+                                <SelectTrigger className="h-10 w-full rounded-md border-input bg-[#080808]" id="provider-protocol"><SelectValue /></SelectTrigger>
+                                <SelectContent className="border border-zinc-700 bg-[#0c0c0c]">
+                                  <SelectItem value="openai-compatible">OpenAI-compatible</SelectItem>
+                                  <SelectItem value="anthropic-compatible">Anthropic-compatible</SelectItem>
+                                  <SelectItem value="ollama">Ollama</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </Field>
+                          ) : null}
+                          {discoveryMessage ? <p className="text-[10px] leading-4 text-zinc-400">{discoveryMessage}</p> : null}
+                          <Button disabled={busy === "provider-discover" || !providerForm.baseUrl.trim()} onClick={() => void discoverCustomProvider()} type="button" variant="outline">
+                            {busy === "provider-discover" ? <Loader2 className="animate-spin" /> : <SearchCheck />} {customProtocol === "auto" ? "Detect API & models" : "Test selected protocol"}
+                          </Button>
+                        </div>
+                      ) : null}
+
                       <details className="rounded-md border border-zinc-900 bg-black px-3 py-2.5" key={providerForm.kind} open={providerForm.kind === "openai-compatible" ? true : undefined}>
                         <summary className="cursor-pointer text-xs font-medium text-zinc-500">Advanced settings</summary>
                         <div className="mt-4 space-y-4 border-t border-zinc-900 pt-4">
-                          <Field htmlFor="provider-url" label="Base URL" hint={providerForm.kind === "ollama" ? "Change only if Ollama uses another port" : providerForm.kind === "openai-compatible" ? "Your API root or /v1 URL" : "Managed by this preset"}>
+                          <Field htmlFor="provider-url" label="Base URL" hint={providerForm.kind === "ollama" ? "Change only if Ollama uses another port" : ["openai-compatible", "anthropic-compatible"].includes(providerForm.kind) ? "Your API root or /v1 URL" : "Managed by this preset"}>
                             <Input
-                              disabled={providerForm.kind !== "ollama" && providerForm.kind !== "openai-compatible"}
+                              disabled={!['ollama', 'openai-compatible', 'anthropic-compatible'].includes(providerForm.kind)}
                               id="provider-url"
-                              onChange={(event) => setProviderForm((current) => ({ ...current, baseUrl: event.target.value }))}
+                              onChange={(event) => { setProviderForm((current) => ({ ...current, baseUrl: event.target.value })); setProtocolChoiceRequired(false); setDiscoveryMessage(""); if (providerForm.kind === "ollama") setLocalAi(null); }}
                               required
                               type="url"
                               value={providerForm.baseUrl}
@@ -2291,7 +2518,7 @@ export function GrowthConsole() {
                               maxLength={180}
                               onChange={(event) => setProviderForm((current) => ({ ...current, model: event.target.value }))}
                               placeholder={providerForm.kind === "ollama" ? "Detected after connection" : "model-name"}
-                              required={providerForm.kind === "openai-compatible"}
+                              required={["openai-compatible", "anthropic-compatible"].includes(providerForm.kind)}
                               value={providerForm.model}
                             />
                             <datalist id="provider-models">{providerModels.map((model) => <option key={model} value={model} />)}</datalist>

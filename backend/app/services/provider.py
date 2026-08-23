@@ -23,6 +23,7 @@ PROVIDER_NAMES = {
     "openai": "OpenAI",
     "gemini": "Google Gemini",
     "anthropic": "Anthropic",
+    "anthropic-compatible": "Anthropic-compatible provider",
     "openrouter": "OpenRouter",
     "nvidia": "NVIDIA NIM",
     "openai-compatible": "Provider",
@@ -55,14 +56,14 @@ def _openai_endpoint(base_url: str, resource: str) -> str:
 
 
 def _provider_endpoint(settings: dict[str, str], resource: str) -> str:
-    if settings["kind"] == "openai-compatible":
+    if settings["kind"] in {"openai-compatible", "anthropic-compatible"}:
         return _openai_endpoint(settings["base_url"], resource)
     return f"{validate_provider_base_url(settings['kind'], settings['base_url'])}/{resource}"
 
 
 def _provider_headers(settings: dict[str, str]) -> dict[str, str]:
     api_key = settings["api_key"]
-    if settings["kind"] == "anthropic":
+    if settings["kind"] in {"anthropic", "anthropic-compatible"}:
         return {
             **({"x-api-key": api_key} if api_key else {}),
             "anthropic-version": "2023-06-01",
@@ -147,6 +148,109 @@ async def test_provider(settings: dict[str, str]) -> ProviderConnectionResult:
             message=error.message,
             latency_ms=round((time.monotonic() - started) * 1_000),
         )
+
+
+def _models_from_payload(payload: dict[str, Any], kind: str) -> list[str]:
+    key, identifier = ("models", "name") if kind == "ollama" else ("data", "id")
+    raw_models = payload.get(key) if isinstance(payload.get(key), list) else []
+    return [
+        str(item.get(identifier)) for item in raw_models if isinstance(item, dict) and item.get(identifier)
+    ][:50]
+
+
+async def discover_provider(
+    base_url: str,
+    protocol_hint: str = "auto",
+    api_key: str = "",
+) -> dict[str, Any]:
+    """Detect one provider contract without sending a key to multiple protocols."""
+    normalized = validate_base_url(base_url)
+    started = time.monotonic()
+    if protocol_hint != "auto":
+        result = await test_provider(
+            {
+                "kind": protocol_hint,
+                "base_url": normalized,
+                "model": "",
+                "api_key": api_key,
+            }
+        )
+        return {
+            "ok": result.ok,
+            "status": "detected" if result.ok else "failed",
+            "detectedKind": protocol_hint if result.ok else None,
+            "normalizedBaseUrl": normalized,
+            "models": result.models or [],
+            "message": result.message,
+            "requiresProtocolChoice": False,
+            "candidates": [],
+            "local": protocol_hint == "ollama",
+            "latencyMs": result.latency_ms,
+        }
+
+    # Auto detection is intentionally credential-free. If authentication blocks
+    # inspection, the operator must choose one protocol before the key is used.
+    try:
+        payload = await _request_json(f"{normalized}/api/tags", timeout=4)
+        if isinstance(payload.get("models"), list):
+            models = _models_from_payload(payload, "ollama")
+            return {
+                "ok": True,
+                "status": "detected",
+                "detectedKind": "ollama",
+                "normalizedBaseUrl": normalized,
+                "models": models,
+                "message": f"Ollama detected with {len(models)} installed model(s).",
+                "requiresProtocolChoice": False,
+                "candidates": [],
+                "local": True,
+                "latencyMs": round((time.monotonic() - started) * 1_000),
+            }
+    except ExternalServiceError:
+        pass
+
+    try:
+        payload = await _request_json(_openai_endpoint(normalized, "models"), timeout=6)
+        raw_models = payload.get("data") if isinstance(payload.get("data"), list) else []
+        if raw_models:
+            first = raw_models[0] if isinstance(raw_models[0], dict) else {}
+            detected = (
+                "anthropic-compatible"
+                if "display_name" in first and "owned_by" not in first
+                else "openai-compatible"
+            )
+            models = _models_from_payload(payload, detected)
+            local = normalized.startswith(("http://127.0.0.1", "http://localhost", "http://[::1]"))
+            return {
+                "ok": True,
+                "status": "detected",
+                "detectedKind": detected,
+                "normalizedBaseUrl": normalized,
+                "models": models,
+                "message": f"{PROVIDER_NAMES[detected]} detected with {len(models)} model(s).",
+                "requiresProtocolChoice": False,
+                "candidates": [],
+                "local": local,
+                "latencyMs": round((time.monotonic() - started) * 1_000),
+            }
+    except ExternalServiceError:
+        pass
+
+    return {
+        "ok": False,
+        "status": "needs-protocol",
+        "detectedKind": None,
+        "normalizedBaseUrl": normalized,
+        "models": [],
+        "message": (
+            "The endpoint needs authentication or has no recognizable public model list. "
+            "Choose its API protocol, then run one scoped test."
+        ),
+        "requiresProtocolChoice": True,
+        "candidates": ["openai-compatible", "anthropic-compatible", "ollama"],
+        "local": normalized.startswith(("http://127.0.0.1", "http://localhost", "http://[::1]")),
+        "latencyMs": round((time.monotonic() - started) * 1_000),
+    }
 
 
 def _generation_prompt(request: dict[str, Any], workspace: dict[str, str]) -> str:
@@ -249,13 +353,14 @@ async def _generate_json_text(
                 "format": "json",
                 "messages": [{"role": "user", "content": prompt}],
                 "options": {"temperature": temperature},
+                "keep_alive": "2m",
             },
             timeout=120,
         )
         message = payload.get("message") if isinstance(payload.get("message"), dict) else {}
         return str(message.get("content") or "")
 
-    if settings["kind"] == "anthropic":
+    if settings["kind"] in {"anthropic", "anthropic-compatible"}:
         payload = await _request_json(
             _provider_endpoint(settings, "messages"),
             method="POST",

@@ -118,6 +118,117 @@ def test_anthropic_generation_uses_the_native_messages_contract(
     assert all(message.get("role") != "system" for message in body["messages"])
 
 
+def test_anthropic_compatible_gateway_uses_one_selected_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_request(url: str, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return {"data": [{"id": "gateway-claude", "display_name": "Gateway Claude"}]}
+
+    monkeypatch.setattr(provider, "_request_json", fake_request)
+    result = asyncio.run(
+        provider.discover_provider(
+            "https://gateway.example/v1",
+            protocol_hint="anthropic-compatible",
+            api_key="one-scoped-key",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["detectedKind"] == "anthropic-compatible"
+    assert result["models"] == ["gateway-claude"]
+    assert len(calls) == 1
+    assert calls[0]["url"] == "https://gateway.example/v1/models"
+    assert calls[0]["headers"] == {
+        "x-api-key": "one-scoped-key",
+        "anthropic-version": "2023-06-01",
+    }
+
+
+def test_credential_free_discovery_detects_ollama_and_openai_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ollama_calls: list[dict[str, object]] = []
+
+    async def fake_ollama(url: str, **kwargs):
+        ollama_calls.append({"url": url, **kwargs})
+        return {"models": [{"name": "qwen3.5:4b"}]}
+
+    monkeypatch.setattr(provider, "_request_json", fake_ollama)
+    ollama = asyncio.run(provider.discover_provider("http://127.0.0.1:11434"))
+    assert ollama["detectedKind"] == "ollama"
+    assert ollama["models"] == ["qwen3.5:4b"]
+    assert "headers" not in ollama_calls[0]
+
+    openai_calls: list[dict[str, object]] = []
+
+    async def fake_openai(url: str, **kwargs):
+        openai_calls.append({"url": url, **kwargs})
+        if url.endswith("/api/tags"):
+            raise ExternalServiceError("not Ollama")
+        return {"data": [{"id": "local-model", "object": "model", "owned_by": "local"}]}
+
+    monkeypatch.setattr(provider, "_request_json", fake_openai)
+    openai = asyncio.run(provider.discover_provider("http://127.0.0.1:1234/v1"))
+    assert openai["detectedKind"] == "openai-compatible"
+    assert openai["models"] == ["local-model"]
+    assert len(openai_calls) == 2
+    assert all("headers" not in call for call in openai_calls)
+
+
+def test_unknown_authenticated_endpoint_requires_protocol_before_using_a_key(
+    monkeypatch: pytest.MonkeyPatch,
+    client,
+) -> None:
+    calls: list[str] = []
+
+    async def blocked(url: str, **_kwargs):
+        calls.append(url)
+        raise ExternalServiceError("authentication required")
+
+    monkeypatch.setattr(provider, "_request_json", blocked)
+    result = asyncio.run(provider.discover_provider("https://private-gateway.example/v1"))
+    assert result["ok"] is False
+    assert result["requiresProtocolChoice"] is True
+    assert result["candidates"] == ["openai-compatible", "anthropic-compatible", "ollama"]
+    assert len(calls) == 2
+
+    rejected = client.post(
+        "/api/providers/discover",
+        json={
+            "baseUrl": "https://private-gateway.example/v1",
+            "protocolHint": "auto",
+            "apiKey": "must-not-be-sprayed",
+        },
+    )
+    assert rejected.status_code == 422
+    assert "Choose one API protocol" in rejected.json()["error"]
+
+
+def test_ollama_generation_sets_a_bounded_idle_unload_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_request(url: str, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return {"message": {"content": '{"title":"Local"}'}}
+
+    monkeypatch.setattr(provider, "_request_json", fake_request)
+    output = asyncio.run(
+        provider._generate_json_text(
+            {"kind": "ollama", "base_url": "http://127.0.0.1:11434", "model": "qwen3.5:4b", "api_key": ""},
+            "Draft locally",
+            system_prompt="Stay factual",
+            temperature=0.5,
+        )
+    )
+    assert output == '{"title":"Local"}'
+    assert calls[0]["json_body"]["keep_alive"] == "2m"
+
+
 def test_provider_settings_accept_local_auto_detection_and_presets(client) -> None:
     local = client.put(
         "/api/settings/provider",

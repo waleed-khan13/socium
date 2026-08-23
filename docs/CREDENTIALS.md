@@ -16,13 +16,13 @@ Socium does not require every connector. The minimum useful setup is a business 
 
 | Provider | Exact credential page | What to do |
 | --- | --- | --- |
-| Ollama | [Download Ollama](https://ollama.com/download) | No token. Install Ollama and pull a model from the [model library](https://ollama.com/library). |
+| Ollama | [Download Ollama](https://ollama.com/download) | No token. Install and start Ollama; Socium recommends and downloads a compatible model, or you may choose one from the [model library](https://ollama.com/library). |
 | OpenAI | [OpenAI API keys](https://platform.openai.com/api-keys) | Create a new secret key. ChatGPT subscriptions and API billing are separate. |
 | Google Gemini | [Google AI Studio API keys](https://aistudio.google.com/apikey) | Select/create a Google Cloud project, then create an API key. |
 | Claude / Anthropic | [Claude Console API keys](https://platform.claude.com/settings/keys) | Create a key in the Claude Console. |
 | OpenRouter | [OpenRouter keys](https://openrouter.ai/settings/keys) | Create a key in the default workspace. |
 | NVIDIA NIM | [NVIDIA Build API keys](https://build.nvidia.com/settings/api-keys) | Sign in and generate an NVIDIA API key. |
-| Custom OpenAI-compatible | Your server's documentation | LM Studio, LocalAI, llama.cpp, and similar local servers commonly need no key. If authentication is enabled, use the credential issued by that server. |
+| Custom / I'm not sure | Your server's documentation | Socium first discovers Ollama, OpenAI-compatible, or Anthropic-compatible contracts without a key. If authentication blocks discovery, select the documented protocol before entering its credential. LM Studio, LocalAI, llama.cpp, and similar local servers commonly need no key. |
 
 ## Approval and publishing credentials
 
@@ -49,5 +49,6 @@ Socium does not require every connector. The minimum useful setup is a business 
 
 - Paste tokens only into Socium's localhost UI. Never commit them to Git, screenshots, issues, or documentation.
 - Socium encrypts saved secrets in the local vault and returns only presence flags to the browser after saving.
+- Custom automatic discovery never sends a key. An authenticated custom endpoint requires an explicit protocol choice so the secret is sent to one selected contract rather than tested across candidates.
 - Use the narrowest scopes the connector lists, test the connection, and revoke a credential from its provider dashboard if it is exposed.
 - Do not paste a Telegram token into a browser URL to discover a chat ID; that can leave the token in browser history. Message the bot and use Socium's connection test/listener flow instead.

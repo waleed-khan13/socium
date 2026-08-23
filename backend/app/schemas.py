@@ -37,6 +37,7 @@ class ProviderUpdate(ApiModel):
         "openai",
         "gemini",
         "anthropic",
+        "anthropic-compatible",
         "openrouter",
         "nvidia",
         "openai-compatible",
@@ -351,3 +352,24 @@ class ProviderConnectionResult(ApiModel):
     message: str
     models: list[str] | None = None
     latency_ms: int | None = None
+
+
+class ProviderDiscoveryRequest(ApiModel):
+    base_url: str = Field(min_length=1, max_length=2_048)
+    protocol_hint: Literal["auto", "ollama", "openai-compatible", "anthropic-compatible"] = "auto"
+    api_key: str = Field(default="", max_length=2_000)
+
+    @model_validator(mode="after")
+    def protect_unknown_credentials(self) -> Self:
+        if self.protocol_hint == "auto" and self.api_key:
+            raise ValueError("Choose one API protocol before testing with a secret key.")
+        return self
+
+
+class LocalModelPullRequest(ApiModel):
+    base_url: str = Field(min_length=1, max_length=2_048)
+    model: str = Field(
+        min_length=1,
+        max_length=180,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?$",
+    )
