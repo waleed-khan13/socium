@@ -164,6 +164,18 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
     .getByRole("heading", { level: 2, name: generatedTitle })
     .locator('xpath=ancestor::div[@data-slot="card"]');
   await expect(postCard.getByText("pending", { exact: true })).toBeVisible();
+  await postCard.getByText("Brand content kit · profile R1").click();
+  await expect(postCard.getByText("Book a practical workflow review.", { exact: true })).toBeVisible();
+  await expect(postCard.getByText(/A dark editorial small-business workspace/)).toBeVisible();
+  await expect(postCard.getByText(/Small-business workspace arranged/)).toBeVisible();
+  await postCard.getByRole("button", { name: "Create image from this brief" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Media library" })).toBeVisible();
+  await expect(page.getByLabel("Campaign image prompt")).toHaveValue(/A dark editorial small-business workspace/);
+  await expect(page.getByLabel("Planned alt text")).toHaveValue(/Small-business workspace arranged/);
+  await navigate(page, "Approval queue", "Approval queue");
+  postCard = page
+    .getByRole("heading", { level: 2, name: generatedTitle })
+    .locator('xpath=ancestor::div[@data-slot="card"]');
   await postCard.getByRole("button", { name: "Edit" }).click();
 
   const editDialog = page.getByRole("dialog", { name: "Edit draft" });
@@ -173,6 +185,9 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
     .getByLabel("Post body")
     .fill("Define one customer problem, publish one useful answer, and review the result before repeating the cycle.");
   await editDialog.getByLabel("Hashtags").fill("#Socium #Reviewed");
+  await editDialog.getByLabel("Call to action").fill("Read the reviewed workflow guide.");
+  await editDialog.getByLabel("Image prompt").fill("A reviewed dark editorial workflow scene");
+  await editDialog.getByLabel("Planned alt text").fill("Reviewed workflow scene in a dark editorial workspace");
   await editDialog.getByRole("button", { name: "Save new version" }).click();
   await expect(page.getByText("Draft updated")).toBeVisible();
 
@@ -202,6 +217,10 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
     revision: 2,
     status: "published",
     title: editedTitle,
+    callToAction: "Read the reviewed workflow guide.",
+    imagePrompt: "A reviewed dark editorial workflow scene",
+    imageAltText: "Reviewed workflow scene in a dark editorial workspace",
+    brandProfileVersion: 1,
   });
 
   const mockStateResponse = await page.request.get(`${mockBaseUrl}/__e2e/state`);
@@ -635,6 +654,7 @@ test("manages a real local media asset and hands its HTTPS source to a draft", a
 
   const imagePrompt = "A cyan product launch scene on a deep black background with editorial lighting";
   await page.getByLabel("Campaign image prompt").fill(imagePrompt);
+  await page.getByLabel("Planned alt text").fill("Cyan product launch scene with editorial lighting");
   await page.getByLabel("Aspect").click();
   await page.getByRole("option", { name: "Landscape" }).click();
   await page.getByLabel("Quality").click();
@@ -648,6 +668,10 @@ test("manages a real local media asset and hands its HTTPS source to a draft", a
   await expect(page.getByText("Image saved privately and ready for review.")).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText("AI provenance")).toBeVisible();
   await expect(page.getByTitle(imagePrompt)).toBeVisible();
+
+  const generatedAssetsResponse = await page.request.get("/api/media");
+  const generatedAssets = await generatedAssetsResponse.json();
+  expect(generatedAssets.items[0].altText).toBe("Cyan product launch scene with editorial lighting");
 
   const imageMockResponse = await page.request.get(`${mockBaseUrl}/__e2e/state`);
   const imageMockState = await imageMockResponse.json();

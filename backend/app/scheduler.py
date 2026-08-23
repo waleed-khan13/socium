@@ -151,6 +151,7 @@ class LocalScheduler:
                     generated.data,
                     prompt=request.prompt,
                     negative_prompt=request.negative_prompt,
+                    alt_text=request.alt_text,
                     provider_kind=generated.provider_kind,
                     model=generated.model,
                     parameters=generated.parameters,

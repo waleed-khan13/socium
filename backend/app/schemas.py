@@ -161,6 +161,7 @@ class ImageProviderUpdate(ApiModel):
 class ImageGenerateRequest(ApiModel):
     prompt: str = Field(min_length=3, max_length=4_000)
     negative_prompt: str = Field(default="", max_length=2_000)
+    alt_text: str = Field(default="", max_length=500)
     preset: Literal["square", "portrait", "landscape"] = "square"
     quality: Literal["low", "medium", "high", "auto"] = "auto"
     steps: int = Field(default=28, ge=1, le=80)
@@ -209,6 +210,10 @@ class EditPostRequest(ApiModel):
     title: str = Field(min_length=1, max_length=160)
     body: str = Field(min_length=1, max_length=12_000)
     hashtags: list[str] = Field(default_factory=list, max_length=20)
+    call_to_action: str | None = Field(default=None, max_length=500)
+    image_prompt: str | None = Field(default=None, max_length=4_000)
+    image_negative_prompt: str | None = Field(default=None, max_length=2_000)
+    image_alt_text: str | None = Field(default=None, max_length=500)
     media_url: str | None = Field(default=None, max_length=2_048)
 
     _validate_media_url = field_validator("media_url")(_validate_post_media_url)
@@ -420,6 +425,10 @@ class GeneratedContent(ApiModel):
     title: str
     body: str
     hashtags: list[str] = Field(default_factory=list)
+    call_to_action: str = ""
+    image_prompt: str = ""
+    image_negative_prompt: str = ""
+    image_alt_text: str = ""
     rationale: str = ""
 
 

@@ -27,7 +27,7 @@ A new operator can install Socium, choose where durable data and local models li
 4. [x] Add the durable brand profile and content preferences.
 5. [x] Replace documentation-led setup with a first-run wizard.
 6. [x] Make local AI installation and hosted/custom provider discovery guided and testable.
-7. [ ] Generate brand-aware posts, hashtags, calls to action, and image prompts.
+7. [x] Generate brand-aware posts, hashtags, calls to action, and image prompts.
 8. [ ] Add revision-bound Approve, Regenerate, Edit, and Skip actions to dashboard, Telegram, and Slack.
 9. [ ] Replace always-heavy execution with a lightweight supervisor and bounded workers.
 10. [ ] Add native autostart, tray controls, in-product updates, backup, and rollback.
@@ -77,6 +77,15 @@ A new operator can install Socium, choose where durable data and local models li
 - The brand step reuses the complete confirmed-profile editor and local Media Library boundary from Phase 4. Completion is rejected transactionally until storage, AI, and brand readiness are all true; Telegram, Slack, and publishers remain optional.
 - The browser acceptance flow now starts from a fresh installation, completes the wizard, reloads to prove durable completion, and then continues through generation, exact-revision approval, and publishing. Automated WCAG A/AA checks include the first-run welcome screen.
 - The complete `pnpm check` passed on 2026-08-23: TypeScript, ESLint, Ruff, CLI 15 of 15, backend 53 of 53, Playwright 6 of 6, and the optimized production build.
+
+### Phase 7 evidence
+
+- Text providers now return a structured content kit containing title, channel-ready body, unique hashtags, an explicit call to action, a production-ready image prompt, visual exclusions, planned alt text, and rationale.
+- Deterministic post-processing applies channel-specific body and hashtag limits, normalizes tags, carries confirmed branded hashtags, includes the CTA once in publishable copy, creates safe visual fallbacks for weaker local models, and rejects output containing an explicitly restricted brand claim.
+- Alembic revision `20260823_0015` adds the complete kit and exact confirmed brand-profile revision to every durable post while preserving existing drafts with safe defaults. Editing any kit field creates a new post revision and invalidates prior approval through the existing boundary.
+- The approval queue exposes every generated field for human review. **Create image from this brief** opens Media Studio with prompt, exclusions, and alt text prefilled; generated assets retain that alt text alongside their local AI provenance.
+- Provider, migration, persistence, durable media-worker, and real Chromium workflow coverage prove structured generation, legacy-row compatibility, exact revision edits, one-click visual handoff, approval, and publishing.
+- The complete `pnpm check` passed on 2026-08-23: TypeScript, ESLint, Ruff, CLI 15 of 15, backend 57 of 57, Playwright 6 of 6, and the optimized production build.
 
 ## Storage contract
 

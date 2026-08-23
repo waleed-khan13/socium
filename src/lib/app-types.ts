@@ -121,6 +121,11 @@ export interface GeneratedPost {
   title: string;
   body: string;
   hashtags: string[];
+  callToAction: string;
+  imagePrompt: string;
+  imageNegativePrompt: string;
+  imageAltText: string;
+  brandProfileVersion: number;
   mediaUrl: string | null;
   rationale: string;
   status: PostStatus;

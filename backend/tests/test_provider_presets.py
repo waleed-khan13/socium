@@ -128,6 +128,107 @@ def test_generation_prompt_uses_only_confirmed_brand_preferences() -> None:
     assert "Preferred language: Roman Urdu" in confirmed
     assert "Restricted claims or topics: Guaranteed growth" in confirmed
     assert "Branded hashtags: #Socium" in confirmed
+    assert '"callToAction"' in confirmed
+    assert '"imagePrompt"' in confirmed
+    assert '"imageAltText"' in confirmed
+    assert "Hashtag limit: 5" in confirmed
+    assert "Landscape or square editorial business visual" in confirmed
+
+
+def test_generated_content_is_channel_bounded_and_completes_the_brand_content_kit() -> None:
+    result = provider._parse_content(
+        """
+        {
+          "title": "A useful launch",
+          "body": "A concise practical lesson for the right audience.",
+          "hashtags": ["#Useful_Growth", "bad tag", "#Useful_Growth"],
+          "callToAction": "Book a workflow review.",
+          "imagePrompt": "A dark editorial workspace with amber edge lighting",
+          "imageNegativePrompt": "watermark, illegible text",
+          "imageAltText": "Dark editorial workspace prepared for a campaign review",
+          "rationale": "Matches the confirmed practical voice."
+        }
+        """,
+        {
+            "channel": "x",
+            "topic": "A reviewed launch workflow",
+            "objective": "Build trust",
+            "tone": "Practical",
+        },
+        {
+            "profile_confirmed": True,
+            "call_to_action": "Book a workflow review.",
+            "branded_hashtags": ["#Socium"],
+            "restricted_claims": ["Guaranteed growth"],
+            "brand_colors": ["#f59e0b", "#18181b"],
+            "visual_style": "Dark editorial",
+        },
+    )
+
+    assert result.call_to_action == "Book a workflow review."
+    assert result.body.endswith("Book a workflow review.")
+    assert len(result.body) <= 270
+    assert result.hashtags == ["#Useful_Growth", "#Socium"]
+    assert result.image_prompt.startswith("A dark editorial workspace")
+    assert result.image_negative_prompt == "watermark, illegible text"
+    assert result.image_alt_text.startswith("Dark editorial workspace")
+
+
+def test_generated_content_rejects_a_confirmed_restricted_claim() -> None:
+    with pytest.raises(ExternalServiceError, match="restricted brand claim"):
+        provider._parse_content(
+            '{"title":"Unsafe","body":"Guaranteed growth for every customer.","hashtags":[]}',
+            {
+                "channel": "linkedin",
+                "topic": "A safe workflow",
+                "objective": "Build trust",
+                "tone": "Practical",
+            },
+            {
+                "profile_confirmed": True,
+                "call_to_action": "Learn more.",
+                "branded_hashtags": [],
+                "restricted_claims": ["Guaranteed growth"],
+            },
+        )
+
+
+def test_generated_content_rejects_a_changed_confirmed_call_to_action() -> None:
+    with pytest.raises(ExternalServiceError, match="confirmed brand call to action"):
+        provider._parse_content(
+            '{"title":"Wrong CTA","body":"Useful lesson. Buy immediately.","hashtags":[],"callToAction":"Buy immediately."}',
+            {
+                "channel": "linkedin",
+                "topic": "A safe workflow",
+                "objective": "Build trust",
+                "tone": "Practical",
+            },
+            {
+                "profile_confirmed": True,
+                "call_to_action": "Book a workflow review.",
+                "branded_hashtags": [],
+                "restricted_claims": [],
+            },
+        )
+
+
+def test_generated_content_rejects_a_call_to_action_longer_than_the_channel() -> None:
+    with pytest.raises(ExternalServiceError, match="exceeds the x body limit"):
+        provider._parse_content(
+            '{"title":"Too long","body":"A short post.","hashtags":[]}',
+            {
+                "channel": "x",
+                "topic": "A safe workflow",
+                "objective": "Build trust",
+                "tone": "Practical",
+            },
+            {
+                "profile_confirmed": True,
+                "call_to_action": "A" * 271,
+                "branded_hashtags": [],
+                "restricted_claims": [],
+            },
+        )
 
 
 def test_anthropic_generation_uses_the_native_messages_contract(

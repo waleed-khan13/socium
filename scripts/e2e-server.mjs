@@ -115,6 +115,10 @@ const mockServer = createServer(async (request, response) => {
                   : facebookDraft
                     ? ["#LocalBusiness", "#FacebookMarketing"]
                     : ["#Socium", "#SmallBusiness"],
+                callToAction: "Book a practical workflow review.",
+                imagePrompt: "A dark editorial small-business workspace with amber and emerald lighting, authentic tools, clear composition, no embedded text",
+                imageNegativePrompt: "watermark, distorted logo, unreadable text, duplicate objects",
+                imageAltText: "Small-business workspace arranged for a practical marketing workflow review",
                 rationale: linkedinOrganizationDraft
                   ? "A concise Page post exercises permission-verified LinkedIn organization publishing."
                   : linkedinDraft

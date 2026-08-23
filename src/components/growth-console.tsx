@@ -589,7 +589,22 @@ export function GrowthConsole() {
   const [busy, setBusy] = useState<string | null>(null);
   const [queueFilter, setQueueFilter] = useState<QueueFilter>("all");
   const [editPost, setEditPost] = useState<GeneratedPost | null>(null);
-  const [editForm, setEditForm] = useState({ title: "", body: "", hashtags: "", mediaUrl: "" });
+  const [editForm, setEditForm] = useState({
+    title: "",
+    body: "",
+    hashtags: "",
+    callToAction: "",
+    imagePrompt: "",
+    imageNegativePrompt: "",
+    imageAltText: "",
+    mediaUrl: "",
+  });
+  const [mediaGenerationBrief, setMediaGenerationBrief] = useState<{
+    id: string;
+    prompt: string;
+    negativePrompt: string;
+    altText: string;
+  } | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<GeneratedPost | null>(null);
   const [scheduleAt, setScheduleAt] = useState(defaultScheduleAt);
   const [providerVerified, setProviderVerified] = useState(false);
@@ -1237,6 +1252,10 @@ export function GrowthConsole() {
       title: post.title,
       body: post.body,
       hashtags: post.hashtags.join(" "),
+      callToAction: post.callToAction,
+      imagePrompt: post.imagePrompt,
+      imageNegativePrompt: post.imageNegativePrompt,
+      imageAltText: post.imageAltText,
       mediaUrl: post.mediaUrl ?? "",
     });
   }
@@ -1256,6 +1275,10 @@ export function GrowthConsole() {
           title: editForm.title,
           body: editForm.body,
           hashtags,
+          callToAction: editForm.callToAction,
+          imagePrompt: editForm.imagePrompt,
+          imageNegativePrompt: editForm.imageNegativePrompt,
+          imageAltText: editForm.imageAltText,
           mediaUrl: editForm.mediaUrl || null,
         }),
       });
@@ -2057,6 +2080,18 @@ export function GrowthConsole() {
                               {post.hashtags.map((tag) => <span className="rounded bg-zinc-900 px-1.5 py-1 text-[11px] text-zinc-500" key={tag}>#{tag.replace(/^#/, "")}</span>)}
                             </div>
                           ) : null}
+                          {(post.callToAction || post.imagePrompt || post.imageAltText) ? (
+                            <details className="mt-4 rounded-md border border-violet-500/15 bg-violet-500/5 px-3 py-2.5 text-xs text-zinc-500">
+                              <summary className="cursor-pointer font-medium text-violet-200">Brand content kit · profile R{post.brandProfileVersion}</summary>
+                              <div className="mt-3 space-y-3">
+                                {post.callToAction ? <div><p className="font-mono text-[9px] tracking-[0.12em] text-zinc-600 uppercase">Call to action</p><p className="mt-1 leading-5 text-zinc-300">{post.callToAction}</p></div> : null}
+                                {post.imagePrompt ? <div><p className="font-mono text-[9px] tracking-[0.12em] text-zinc-600 uppercase">Image prompt</p><p className="mt-1 leading-5 text-zinc-400">{post.imagePrompt}</p></div> : null}
+                                {post.imageNegativePrompt ? <div><p className="font-mono text-[9px] tracking-[0.12em] text-zinc-600 uppercase">Visual exclusions</p><p className="mt-1 leading-5 text-zinc-500">{post.imageNegativePrompt}</p></div> : null}
+                                {post.imageAltText ? <div><p className="font-mono text-[9px] tracking-[0.12em] text-zinc-600 uppercase">Planned alt text</p><p className="mt-1 leading-5 text-zinc-400">{post.imageAltText}</p></div> : null}
+                                {post.imagePrompt ? <Button onClick={() => { setMediaGenerationBrief({ id: `${post.id}:${post.revision}`, prompt: post.imagePrompt, negativePrompt: post.imageNegativePrompt, altText: post.imageAltText }); navigate("media"); toast.success("Brand image brief opened in Media Studio"); }} size="sm" variant="outline"><Images />Create image from this brief</Button> : null}
+                              </div>
+                            </details>
+                          ) : null}
                           {post.rationale ? (
                             <details className="mt-4 rounded-md border border-zinc-900 bg-black px-3 py-2.5 text-xs text-zinc-500">
                               <summary className="cursor-pointer font-medium text-zinc-400">AI rationale</summary>
@@ -2144,6 +2179,7 @@ export function GrowthConsole() {
           {!loading && appState && activeView === "media" ? (
             <MediaLibrary
               imageProvider={appState.imageProvider}
+              initialGenerationBrief={mediaGenerationBrief}
               onStateChange={setAppState}
               onUseInDraft={(asset) => {
                 if (!asset.publicSourceUrl) return;
@@ -2762,6 +2798,12 @@ export function GrowthConsole() {
             <Field htmlFor="edit-title" label="Title"><Input id="edit-title" maxLength={160} onChange={(event) => setEditForm((current) => ({ ...current, title: event.target.value }))} required value={editForm.title} /></Field>
             <Field htmlFor="edit-body" label="Post body"><Textarea id="edit-body" maxLength={12000} onChange={(event) => setEditForm((current) => ({ ...current, body: event.target.value }))} required rows={10} value={editForm.body} /></Field>
             <Field htmlFor="edit-tags" label="Hashtags" hint="Separate with spaces or commas"><Input id="edit-tags" onChange={(event) => setEditForm((current) => ({ ...current, hashtags: event.target.value }))} value={editForm.hashtags} /></Field>
+            <Field htmlFor="edit-cta" label="Call to action"><Input id="edit-cta" maxLength={500} onChange={(event) => setEditForm((current) => ({ ...current, callToAction: event.target.value }))} value={editForm.callToAction} /></Field>
+            <Field htmlFor="edit-image-prompt" label="Image prompt"><Textarea id="edit-image-prompt" maxLength={4000} onChange={(event) => setEditForm((current) => ({ ...current, imagePrompt: event.target.value }))} rows={5} value={editForm.imagePrompt} /></Field>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field htmlFor="edit-image-negative-prompt" label="Visual exclusions"><Textarea id="edit-image-negative-prompt" maxLength={2000} onChange={(event) => setEditForm((current) => ({ ...current, imageNegativePrompt: event.target.value }))} rows={3} value={editForm.imageNegativePrompt} /></Field>
+              <Field htmlFor="edit-image-alt-text" label="Planned alt text"><Textarea id="edit-image-alt-text" maxLength={500} onChange={(event) => setEditForm((current) => ({ ...current, imageAltText: event.target.value }))} rows={3} value={editForm.imageAltText} /></Field>
+            </div>
             {editPost?.channel === "instagram" ? (
               <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_160px]">
                 <Field htmlFor="edit-media-url" label="Public image URL" hint="Required for Instagram">

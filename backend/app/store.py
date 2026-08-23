@@ -305,6 +305,11 @@ def _post_dict(post: Post) -> dict[str, Any]:
         "title": post.title,
         "body": post.body,
         "hashtags": list(post.hashtags or []),
+        "callToAction": post.call_to_action,
+        "imagePrompt": post.image_prompt,
+        "imageNegativePrompt": post.image_negative_prompt,
+        "imageAltText": post.image_alt_text,
+        "brandProfileVersion": post.brand_profile_version,
         "mediaUrl": post.media_url,
         "rationale": post.rationale,
         "status": post.status,
@@ -966,7 +971,11 @@ def workspace_runtime() -> dict[str, Any]:
 
 
 def create_post(
-    *, request: dict[str, Any], content: dict[str, Any], provider: dict[str, str]
+    *,
+    request: dict[str, Any],
+    content: dict[str, Any],
+    provider: dict[str, str],
+    brand_profile_version: int = 0,
 ) -> dict[str, Any]:
     now = utc_now()
     post = Post(
@@ -979,6 +988,11 @@ def create_post(
         title=content["title"],
         body=content["body"],
         hashtags=content.get("hashtags", []),
+        call_to_action=content.get("call_to_action", ""),
+        image_prompt=content.get("image_prompt", ""),
+        image_negative_prompt=content.get("image_negative_prompt", ""),
+        image_alt_text=content.get("image_alt_text", ""),
+        brand_profile_version=brand_profile_version,
         media_url=request.get("media_url") or None,
         rationale=content.get("rationale", ""),
         status="pending",
@@ -1048,6 +1062,14 @@ def edit_post(post_id: str, payload: EditPostRequest) -> None:
         post.title = payload.title
         post.body = payload.body
         post.hashtags = payload.hashtags
+        if payload.call_to_action is not None:
+            post.call_to_action = payload.call_to_action
+        if payload.image_prompt is not None:
+            post.image_prompt = payload.image_prompt
+        if payload.image_negative_prompt is not None:
+            post.image_negative_prompt = payload.image_negative_prompt
+        if payload.image_alt_text is not None:
+            post.image_alt_text = payload.image_alt_text
         post.media_url = payload.media_url or None
         post.status = "pending"
         post.revision += 1

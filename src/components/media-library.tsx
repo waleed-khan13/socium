@@ -58,6 +58,12 @@ type TransformPreset = "square" | "portrait" | "landscape";
 
 type Props = {
   imageProvider: PublicImageProviderSettings;
+  initialGenerationBrief?: {
+    id: string;
+    prompt: string;
+    negativePrompt: string;
+    altText: string;
+  } | null;
   onStateChange: (state: PublicAppState) => void;
   onUseInDraft: (asset: MediaAsset) => void;
 };
@@ -95,7 +101,7 @@ async function uploadAsset(file: File) {
   return { asset: payload.asset, deduplicated: Boolean(payload.deduplicated) };
 }
 
-export function MediaLibrary({ imageProvider, onStateChange, onUseInDraft }: Props) {
+export function MediaLibrary({ imageProvider, initialGenerationBrief, onStateChange, onUseInDraft }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const generationActiveRef = useRef(false);
   const [library, setLibrary] = useState<MediaLibraryResponse | null>(null);
@@ -115,8 +121,9 @@ export function MediaLibrary({ imageProvider, onStateChange, onUseInDraft }: Pro
     workflowJson: "",
   });
   const [generateForm, setGenerateForm] = useState({
-    prompt: "",
-    negativePrompt: "",
+    prompt: initialGenerationBrief?.prompt ?? "",
+    negativePrompt: initialGenerationBrief?.negativePrompt ?? "",
+    altText: initialGenerationBrief?.altText ?? "",
     preset: "square" as TransformPreset,
     quality: "auto" as "low" | "medium" | "high" | "auto",
     steps: 28,
@@ -426,6 +433,11 @@ export function MediaLibrary({ imageProvider, onStateChange, onUseInDraft }: Pro
                 <Textarea id="image-negative-prompt" maxLength={2000} onChange={(event) => setGenerateForm((current) => ({ ...current, negativePrompt: event.target.value }))} placeholder="blurry, watermark, distorted text" rows={2} value={generateForm.negativePrompt} />
               </div>
             ) : null}
+            <div className="space-y-2">
+              <Label htmlFor="image-alt-text">Planned alt text</Label>
+              <Textarea id="image-alt-text" maxLength={500} onChange={(event) => setGenerateForm((current) => ({ ...current, altText: event.target.value }))} placeholder="Concise description for people who cannot see the final visual" rows={2} value={generateForm.altText} />
+              <p className="text-[10px] leading-4 text-zinc-600">Saved with the generated asset and editable before publishing.</p>
+            </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="space-y-2">
                 <Label htmlFor="image-preset">Aspect</Label>

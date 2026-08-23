@@ -278,6 +278,7 @@ async def generate_media_asset(payload: ImageGenerateRequest) -> dict[str, Any]:
         generated.data,
         prompt=payload.prompt,
         negative_prompt=payload.negative_prompt,
+        alt_text=payload.alt_text,
         provider_kind=generated.provider_kind,
         model=generated.model,
         parameters=generated.parameters,
@@ -665,11 +666,13 @@ async def generate_post(payload: GeneratePostRequest) -> dict[str, Any]:
     if not provider["base_url"] or not provider["model"]:
         raise AppError("Connect an AI provider and select a model first.")
     request_data = payload.model_dump()
-    generated = await generate_content(provider, request_data, workspace_runtime())
+    workspace = workspace_runtime()
+    generated = await generate_content(provider, request_data, workspace)
     post = create_post(
         request=request_data,
         content=generated.model_dump(),
         provider=provider,
+        brand_profile_version=int(workspace.get("profile_version") or 0),
     )
 
     notifications: list[dict[str, Any]] = []

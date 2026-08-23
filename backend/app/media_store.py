@@ -173,6 +173,7 @@ def _save_asset(
     original_name: str,
     source: str,
     source_asset_id: str | None = None,
+    alt_text: str = "",
     generation_prompt: str | None = None,
     generation_negative_prompt: str | None = None,
     generation_provider: str | None = None,
@@ -180,9 +181,13 @@ def _save_asset(
     generation_parameters: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     digest = hashlib.sha256(data).hexdigest()
-    with read_session() as session:
+    with write_session() as session:
         existing = session.scalar(select(MediaAsset).where(MediaAsset.sha256 == digest))
         if existing is not None:
+            if alt_text and not existing.alt_text:
+                existing.alt_text = alt_text
+                existing.updated_at = utc_now()
+                session.flush()
             return _asset_dict(existing), True
 
     asset_id = str(uuid4())
@@ -208,7 +213,7 @@ def _save_asset(
                 source=source,
                 source_asset_id=source_asset_id,
                 public_source_url=None,
-                alt_text="",
+                alt_text=alt_text,
                 generation_prompt=generation_prompt,
                 generation_negative_prompt=generation_negative_prompt,
                 generation_provider=generation_provider,
@@ -264,6 +269,7 @@ def create_generated_media_asset(
     *,
     prompt: str,
     negative_prompt: str,
+    alt_text: str = "",
     provider_kind: str,
     model: str,
     parameters: dict[str, Any],
@@ -276,6 +282,7 @@ def create_generated_media_asset(
         suffix=suffix,
         original_name=f"ai-image-{utc_now().replace(':', '-').replace('Z', '')}{suffix}",
         source="ai-generated",
+        alt_text=alt_text,
         generation_prompt=prompt,
         generation_negative_prompt=negative_prompt or None,
         generation_provider=provider_kind,

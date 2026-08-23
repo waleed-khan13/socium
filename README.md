@@ -12,6 +12,7 @@ See [docs/V1_RELEASE.md](docs/V1_RELEASE.md) for the current stable contract, [d
 
 - Start with private local AI or select a ready-made OpenAI, Google Gemini, Anthropic Claude, OpenRouter, or NVIDIA NIM connection; safe custom OpenAI-compatible and Anthropic-compatible discovery remains available for advanced servers.
 - Confirm a durable brand profile with business facts, audience, voice, content rules, colors, logo, and reference media; every confirmed revision becomes reusable generation context.
+- Generate a channel-bounded brand content kit containing publish-ready copy, normalized hashtags, an explicit call to action, an image prompt, visual exclusions, and planned alt text; hand the visual brief to Media Studio with one click.
 - Persist settings, drafts, revisions, and audit events in a local SQLite WAL database.
 - Encrypt AI, Telegram, and multi-secret connector credentials with an automatically generated local master key.
 - Import the previous v0.2 JSON store on first launch without deleting the original file.
