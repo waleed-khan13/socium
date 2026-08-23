@@ -489,6 +489,20 @@ export interface PublicAppState {
     persistent: boolean;
     database: string;
   };
+  storage: {
+    locations: Record<"runtime" | "data" | "models", { path: string; kind: "local" | "network" | "removable" | "cloud-synced" }>;
+    usage: {
+      runtimeBytes: number;
+      dataBytes: number;
+      modelsBytes: number;
+      categories: Record<"database" | "credentials" | "media" | "logs" | "exports" | "backups" | "other", number>;
+    };
+    volumes: Record<"data" | "models", { available: boolean; totalBytes: number; freeBytes: number; lowSpace: boolean }>;
+    warnings: string[];
+    healthy: boolean;
+    moveCommand: string;
+    sourcePreservation: string;
+  };
 }
 
 export interface ProviderConnectionResult {

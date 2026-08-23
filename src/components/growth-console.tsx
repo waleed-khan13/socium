@@ -261,6 +261,13 @@ function formatCompactDate(value: string) {
   );
 }
 
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const unit = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return `${(value / 1024 ** unit).toFixed(unit > 1 ? 1 : 0)} ${units[unit]}`;
+}
+
 function defaultScheduleAt() {
   const date = new Date(Date.now() + 60 * 60 * 1_000);
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
@@ -2110,6 +2117,61 @@ export function GrowthConsole() {
                   <div className="flex shrink-0 flex-wrap gap-2">
                     <Badge className="border-emerald-500/25 bg-emerald-500/8 text-emerald-300" variant="outline">1 AI REQUIRED</Badge>
                     <Badge className="border-zinc-700 text-zinc-500" variant="outline">ALL OTHERS OPTIONAL</Badge>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className={cn(appState.storage.warnings.length > 0 && "border-amber-500/25")}>
+                <CardHeader className="border-b border-zinc-900">
+                  <div className="flex items-center gap-3">
+                    <IntegrationIcon><Database className="size-4" /></IntegrationIcon>
+                    <div><CardTitle>Local storage</CardTitle><CardDescription>Runtime updates cannot overwrite your database, media, credentials, or downloaded AI models.</CardDescription></div>
+                  </div>
+                  <CardAction>
+                    <Badge className={appState.storage.healthy ? "border-emerald-500/25 bg-emerald-500/8 text-emerald-300" : "border-amber-500/25 bg-amber-500/8 text-amber-300"} variant="outline">
+                      {appState.storage.healthy ? "HEALTHY" : "CHECK STORAGE"}
+                    </Badge>
+                  </CardAction>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-3 lg:grid-cols-3">
+                    {(["runtime", "data", "models"] as const).map((location) => {
+                      const details = appState.storage.locations[location];
+                      const used = location === "runtime" ? appState.storage.usage.runtimeBytes : location === "data" ? appState.storage.usage.dataBytes : appState.storage.usage.modelsBytes;
+                      const volume = location === "runtime" ? null : appState.storage.volumes[location];
+                      const usedPercent = volume?.totalBytes ? Math.min(100, Math.round(((volume.totalBytes - volume.freeBytes) / volume.totalBytes) * 100)) : 0;
+                      return (
+                        <div className="min-w-0 rounded-lg border border-zinc-800 bg-black/60 p-3" key={location}>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-semibold capitalize text-zinc-200">{location}</p>
+                            <Badge className="border-zinc-800 text-[9px] text-zinc-500" variant="outline">{details.kind}</Badge>
+                          </div>
+                          <p className="mt-2 truncate font-mono text-[10px] text-zinc-500" title={details.path}>{details.path}</p>
+                          <div className="mt-3 flex items-center justify-between text-[10px] text-zinc-600">
+                            <span>{formatBytes(used)} used</span>
+                            {volume ? <span>{formatBytes(volume.freeBytes)} free</span> : null}
+                          </div>
+                          {volume ? <Progress aria-label={location === "data" ? "Durable data disk usage" : "Local AI disk usage"} className="mt-2 h-1" value={usedPercent} /> : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    {Object.entries(appState.storage.usage.categories).map(([category, bytes]) => (
+                      <div className="flex items-center justify-between rounded-md border border-zinc-900 bg-[#050505] px-3 py-2" key={category}>
+                        <span className="text-[10px] capitalize text-zinc-600">{category}</span>
+                        <span className="font-mono text-[10px] text-zinc-300">{formatBytes(bytes)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {appState.storage.warnings.length > 0 ? (
+                    <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3">
+                      {appState.storage.warnings.map((warning) => <p className="flex items-start gap-2 text-xs text-amber-200" key={warning}><AlertTriangle className="mt-0.5 size-3 shrink-0" />{warning}</p>)}
+                    </div>
+                  ) : null}
+                  <div className="flex flex-col gap-2 rounded-md border border-zinc-900 bg-[#050505] p-3 text-xs text-zinc-500 lg:flex-row lg:items-center lg:justify-between">
+                    <div><p className="text-zinc-300">Move storage safely from the terminal</p><p className="mt-1">Socium verifies the copy and keeps the old location until you confirm the new one works.</p></div>
+                    <code className="overflow-x-auto rounded bg-black px-3 py-2 text-[10px] text-amber-300">{appState.storage.moveCommand}</code>
                   </div>
                 </CardContent>
               </Card>

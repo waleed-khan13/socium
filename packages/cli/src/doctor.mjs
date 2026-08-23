@@ -46,14 +46,28 @@ export async function diagnose({
     }
   }
 
+  const dataDirectory = installation?.dataDirectory || paths.dataDirectory;
+  const modelsDirectory = installation?.modelsDirectory || paths.modelsDirectory;
   try {
-    await mkdir(paths.dataDirectory, { recursive: true });
-    const probe = path.join(paths.dataDirectory, `.doctor-${process.pid}`);
+    if (installation && !installation.legacyInstallation) await access(path.join(dataDirectory, ".socium-storage.json"));
+    else await mkdir(dataDirectory, { recursive: true });
+    const probe = path.join(dataDirectory, `.doctor-${process.pid}`);
     await writeFile(probe, "ok", { flag: "wx" });
     await rm(probe, { force: true });
-    checks.push({ name: "Data directory", ok: true, detail: paths.dataDirectory });
+    checks.push({ name: "Data directory", ok: true, detail: dataDirectory });
   } catch (error) {
     checks.push({ name: "Data directory", ok: false, detail: error.message });
+  }
+
+  try {
+    if (installation && !installation.legacyInstallation) await access(path.join(modelsDirectory, ".socium-models.json"));
+    else await mkdir(modelsDirectory, { recursive: true });
+    const probe = path.join(modelsDirectory, `.doctor-${process.pid}`);
+    await writeFile(probe, "ok", { flag: "wx" });
+    await rm(probe, { force: true });
+    checks.push({ name: "Model directory", ok: true, detail: modelsDirectory });
+  } catch (error) {
+    checks.push({ name: "Model directory", ok: false, detail: error.message });
   }
 
   const webPortAvailable = await isPortAvailable(webPort);

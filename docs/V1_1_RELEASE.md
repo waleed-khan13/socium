@@ -23,7 +23,7 @@ A new operator can install Socium, choose where durable data and local models li
 
 1. [x] Freeze the baseline and release contract.
 2. [x] Remove WhatsApp and narrow approval scope.
-3. [ ] Separate runtime, durable data, and AI-model storage.
+3. [x] Separate runtime, durable data, and AI-model storage.
 4. [ ] Add the durable brand profile and content preferences.
 5. [ ] Replace documentation-led setup with a first-run wizard.
 6. [ ] Make local AI installation and hosted/custom provider discovery guided and testable.
@@ -40,6 +40,15 @@ A new operator can install Socium, choose where durable data and local models li
 - Alembic revision `20260823_0013` deletes only legacy WhatsApp connector rows, including their encrypted secret envelopes, while preserving other connector accounts.
 - Connector UI, delivery services, external-service mocks, credential guidance, and active product documentation no longer expose the retired integration.
 - The complete `pnpm check` passed on 2026-08-23: CLI 9 of 9, backend 43 of 43, Playwright 6 of 6, accessibility checks, and the optimized production build.
+
+### Phase 2 evidence
+
+- Installation schema v2 stores independent runtime, durable-data, and local-model paths; existing schema-v1 installs migrate without moving or deleting their data.
+- First install accepts `--data-dir` and `--models-dir`, and runtime updates retain both selections.
+- A Socium storage marker prevents a disconnected or deleted configured drive from falling back to a new blank database.
+- `socium storage move` requires the managed runtime to be stopped, copies SQLite/WAL, encryption keys, media, logs, exports, backups, and models, verifies file sizes and SHA-256 hashes, atomically activates the destinations, and preserves both sources.
+- The dashboard reports all three locations, storage type, category usage, drive free space, and low-space/network/removable/cloud-sync warnings.
+- The complete `pnpm check` passed on 2026-08-23: CLI 14 of 14, backend 43 of 43, Playwright 6 of 6 including accessibility and mobile-keyboard coverage, and the optimized production build. A follow-up unsafe-model-directory guard increased the CLI suite to 15 of 15 and its focused rerun also passed.
 
 ## Storage contract
 

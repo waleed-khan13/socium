@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { chmod, cp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pipeline } from "node:stream/promises";
@@ -8,10 +8,10 @@ import { Readable, Transform } from "node:stream";
 
 import * as tar from "tar";
 
-import { INSTALLATION_SCHEMA_VERSION } from "./constants.mjs";
+import { INSTALLATION_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION } from "./constants.mjs";
 import { assertSafeHttpUrl, readJsonSource, resolveAssetSource, validateManifest } from "./manifest.mjs";
 import { backendFileName, releaseTarget } from "./platform.mjs";
-import { isPathInside, sociumPaths } from "./paths.mjs";
+import { assertSafeManagedDirectory, isPathInside, sociumPaths } from "./paths.mjs";
 
 const RELEASE_DOWNLOAD_IDLE_TIMEOUT_MS = 2 * 60_000;
 
@@ -95,7 +95,7 @@ export async function sha256File(filePath) {
   return hash.digest("hex");
 }
 
-async function writeJsonAtomically(filePath, value) {
+export async function writeJsonAtomically(filePath, value) {
   const temporary = `${filePath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
   await rename(temporary, filePath);
@@ -109,13 +109,68 @@ export async function loadInstallation(paths = sociumPaths()) {
     if (error?.code === "ENOENT") return null;
     throw new Error(`Could not read ${paths.installationFile}: ${error.message}`);
   }
-  if (state.schemaVersion !== INSTALLATION_SCHEMA_VERSION || typeof state.runtimePath !== "string") {
+  if (![1, INSTALLATION_SCHEMA_VERSION].includes(state.schemaVersion) || typeof state.runtimePath !== "string") {
     throw new Error("The Socium installation record is invalid. Run `socium update --force`.");
   }
   if (!isPathInside(paths.runtimesDirectory, state.runtimePath)) {
     throw new Error("The Socium installation record points outside the managed runtime directory.");
   }
+  if (state.schemaVersion === 1) {
+    return {
+      ...state,
+      schemaVersion: INSTALLATION_SCHEMA_VERSION,
+      dataDirectory: paths.dataDirectory,
+      modelsDirectory: paths.modelsDirectory,
+      legacyInstallation: true,
+    };
+  }
+  if (typeof state.dataDirectory !== "string" || typeof state.modelsDirectory !== "string") {
+    throw new Error("The Socium installation record has no durable storage locations. Run `socium update --force`.");
+  }
+  assertSafeManagedDirectory(state.dataDirectory, { label: "Data directory" });
+  assertSafeManagedDirectory(state.modelsDirectory, { label: "Model directory" });
   return state;
+}
+
+async function directoryIsEmpty(directory) {
+  try {
+    return (await readdir(directory)).length === 0;
+  } catch (error) {
+    if (error?.code === "ENOENT") return true;
+    throw error;
+  }
+}
+
+export async function initializeStorageDirectory(dataDirectory, { allowExisting = false } = {}) {
+  const resolved = path.resolve(dataDirectory);
+  const markerPath = path.join(resolved, ".socium-storage.json");
+  if (await pathExists(markerPath)) return markerPath;
+  if (!allowExisting && !(await directoryIsEmpty(resolved))) {
+    throw new Error(`Data directory is not empty and is not managed by Socium: ${resolved}`);
+  }
+  await mkdir(resolved, { recursive: true });
+  await writeJsonAtomically(markerPath, {
+    schemaVersion: STORAGE_SCHEMA_VERSION,
+    product: "socium",
+    createdAt: new Date().toISOString(),
+  });
+  return markerPath;
+}
+
+async function initializeModelsDirectory(modelsDirectory, { allowExisting = false } = {}) {
+  const resolved = path.resolve(modelsDirectory);
+  const markerPath = path.join(resolved, ".socium-models.json");
+  if (await pathExists(markerPath)) return markerPath;
+  if (!allowExisting && !(await directoryIsEmpty(resolved))) {
+    throw new Error(`Model directory is not empty and is not managed by Socium: ${resolved}`);
+  }
+  await mkdir(resolved, { recursive: true });
+  await writeJsonAtomically(markerPath, {
+    schemaVersion: STORAGE_SCHEMA_VERSION,
+    product: "socium-models",
+    createdAt: new Date().toISOString(),
+  });
+  return markerPath;
 }
 
 async function validateBundle(runtimePath, version, target) {
@@ -146,13 +201,33 @@ export async function installRelease({
   force = false,
   downloadIdleTimeoutMs = RELEASE_DOWNLOAD_IDLE_TIMEOUT_MS,
   onDownloadProgress,
+  dataDirectory,
+  modelsDirectory,
   log = console.log,
 } = {}) {
   if (!manifestSource) throw new Error("A release manifest source is required.");
+  const previous = await loadInstallation(paths);
+  if (previous && dataDirectory && path.resolve(dataDirectory) !== path.resolve(previous.dataDirectory)) {
+    throw new Error("Socium is already installed. Use `socium storage move --data-dir <path>` to move existing data safely.");
+  }
+  if (previous && modelsDirectory && path.resolve(modelsDirectory) !== path.resolve(previous.modelsDirectory)) {
+    throw new Error("Socium is already installed. Use `socium storage move --models-dir <path>` to move existing models safely.");
+  }
+  const selectedDataDirectory = assertSafeManagedDirectory(dataDirectory || previous?.dataDirectory || paths.dataDirectory, { label: "Data directory" });
+  const selectedModelsDirectory = assertSafeManagedDirectory(modelsDirectory || previous?.modelsDirectory || paths.modelsDirectory, { label: "Model directory" });
+  if (selectedDataDirectory === selectedModelsDirectory || isPathInside(selectedDataDirectory, selectedModelsDirectory) || isPathInside(selectedModelsDirectory, selectedDataDirectory)) {
+    throw new Error("Data and local AI models must use separate directories.");
+  }
+  for (const selected of [selectedDataDirectory, selectedModelsDirectory]) {
+    if (selected === paths.root || isPathInside(paths.runtimesDirectory, selected) || isPathInside(paths.downloadsDirectory, selected) || isPathInside(selected, paths.runtimesDirectory) || isPathInside(selected, paths.downloadsDirectory)) {
+      throw new Error("Durable data and models cannot be stored inside Socium's replaceable runtime directories.");
+    }
+  }
   await mkdir(paths.downloadsDirectory, { recursive: true });
   await mkdir(paths.runtimesDirectory, { recursive: true });
-  await mkdir(paths.dataDirectory, { recursive: true });
-  await mkdir(paths.logsDirectory, { recursive: true });
+  await initializeStorageDirectory(selectedDataDirectory, { allowExisting: Boolean(previous?.legacyInstallation) });
+  await initializeModelsDirectory(selectedModelsDirectory, { allowExisting: Boolean(previous?.legacyInstallation) });
+  await mkdir(path.join(selectedDataDirectory, "logs"), { recursive: true });
 
   const manifest = await readJsonSource(manifestSource);
   const { asset, version } = validateManifest(manifest, target);
@@ -207,6 +282,8 @@ export async function installRelease({
       version,
       target,
       runtimePath,
+      dataDirectory: selectedDataDirectory,
+      modelsDirectory: selectedModelsDirectory,
       installedAt: new Date().toISOString(),
       manifestSource,
     };

@@ -7,8 +7,16 @@ Socium runs entirely on your computer. The normal installation needs Node.js 20.
 Run the same command in PowerShell, Terminal, or a Linux shell:
 
 ```bash
-npx socium@latest onboard
+npx -y socium@latest onboard
 ```
+
+Choose separate locations during the first install when the system drive is small:
+
+```powershell
+npx -y socium@latest onboard --data-dir "D:\Socium\data" --models-dir "D:\Socium\models"
+```
+
+The data directory contains SQLite and its WAL files, `master.key`, media, logs, exports, and backups. The model directory is separate so large local-AI downloads can use another drive. Both selections are saved and preserved by future updates.
 
 The CLI detects the operating system and CPU, downloads the matching GitHub Release archive over HTTPS, verifies its published SHA-256 checksum, installs it, starts FastAPI and Next.js on loopback, and opens `http://127.0.0.1:3000`. The first start creates SQLite, applies migrations, and generates the local encryption key.
 
@@ -39,6 +47,14 @@ npx socium@latest update --force
 
 `start` and `run` open the same installed runtime. `doctor` checks Node, installation metadata, native API and web files, the data directory, and default ports. `update` verifies and activates the latest runtime without replacing local data.
 
+To move one or both durable locations later, stop Socium with `Ctrl+C`, choose paths that do not already exist, and run:
+
+```powershell
+npx socium storage move --data-dir "E:\Socium\data" --models-dir "E:\Socium\models"
+```
+
+Socium copies and hashes every file before atomically activating the destinations. The old locations are deliberately preserved; start Socium, confirm the dashboard and content are correct, then remove the old copies yourself. If the configured data drive is missing, startup stops with `Data drive unavailable` instead of silently creating an empty database elsewhere.
+
 Stop Socium with `Ctrl+C` before uninstalling. Normal uninstall removes downloaded runtimes but deliberately preserves business data:
 
 ```bash
@@ -61,7 +77,9 @@ That command removes installed runtimes, downloads, the SQLite database, `master
 | macOS | `~/Library/Application Support/Socium` |
 | Linux | `$XDG_DATA_HOME/socium` or `~/.local/share/socium` |
 
-The root contains `runtimes/<version>/<target>` for replaceable program files and `data` for durable local state. Set `SOCIUM_HOME` before every CLI command only when an advanced or portable location is required.
+The root contains `runtimes/<version>/<target>` for replaceable program files plus the installation record. Durable data and local models use the paths chosen during onboarding; their defaults are `data` and `models` under the application root. Set `SOCIUM_HOME` before every CLI command only when an advanced or portable location is required.
+
+Open **Connections → Local storage** in the dashboard to see the runtime, data, and model paths, per-category data use, drive free space, and reliability warnings. Prefer a fixed local drive. SQLite on removable, network, or cloud-synced storage can be disconnected or synchronized at unsafe times.
 
 ## Ports and Labs
 

@@ -19,6 +19,10 @@ def test_health_state_and_encrypted_settings(client) -> None:
     initial = client.get("/api/state")
     assert initial.status_code == 200
     assert initial.json()["runtime"]["database"] == "sqlite"
+    storage = initial.json()["storage"]
+    assert storage["locations"]["data"]["path"]
+    assert storage["usage"]["categories"]["database"] >= 0
+    assert storage["moveCommand"].startswith("socium storage move")
     assert initial.json()["features"] == {
         "edition": "social-v1",
         "labsEnabled": False,

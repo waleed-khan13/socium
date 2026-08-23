@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { stat } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 
@@ -117,6 +117,38 @@ export async function startRuntime({
   if (!(await exists(layout.apiExecutable)) || !(await exists(layout.webServer))) {
     throw new Error("The installed runtime is incomplete. Run `socium update --force`.");
   }
+  const storageMarker = path.join(installation.dataDirectory, ".socium-storage.json");
+  if (!(await exists(installation.dataDirectory)) || (!(await exists(storageMarker)) && !installation.legacyInstallation)) {
+    throw new Error(`Data drive unavailable: ${installation.dataDirectory}`);
+  }
+  if (installation.legacyInstallation && !(await exists(storageMarker))) {
+    await mkdir(installation.dataDirectory, { recursive: true });
+    await writeFile(storageMarker, `${JSON.stringify({ schemaVersion: 1, product: "socium", createdAt: new Date().toISOString() }, null, 2)}\n`, { flag: "wx" });
+  }
+  const modelsMarker = path.join(installation.modelsDirectory, ".socium-models.json");
+  if (!(await exists(installation.modelsDirectory)) || (!(await exists(modelsMarker)) && !installation.legacyInstallation)) {
+    throw new Error(`Local AI model drive unavailable: ${installation.modelsDirectory}`);
+  }
+  if (installation.legacyInstallation && !(await exists(modelsMarker))) {
+    await mkdir(installation.modelsDirectory, { recursive: true });
+    await writeFile(modelsMarker, `${JSON.stringify({ schemaVersion: 1, product: "socium-models", createdAt: new Date().toISOString() }, null, 2)}\n`, { flag: "wx" });
+  }
+
+  const runtimeLock = path.join(installation.dataDirectory, ".socium-runtime.json");
+  try {
+    const existingLock = JSON.parse(await readFile(runtimeLock, "utf8"));
+    if (Number.isInteger(existingLock.pid)) {
+      try {
+        process.kill(existingLock.pid, 0);
+        throw new Error(`Socium is already using this data directory (process ${existingLock.pid}).`);
+      } catch (error) {
+        if (!error?.code) throw error;
+      }
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  await writeFile(runtimeLock, `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`, { flag: "w" });
 
   const children = new Set();
   let stopping = false;
@@ -143,7 +175,10 @@ export async function startRuntime({
     ...process.env,
     SOCIUM_API_HOST: "127.0.0.1",
     SOCIUM_API_PORT: String(apiPort),
-    SOCIUM_DATA_DIR: paths.dataDirectory,
+    SOCIUM_DATA_DIR: installation.dataDirectory,
+    SOCIUM_MODELS_DIR: installation.modelsDirectory,
+    SOCIUM_RUNTIME_DIR: installation.runtimePath,
+    SOCIUM_STORAGE_REQUIRE_MARKER: "1",
     SOCIUM_ENABLE_LABS: labsEnabled ? "1" : "0",
   };
 
@@ -177,6 +212,7 @@ export async function startRuntime({
     return { alreadyRunning: false, exitCode, url };
   } finally {
     stop();
+    await rm(runtimeLock, { force: true });
     for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler);
   }
 }

@@ -14,7 +14,13 @@ from alembic import command
 from app.config import get_settings
 
 settings = get_settings()
-settings.data_dir.mkdir(parents=True, exist_ok=True)
+if settings.storage_marker_required:
+    marker = settings.data_dir / ".socium-storage.json"
+    if not settings.data_dir.is_dir() or not marker.is_file():
+        raise RuntimeError(f"Data drive unavailable: {settings.data_dir}")
+else:
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    settings.models_dir.mkdir(parents=True, exist_ok=True)
 
 engine = create_engine(
     settings.database_url,

@@ -58,10 +58,22 @@ Requirements:
 Windows, macOS, and Linux users do not need Docker, Python, uv, pnpm, or a source checkout:
 
 ```bash
-npx socium@latest onboard
+npx -y socium@latest onboard
 ```
 
-The command downloads the bundle for the current operating system and CPU, verifies its published SHA-256 checksum, keeps the runtime separate from business data, starts both services on loopback, and opens [http://127.0.0.1:3000](http://127.0.0.1:3000). Updates and normal uninstalls preserve the SQLite database, encryption key, media, and exports. See [docs/INSTALLATION.md](docs/INSTALLATION.md) for paths, lifecycle commands, troubleshooting, and permanent removal.
+The `-y` makes the npm download prompt-free. The command downloads the bundle for the current operating system and CPU, verifies its published SHA-256 checksum, keeps the runtime separate from business data, starts both services on loopback, and opens [http://127.0.0.1:3000](http://127.0.0.1:3000). Updates and normal uninstalls preserve the SQLite database, encryption key, media, and exports. See [docs/INSTALLATION.md](docs/INSTALLATION.md) for paths, lifecycle commands, troubleshooting, and permanent removal.
+
+Choose another drive for durable data and large local-AI models during first install:
+
+```powershell
+npx -y socium@latest onboard --data-dir "D:\Socium\data" --models-dir "D:\Socium\models"
+```
+
+Stop Socium before moving existing storage. The move is checksum-verified and keeps the source as a recoverable copy:
+
+```powershell
+npx socium storage move --data-dir "E:\Socium\data" --models-dir "E:\Socium\models"
+```
 
 ### Start or run Socium later
 

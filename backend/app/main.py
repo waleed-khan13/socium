@@ -128,6 +128,7 @@ from app.services.telegram import (
     test_connection,
 )
 from app.slack_listener import SlackSocketListener
+from app.storage_health import storage_state
 from app.store import (
     cancel_job,
     create_post,
@@ -212,6 +213,7 @@ def state_response() -> dict[str, Any]:
     state["connectors"] = public_connector_state(slack_listener.statuses())
     state["leadSummary"] = lead_summary()
     state["icpProfile"] = icp_profile_state()
+    state["storage"] = storage_state()
     return state
 
 
@@ -229,6 +231,11 @@ def health() -> dict[str, Any]:
 @app.get("/api/state")
 def get_state() -> JSONResponse:
     return JSONResponse(state_response(), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/storage")
+def get_storage() -> JSONResponse:
+    return JSONResponse(storage_state(refresh=True), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/media")

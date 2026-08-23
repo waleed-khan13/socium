@@ -9,32 +9,42 @@ import { createDownloadReporter } from "./download-progress.mjs";
 import { installRelease } from "./installation.mjs";
 import { sociumPaths } from "./paths.mjs";
 import { startRuntime } from "./runtime.mjs";
+import { relocateStorage } from "./storage.mjs";
 import { uninstall } from "./uninstall.mjs";
 
 const helpText = `Socium ${CLI_VERSION}
 
 Usage:
-  socium onboard [--manifest URL] [--install-only] [--no-open]
+  socium onboard [--manifest URL] [--data-dir PATH] [--models-dir PATH] [--install-only] [--no-open]
   socium start [--port 3000] [--api-port 8000] [--no-open] [--labs]
   socium run [--port 3000] [--api-port 8000] [--no-open] [--labs]  (alias for start)
   socium update [--manifest URL] [--force]
   socium doctor [--json]
+  socium storage move [--data-dir PATH] [--models-dir PATH]
   socium uninstall --yes [--purge-data]
   socium version
 
 Environment:
   SOCIUM_HOME                 Override the application data/runtime root.
   SOCIUM_RELEASE_MANIFEST     Override the official release manifest URL.
+  SOCIUM_DATA_DIR             Default durable data location for first install.
+  SOCIUM_MODELS_DIR           Default local AI model location for first install.
 `;
 
 function parseArguments(argv) {
   const command = argv[0] || "help";
   const values = new Map();
   const flags = new Set();
-  for (let index = command === "help" ? 0 : 1; index < argv.length; index += 1) {
+  let subcommand;
+  let startIndex = 1;
+  if (command === "storage" && argv[1] && !argv[1].startsWith("--")) {
+    subcommand = argv[1];
+    startIndex = 2;
+  }
+  for (let index = startIndex; index < argv.length; index += 1) {
     const value = argv[index];
     if (!value.startsWith("--")) throw new Error(`Unexpected argument: ${value}`);
-    if (["--manifest", "--port", "--api-port"].includes(value)) {
+    if (["--manifest", "--port", "--api-port", "--data-dir", "--models-dir"].includes(value)) {
       const next = argv[index + 1];
       if (!next || next.startsWith("--")) throw new Error(`${value} requires a value.`);
       values.set(value, next);
@@ -43,7 +53,7 @@ function parseArguments(argv) {
       flags.add(value);
     }
   }
-  return { command, flags, values };
+  return { command, subcommand, flags, values };
 }
 
 function parsePort(value, fallback, name) {
@@ -86,6 +96,20 @@ export async function main(argv, { log = console.log, error = console.error, out
       else printDoctor(result, log);
       return result.ok ? 0 : 1;
     }
+    if (arguments_.command === "storage") {
+      if (arguments_.subcommand !== "move") throw new Error("Usage: socium storage move [--data-dir PATH] [--models-dir PATH]");
+      if (!arguments_.values.has("--data-dir") && !arguments_.values.has("--models-dir")) {
+        throw new Error("Choose --data-dir, --models-dir, or both.");
+      }
+      const result = await relocateStorage({
+        paths,
+        dataDirectory: arguments_.values.get("--data-dir"),
+        modelsDirectory: arguments_.values.get("--models-dir"),
+      });
+      log(`Storage activated at ${result.installation.dataDirectory}`);
+      log("The previous locations were preserved. Confirm Socium starts correctly before removing them manually.");
+      return 0;
+    }
     if (arguments_.command === "uninstall") {
       const result = await uninstall({
         paths,
@@ -100,6 +124,8 @@ export async function main(argv, { log = console.log, error = console.error, out
         manifestSource: manifestSource(arguments_),
         paths,
         force: arguments_.flags.has("--force"),
+        dataDirectory: arguments_.values.get("--data-dir") || process.env.SOCIUM_DATA_DIR,
+        modelsDirectory: arguments_.values.get("--models-dir") || process.env.SOCIUM_MODELS_DIR,
         onDownloadProgress: createDownloadReporter({ stream: output, log }),
         log,
       });
@@ -110,6 +136,8 @@ export async function main(argv, { log = console.log, error = console.error, out
         manifestSource: manifestSource(arguments_),
         paths,
         force: arguments_.flags.has("--force"),
+        dataDirectory: arguments_.values.get("--data-dir") || process.env.SOCIUM_DATA_DIR,
+        modelsDirectory: arguments_.values.get("--models-dir") || process.env.SOCIUM_MODELS_DIR,
         onDownloadProgress: createDownloadReporter({ stream: output, log }),
         log,
       });

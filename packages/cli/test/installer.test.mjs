@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createReadStream } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +18,7 @@ import { resolveAssetSource, validateManifest } from "../src/manifest.mjs";
 import { sociumPaths, sociumRoot } from "../src/paths.mjs";
 import { backendFileName, releaseTarget } from "../src/platform.mjs";
 import { uninstall } from "../src/uninstall.mjs";
+import { relocateStorage } from "../src/storage.mjs";
 
 async function checksum(filePath) {
   const hash = createHash("sha256");
@@ -69,12 +70,56 @@ test("maps application data to native OS locations", () => {
   );
 });
 
+test("rejects application and durable storage roots that are unsafe to purge", async (context) => {
+  assert.throws(
+    () => sociumRoot({ environment: { SOCIUM_HOME: path.parse(process.cwd()).root }, homeDirectory: os.homedir() }),
+    /cannot be a drive/,
+  );
+  const current = await fixture();
+  context.after(() => rm(current.root, { recursive: true, force: true }));
+  await assert.rejects(
+    installRelease({
+      manifestSource: current.manifest,
+      paths: current.paths,
+      target: current.target,
+      dataDirectory: path.parse(current.root).root,
+      modelsDirectory: path.join(current.root, "models-safe"),
+      log() {},
+    }),
+    /Data directory cannot be/,
+  );
+});
+
+test("does not claim an existing non-empty model directory", async (context) => {
+  const current = await fixture();
+  context.after(() => rm(current.root, { recursive: true, force: true }));
+  const modelsDirectory = path.join(current.root, "shared-models");
+  await mkdir(modelsDirectory, { recursive: true });
+  await writeFile(path.join(modelsDirectory, "unrelated.gguf"), "not managed by Socium");
+  await assert.rejects(
+    installRelease({
+      manifestSource: current.manifest,
+      paths: current.paths,
+      target: current.target,
+      modelsDirectory,
+      log() {},
+    }),
+    /Model directory is not empty/,
+  );
+});
+
 test("supports conventional version commands", async () => {
   for (const argument of ["version", "--version", "-v"]) {
     const output = [];
     assert.equal(await main([argument], { log: (value) => output.push(value) }), 0);
     assert.deepEqual(output, ["1.0.5"]);
   }
+});
+
+test("prints help through the named command", async () => {
+  const output = [];
+  assert.equal(await main(["help"], { log: (value) => output.push(value) }), 0);
+  assert.match(output.join("\n"), /socium storage move/);
 });
 
 test("formats and renders terminal download progress", () => {
@@ -248,4 +293,67 @@ test("uninstall preserves data unless purge is explicit", async (context) => {
 
   await uninstall({ paths: current.paths, confirmed: true, purgeData: true });
   await assert.rejects(readFile(database, "utf8"), /ENOENT/);
+});
+
+test("keeps custom durable data and model locations across runtime updates", async (context) => {
+  const current = await fixture();
+  context.after(() => rm(current.root, { recursive: true, force: true }));
+  const dataDirectory = path.join(current.root, "durable", "business-data");
+  const modelsDirectory = path.join(current.root, "ai-models");
+
+  const installed = await installRelease({
+    manifestSource: current.manifest,
+    paths: current.paths,
+    target: current.target,
+    dataDirectory,
+    modelsDirectory,
+    log() {},
+  });
+  assert.equal(installed.dataDirectory, path.resolve(dataDirectory));
+  assert.equal(installed.modelsDirectory, path.resolve(modelsDirectory));
+  assert.match(await readFile(path.join(dataDirectory, ".socium-storage.json"), "utf8"), /socium/);
+
+  const updated = await installRelease({
+    manifestSource: current.manifest,
+    paths: current.paths,
+    target: current.target,
+    force: true,
+    log() {},
+  });
+  assert.equal(updated.dataDirectory, installed.dataDirectory);
+  assert.equal(updated.modelsDirectory, installed.modelsDirectory);
+});
+
+test("moves storage with checksum verification and preserves the source", async (context) => {
+  const current = await fixture();
+  context.after(() => rm(current.root, { recursive: true, force: true }));
+  const installed = await installRelease({
+    manifestSource: current.manifest,
+    paths: current.paths,
+    target: current.target,
+    log() {},
+  });
+  await writeFile(path.join(installed.dataDirectory, "socium.db"), "durable database");
+  await writeFile(path.join(installed.modelsDirectory, "model.gguf"), "local model");
+  const nextData = path.join(current.root, "moved-data");
+  const nextModels = path.join(current.root, "moved-models");
+
+  const result = await relocateStorage({ paths: current.paths, dataDirectory: nextData, modelsDirectory: nextModels });
+  assert.equal(result.sourcePreserved, true);
+  assert.equal(await readFile(path.join(nextData, "socium.db"), "utf8"), "durable database");
+  assert.equal(await readFile(path.join(nextModels, "model.gguf"), "utf8"), "local model");
+  assert.equal(await readFile(path.join(installed.dataDirectory, "socium.db"), "utf8"), "durable database");
+  assert.equal((await loadInstallation(current.paths)).dataDirectory, path.resolve(nextData));
+});
+
+test("reports a selected data drive as unavailable instead of creating a blank location", async (context) => {
+  const current = await fixture();
+  context.after(() => rm(current.root, { recursive: true, force: true }));
+  const installed = await installRelease({ manifestSource: current.manifest, paths: current.paths, target: current.target, log() {} });
+  await rm(installed.dataDirectory, { recursive: true, force: true });
+
+  const report = await diagnose({ paths: current.paths, webPort: 39173, apiPort: 39174 });
+  const dataCheck = report.checks.find((check) => check.name === "Data directory");
+  assert.equal(dataCheck.ok, false);
+  assert.equal(await stat(installed.dataDirectory).then(() => true, () => false), false);
 });
