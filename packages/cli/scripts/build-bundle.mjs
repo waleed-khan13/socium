@@ -80,11 +80,21 @@ if (await exists(path.join(projectRoot, "public"))) {
 }
 await cp(backendBinary, path.join(runtimeRoot, "backend", executableName));
 if (platform !== "win32") await chmod(path.join(runtimeRoot, "backend", executableName), 0o755);
+await mkdir(path.join(runtimeRoot, "bin"), { recursive: true });
+const nodeName = platform === "win32" ? "node.exe" : "node";
+await cp(process.execPath, path.join(runtimeRoot, "bin", nodeName));
+if (platform !== "win32") await chmod(path.join(runtimeRoot, "bin", nodeName), 0o755);
+await mkdir(path.join(runtimeRoot, "controller"), { recursive: true });
+await cp(path.join(packageRoot, "src"), path.join(runtimeRoot, "controller"), { recursive: true });
+await cp(path.join(packageRoot, "node_modules"), path.join(runtimeRoot, "controller", "node_modules"), {
+  recursive: true,
+  dereference: true,
+});
 await writeFile(
   path.join(runtimeRoot, "bundle.json"),
   `${JSON.stringify(
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       product: "socium",
       version,
       target,
@@ -106,7 +116,7 @@ await tar.c(
     portable: true,
     noMtime: true,
   },
-  ["bundle.json", "backend", "web"],
+  ["bundle.json", "backend", "bin", "controller", "web"],
 );
 
 const archiveChecksum = await sha256(archivePath);

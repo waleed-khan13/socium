@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from app import __version__
 from app.approval_actions import regenerate_post_revision
+from app.backup_service import create_backup, list_backups
 from app.config import get_settings
 from app.connector_store import (
     create_connector,
@@ -35,6 +36,13 @@ from app.lead_store import (
     update_lead_compliance,
     update_lead_score_override,
     update_lead_status,
+)
+from app.lifecycle_service import (
+    UpdateMonitor,
+    check_for_updates,
+    lifecycle_state,
+    prepare_update_stream,
+    request_controller_action,
 )
 from app.media_job_store import (
     cancel_media_generation,
@@ -184,17 +192,23 @@ local_scheduler = LocalScheduler(
     worker_timeout_seconds=settings.scheduler_worker_timeout_seconds,
     crash_limit=settings.scheduler_crash_limit,
 )
+update_monitor = UpdateMonitor(lambda: not bool(local_scheduler.status().get("workersActive")))
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     initialize_storage()
+    if settings.migration_check:
+        yield
+        return
     telegram_poller.start()
     slack_listener.start()
     local_scheduler.start()
+    update_monitor.start()
     try:
         yield
     finally:
+        await update_monitor.stop()
         await local_scheduler.stop()
         await slack_listener.stop()
         await telegram_poller.stop()
@@ -235,6 +249,8 @@ def state_response() -> dict[str, Any]:
     state["icpProfile"] = icp_profile_state()
     state["storage"] = storage_state()
     state["onboarding"] = onboarding_state(state["storage"])
+    state["lifecycle"] = lifecycle_state()
+    state["backups"] = list_backups()
     return state
 
 
@@ -257,6 +273,44 @@ def get_state() -> JSONResponse:
 @app.get("/api/storage")
 def get_storage() -> JSONResponse:
     return JSONResponse(storage_state(refresh=True), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/lifecycle")
+def get_lifecycle() -> JSONResponse:
+    return JSONResponse(
+        {"lifecycle": lifecycle_state(), "backups": list_backups()},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/lifecycle/check")
+def check_update() -> dict[str, Any]:
+    return {"ok": True, "lifecycle": check_for_updates(force=True)}
+
+
+@app.post("/api/lifecycle/backup")
+def backup_now() -> dict[str, Any]:
+    return {"ok": True, "backup": create_backup(), "backups": list_backups()}
+
+
+@app.post("/api/lifecycle/prepare")
+def prepare_update() -> StreamingResponse:
+    if local_scheduler.status().get("workersActive"):
+        raise AppError(
+            "Socium is finishing an active job. Try the update again when the scheduler is idle.",
+            status_code=409,
+        )
+    return StreamingResponse(prepare_update_stream(), media_type="application/x-ndjson")
+
+
+@app.post("/api/lifecycle/{action}")
+def lifecycle_action(action: str) -> dict[str, Any]:
+    if action in {"update", "rollback"} and local_scheduler.status().get("workersActive"):
+        raise AppError(
+            "Socium is finishing an active job. Try the update again when the scheduler is idle.",
+            status_code=409,
+        )
+    return request_controller_action(action)
 
 
 @app.put("/api/onboarding")

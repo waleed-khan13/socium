@@ -16,11 +16,16 @@ npx -y socium@latest onboard --data-dir "D:\\Socium\\data" --models-dir "D:\\Soc
 npx socium start
 npx socium doctor
 npx socium update
+npx socium update check
+npx socium backup create
+npx socium backup list
+npx socium rollback
+npx socium autostart enable
 npx socium storage move --data-dir "E:\\Socium\\data" --models-dir "E:\\Socium\\models"
 npx socium uninstall --yes
 ```
 
-`--data-dir` selects the durable location for SQLite, its WAL, `master.key`, media, logs, exports, and backups. `--models-dir` independently selects the usually much larger local-AI model location. Updates retain both choices. Stop Socium before `storage move`; it verifies every copied file, atomically activates the new paths, and leaves the source untouched until you confirm the new installation starts correctly.
+`--data-dir` selects the durable location for SQLite, its WAL, `master.key`, media, logs, exports, and backups. `--models-dir` independently selects the usually much larger local-AI model location. Updates retain both choices. `onboard --autostart` enables start-after-login; `--no-shortcuts` skips native shortcuts. Updates create a checksum-backed data backup and migration health check before activation. Stop Socium before `backup restore` or `storage move`; both preserve the replaced/source directory until you confirm the result.
 
 If a configured data drive is disconnected, Socium reports `Data drive unavailable` and does not create a blank database at a fallback path. The dashboard reports category usage, free space, and warnings for low-space, removable, network, or cloud-synced locations.
 

@@ -703,7 +703,7 @@ test("offers simple prebuilt AI providers without a Socium account", async ({ pa
     await page.getByRole("option", { name: option }).click();
     await expect(providerCard.getByText(model, { exact: true })).toBeVisible();
     await expect(providerCard.getByRole("link", { name: credentialLabel })).toHaveAttribute("href", credentialUrl);
-  }
+}
 
   await providerCard.getByRole("button", { name: "Use local AI" }).click();
   await providerSelect.click();
@@ -885,4 +885,17 @@ test("supports keyboard navigation on the mobile layout", async ({ page }, testI
   await navigationDialog.getByRole("button", { name: "Activity" }).click();
   await expect(navigationDialog).toBeHidden();
   await expect(page.getByRole("heading", { level: 1, name: "Activity" })).toBeVisible();
+});
+
+test("shows safe update, backup, and runtime controls", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await dismissOnboardingIfPresent(page);
+  await navigate(page, "System", "System & updates");
+  await expect(page.getByText("Application updates", { exact: true })).toBeVisible();
+  await expect(page.getByText("Only version and platform metadata leave this machine.")).toBeVisible();
+  await page.getByRole("button", { name: "Back up local data now" }).click();
+  await expect(page.getByText("Verified local backup created")).toBeVisible();
+  await expect(page.getByText(/\d+ SAVED/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Install safely" })).toBeDisabled();
+  await expectNoAccessibilityViolations(page, testInfo, "system-lifecycle");
 });

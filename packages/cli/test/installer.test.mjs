@@ -11,14 +11,17 @@ import test from "node:test";
 import * as tar from "tar";
 
 import { main } from "../src/cli.mjs";
+import { createBackup, listBackups, restoreBackup } from "../src/backup.mjs";
 import { createDownloadReporter, formatDownloadProgress } from "../src/download-progress.mjs";
 import { diagnose } from "../src/doctor.mjs";
 import { installRelease, loadInstallation } from "../src/installation.mjs";
 import { resolveAssetSource, validateManifest } from "../src/manifest.mjs";
+import { writePortableLauncher } from "../src/native-integration.mjs";
 import { sociumPaths, sociumRoot } from "../src/paths.mjs";
 import { backendFileName, releaseTarget } from "../src/platform.mjs";
 import { uninstall } from "../src/uninstall.mjs";
 import { relocateStorage } from "../src/storage.mjs";
+import { compareVersions } from "../src/lifecycle.mjs";
 
 async function checksum(filePath) {
   const hash = createHash("sha256");
@@ -176,6 +179,43 @@ test("logs every download percentage when output is not interactive", () => {
   assert.match(messages[4], /100%/);
 });
 
+test("compares stable release versions", () => {
+  assert.equal(compareVersions("1.0.5", "1.1.0"), -1);
+  assert.equal(compareVersions("2.0.0", "1.9.9"), 1);
+  assert.equal(compareVersions("1.0.5", "1.0.5"), 0);
+});
+
+test("creates checksummed backups and restores without deleting the previous data", async (context) => {
+  const current = await fixture();
+  context.after(() => rm(current.root, { recursive: true, force: true }));
+  const installed = await installRelease({ manifestSource: current.manifest, paths: current.paths, target: current.target, log() {} });
+  const businessFile = path.join(installed.dataDirectory, "business.json");
+  await writeFile(businessFile, "before-update");
+  const backup = await createBackup({ paths: current.paths, log() {} });
+  assert.equal((await listBackups({ paths: current.paths })).length, 1);
+  await writeFile(businessFile, "changed");
+  const restored = await restoreBackup({ backupPath: backup.path, paths: current.paths, log() {} });
+  assert.equal(await readFile(businessFile, "utf8"), "before-update");
+  assert.match(restored.preservedDirectory, /before-restore/);
+  assert.equal(await readFile(path.join(restored.preservedDirectory, "business.json"), "utf8"), "changed");
+});
+
+test("creates a stable launcher that resolves the active runtime after updates", async (context) => {
+  const current = await fixture();
+  context.after(() => rm(current.root, { recursive: true, force: true }));
+  const installed = await installRelease({ manifestSource: current.manifest, paths: current.paths, target: current.target, log() {} });
+  const bundledNode = path.join(installed.runtimePath, "bin", process.platform === "win32" ? "node.exe" : "node");
+  await mkdir(path.dirname(bundledNode), { recursive: true });
+  await writeFile(bundledNode, "fixture node");
+
+  const launcher = await writePortableLauncher(current.paths, installed);
+  const script = await readFile(launcher.script, "utf8");
+  assert.equal(await readFile(launcher.node, "utf8"), "fixture node");
+  assert.match(script, /installation\.runtimePath/);
+  assert.match(script, /controller\.mjs/);
+  assert.doesNotMatch(script, new RegExp(installed.runtimePath.replaceAll("\\", "\\\\")));
+});
+
 test("rejects wrong-product and path-like release metadata", () => {
   const target = releaseTarget();
   const asset = { url: "bundle.tar.gz", sha256: "a".repeat(64) };
@@ -290,6 +330,7 @@ test("uninstall preserves data unless purge is explicit", async (context) => {
   const result = await uninstall({ paths: current.paths, confirmed: true });
   assert.equal(result.preservedData, true);
   assert.equal(await readFile(database, "utf8"), "durable data");
+  assert.equal(await stat(current.paths.launcherDirectory).then(() => true, () => false), false);
 
   await uninstall({ paths: current.paths, confirmed: true, purgeData: true });
   await assert.rejects(readFile(database, "utf8"), /ENOENT/);

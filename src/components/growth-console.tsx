@@ -15,6 +15,7 @@ import {
   Cpu,
   Database,
   Download,
+  HardDriveDownload,
   FilePenLine,
   Inbox,
   Images,
@@ -134,7 +135,7 @@ import {
   type WordPressConnectorForm,
 } from "@/components/wordpress-connector-card";
 
-type ViewId = "command" | "guide" | "create" | "queue" | "media" | "leads" | "seo" | "scheduler" | "integrations" | "activity";
+type ViewId = "command" | "guide" | "create" | "queue" | "media" | "leads" | "seo" | "scheduler" | "integrations" | "system" | "activity";
 type QueueFilter = "all" | PostStatus;
 
 type StateResponse = {
@@ -159,6 +160,7 @@ const navigation: NavItem[] = [
   { id: "seo", label: "Local SEO lab", icon: SearchCheck, preview: true },
   { id: "scheduler", label: "Scheduler", icon: Clock3 },
   { id: "integrations", label: "Integrations", icon: PlugZap },
+  { id: "system", label: "System", icon: Settings2 },
   { id: "activity", label: "Activity", icon: Activity },
 ];
 
@@ -207,6 +209,11 @@ const pageMeta: Record<ViewId, { eyebrow: string; title: string; description: st
     eyebrow: "Bring your own stack",
     title: "Connections",
     description: "Connect local or hosted AI and outbound-only approval channels.",
+  },
+  system: {
+    eyebrow: "Safe local lifecycle",
+    title: "System & updates",
+    description: "Check releases, create verified backups, and control the installed local runtime.",
   },
   activity: {
     eyebrow: "Local audit trail",
@@ -620,6 +627,7 @@ export function GrowthConsole() {
   const [aiSetupMode, setAiSetupMode] = useState<"local" | "cloud">("local");
   const [localAi, setLocalAi] = useState<LocalAiStatus | null>(null);
   const [localPull, setLocalPull] = useState<{ percentage: number; status: string } | null>(null);
+  const [updateDownload, setUpdateDownload] = useState<{ percentage: number; downloadedBytes: number; totalBytes: number | null } | null>(null);
   const [customProtocol, setCustomProtocol] = useState<ProviderProtocolHint>("auto");
   const [protocolChoiceRequired, setProtocolChoiceRequired] = useState(false);
   const [discoveryMessage, setDiscoveryMessage] = useState("");
@@ -1295,6 +1303,81 @@ export function GrowthConsole() {
       toast.error(error instanceof Error ? error.message : "Could not update the local scheduler.");
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function checkForAppUpdate() {
+    setBusy("update-check");
+    try {
+      const response = await requestJson<{ ok: boolean; lifecycle: PublicAppState["lifecycle"] }>("/api/lifecycle/check", { method: "POST" });
+      setAppState((current) => current ? { ...current, lifecycle: response.lifecycle } : current);
+      toast.success(response.lifecycle.updateAvailable ? `Socium ${response.lifecycle.latestVersion} is ready` : "Socium is up to date");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not check for updates.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function createAppBackup() {
+    setBusy("backup-create");
+    try {
+      const response = await requestJson<{ ok: boolean; backups: PublicAppState["backups"] }>("/api/lifecycle/backup", { method: "POST" });
+      setAppState((current) => current ? { ...current, backups: response.backups } : current);
+      toast.success("Verified local backup created");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not create the backup.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function requestRuntimeAction(action: "update" | "rollback" | "restart" | "stop") {
+    setBusy(`lifecycle-${action}`);
+    try {
+      await requestJson<{ ok: boolean }>(`/api/lifecycle/${action}`, { method: "POST" });
+      toast.success(action === "update" ? "Update started; Socium will reopen automatically" : `${action[0].toUpperCase()}${action.slice(1)} requested`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : `Could not ${action} Socium.`);
+      setBusy(null);
+    }
+  }
+
+  async function installAppUpdate() {
+    setBusy("update-prepare");
+    setUpdateDownload({ percentage: 0, downloadedBytes: 0, totalBytes: null });
+    try {
+      const response = await fetch("/api/lifecycle/prepare", { method: "POST" });
+      if (!response.ok || !response.body) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error || "Could not prepare the update.");
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let pending = "";
+      let ready = false;
+      while (true) {
+        const { done, value } = await reader.read();
+        pending += decoder.decode(value, { stream: !done });
+        const lines = pending.split("\n");
+        pending = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const event = JSON.parse(line) as { status: string; percentage?: number | null; downloadedBytes?: number; totalBytes?: number | null; error?: string };
+          if (event.status === "error") throw new Error(event.error || "Update download failed.");
+          setUpdateDownload({ percentage: event.percentage ?? 0, downloadedBytes: event.downloadedBytes ?? 0, totalBytes: event.totalBytes ?? null });
+          if (event.status === "ready") ready = true;
+        }
+        if (done) break;
+      }
+      if (!ready) throw new Error("The update download ended before checksum verification.");
+      setBusy("lifecycle-update");
+      await requestJson<{ ok: boolean }>("/api/lifecycle/update", { method: "POST" });
+      toast.success("Update verified; Socium will reopen automatically");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not install the update.");
+      setBusy(null);
+      setUpdateDownload(null);
     }
   }
 
@@ -2909,6 +2992,67 @@ export function GrowthConsole() {
                     </Card>
                   ))}
                 </div>
+              </div>
+            </div>
+          ) : null}
+
+          {!loading && appState && activeView === "system" ? (
+            <div className="space-y-4">
+              <Card className="border-emerald-500/20 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.08),transparent_42%),#070707]">
+                <CardHeader className="border-b border-zinc-900">
+                  <div className="flex items-center gap-3">
+                    <IntegrationIcon><Download className="size-4" /></IntegrationIcon>
+                    <div><CardTitle>Application updates</CardTitle><CardDescription>One release check per day while idle. Only version and platform metadata leave this machine.</CardDescription></div>
+                  </div>
+                  <CardAction>
+                    <Badge className={appState.lifecycle.updateAvailable ? "border-amber-500/25 bg-amber-500/8 text-amber-300" : "border-emerald-500/25 bg-emerald-500/8 text-emerald-300"} variant="outline">
+                      {appState.lifecycle.updateAvailable ? "UPDATE READY" : "UP TO DATE"}
+                    </Badge>
+                  </CardAction>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-md border border-zinc-900 bg-black p-3"><p className="text-[10px] uppercase tracking-[0.14em] text-zinc-700">Installed</p><p className="mt-2 font-mono text-sm text-zinc-200">v{appState.lifecycle.currentVersion}</p></div>
+                    <div className="rounded-md border border-zinc-900 bg-black p-3"><p className="text-[10px] uppercase tracking-[0.14em] text-zinc-700">Latest</p><p className="mt-2 font-mono text-sm text-zinc-200">{appState.lifecycle.latestVersion ? `v${appState.lifecycle.latestVersion}` : "Not checked"}</p></div>
+                    <div className="rounded-md border border-zinc-900 bg-black p-3"><p className="text-[10px] uppercase tracking-[0.14em] text-zinc-700">Last check</p><p className="mt-2 text-xs text-zinc-300">{appState.lifecycle.checkedAt ? formatCompactDate(appState.lifecycle.checkedAt) : "Pending"}</p></div>
+                  </div>
+                  {appState.lifecycle.releaseNotes || appState.lifecycle.releaseNotesUrl ? <div className="rounded-md border border-zinc-900 bg-[#050505] p-3"><p className="text-xs font-medium text-zinc-300">Release notes</p>{appState.lifecycle.releaseNotes ? <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-zinc-500">{appState.lifecycle.releaseNotes}</p> : null}{appState.lifecycle.releaseNotesUrl ? <a className="mt-2 inline-flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200" href={appState.lifecycle.releaseNotesUrl} rel="noreferrer" target="_blank">Open full release notes <SquareArrowOutUpRight className="size-3" /></a> : null}</div> : null}
+                  {appState.lifecycle.lastError ? <p className="flex gap-2 rounded-md border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-300"><AlertTriangle className="size-4 shrink-0" />{appState.lifecycle.lastError}</p> : null}
+                  {updateDownload ? <div className="space-y-2 rounded-md border border-amber-500/20 bg-amber-500/5 p-3"><div className="flex items-center justify-between text-xs"><span className="text-amber-200">Downloading verified release</span><span className="font-mono text-amber-300">{updateDownload.percentage}%</span></div><Progress aria-label="Update download progress" className="h-1.5" value={updateDownload.percentage} /><p className="text-[10px] text-zinc-500">{formatBytes(updateDownload.downloadedBytes)}{updateDownload.totalBytes ? ` / ${formatBytes(updateDownload.totalBytes)}` : ""}</p></div> : null}
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button disabled={busy === "update-check"} onClick={() => void checkForAppUpdate()} variant="outline">{busy === "update-check" ? <Loader2 className="animate-spin" /> : <RefreshCw />} Check now</Button>
+                    <Button disabled={!appState.lifecycle.updateAvailable || !appState.lifecycle.managedRuntime || busy === "update-prepare" || busy === "lifecycle-update"} onClick={() => void installAppUpdate()}>{busy === "update-prepare" || busy === "lifecycle-update" ? <Loader2 className="animate-spin" /> : <Download />} Install safely</Button>
+                  </div>
+                  {!appState.lifecycle.managedRuntime ? <p className="text-right text-[11px] text-zinc-600">Install/update controls activate in the packaged Socium runtime.</p> : null}
+                </CardContent>
+              </Card>
+
+              <div className="grid gap-4 xl:grid-cols-2">
+                <Card>
+                  <CardHeader className="border-b border-zinc-900">
+                    <div className="flex items-center gap-3"><IntegrationIcon><HardDriveDownload className="size-4" /></IntegrationIcon><div><CardTitle>Verified backups</CardTitle><CardDescription>SQLite is copied with its online backup API, then the archive receives a SHA-256 checksum.</CardDescription></div></div>
+                    <CardAction><Badge className="border-zinc-800 text-zinc-400" variant="outline">{appState.backups.length} SAVED</Badge></CardAction>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <Button className="w-full" disabled={busy === "backup-create"} onClick={() => void createAppBackup()} variant="outline">{busy === "backup-create" ? <Loader2 className="animate-spin" /> : <HardDriveDownload />} Back up local data now</Button>
+                    <div className="max-h-52 space-y-2 overflow-y-auto">
+                      {appState.backups.length ? appState.backups.slice(0, 8).map((backup) => <div className="flex items-center justify-between gap-3 rounded-md border border-zinc-900 bg-black p-3" key={backup.path}><div className="min-w-0"><p className="truncate text-xs text-zinc-300">{backup.name}</p><p className="mt-1 text-[10px] text-zinc-600">{formatCompactDate(backup.createdAt)}</p></div><span className="shrink-0 font-mono text-[10px] text-zinc-500">{formatBytes(backup.sizeBytes)}</span></div>) : <p className="rounded-md border border-dashed border-zinc-800 p-5 text-center text-xs text-zinc-600">No backups yet.</p>}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="border-b border-zinc-900"><div className="flex items-center gap-3"><IntegrationIcon><Settings2 className="size-4" /></IntegrationIcon><div><CardTitle>Runtime controls</CardTitle><CardDescription>Tray and start-after-login use the managed runtime, not a permanent busy loop.</CardDescription></div></div></CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="rounded-md border border-zinc-900 bg-black p-3 text-xs leading-5 text-zinc-500"><p className="text-zinc-300">Safe rollback</p><p className="mt-1">An update first creates a durable backup. If migration or activation fails, the previous runtime remains available.</p></div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button disabled={!appState.lifecycle.managedRuntime || busy === "lifecycle-restart"} onClick={() => void requestRuntimeAction("restart")} variant="outline"><RefreshCw /> Restart</Button>
+                      <Button disabled={!appState.lifecycle.managedRuntime || busy === "lifecycle-stop"} onClick={() => void requestRuntimeAction("stop")} variant="outline"><Pause /> Stop</Button>
+                    </div>
+                    <Button className="w-full" disabled={!appState.lifecycle.managedRuntime || !appState.lifecycle.rollbackAvailable || busy === "lifecycle-rollback"} onClick={() => void requestRuntimeAction("rollback")} variant="outline"><ShieldCheck /> Roll back previous release</Button>
+                    <p className="text-[11px] leading-5 text-zinc-600">CLI recovery remains available: <code className="text-zinc-400">socium backup list</code>, <code className="text-zinc-400">socium backup restore --file PATH</code>, and <code className="text-zinc-400">socium rollback</code>.</p>
+                  </CardContent>
+                </Card>
               </div>
             </div>
           ) : null}

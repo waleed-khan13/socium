@@ -14,6 +14,7 @@ def client(tmp_path_factory: pytest.TempPathFactory):
     os.environ["SOCIUM_SCHEDULER_INTERVAL"] = "0.1"
     os.environ["SOCIUM_SLACK_SOCKET_MODE"] = "0"
     os.environ["SOCIUM_ENABLE_LABS"] = "0"
+    os.environ["SOCIUM_AUTO_UPDATE_CHECKS"] = "0"
 
     from app.config import get_settings
 

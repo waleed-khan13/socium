@@ -59,10 +59,11 @@ try {
   if (doctorCode !== 0) throw new Error(`CLI doctor smoke returned ${doctorCode}.`);
 
   runtime = spawn(
-    process.execPath,
+    process.platform === "win32"
+      ? path.join(process.env.SOCIUM_HOME, "runtimes", fragment.version, target, "bin", "node.exe")
+      : path.join(process.env.SOCIUM_HOME, "runtimes", fragment.version, target, "bin", "node"),
     [
-      path.join(projectRoot, "packages", "cli", "bin", "socium.mjs"),
-      "start",
+      path.join(process.env.SOCIUM_HOME, "runtimes", fragment.version, target, "controller", "controller.mjs"),
       "--no-open",
       "--port",
       String(webPort),

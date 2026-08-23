@@ -10,7 +10,8 @@ It borrows the useful control-plane ideas from agent-management products—goals
 
 - **Stable v1:** AI-assisted social and blog drafting, exact-revision approval, media preparation, official publishing connectors, durable scheduling, and local auditability.
 - **Labs:** Lead intelligence and Local SEO stay compiled and locally usable behind `SOCIUM_ENABLE_LABS=1`, but are not part of the v1 stability promise.
-- **Future updates:** richer media formats, metrics, discovery, SEO execution, plugins, backup tooling, and installers graduate independently after their acceptance criteria pass.
+- **v1.1 consumer lifecycle:** guided setup, managed background starts, daily update checks, verified local backups, and one-release rollback are implemented on the v1.1 branch.
+- **Future updates:** richer media formats, metrics, discovery, SEO execution, plugins, and signed native installers graduate independently after their acceptance criteria pass.
 
 ## Who it serves
 

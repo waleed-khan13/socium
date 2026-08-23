@@ -23,6 +23,8 @@ export function sociumPaths(options = {}) {
   const root = sociumRoot(options);
   return {
     root,
+    backupsDirectory: path.join(root, "backups"),
+    launcherDirectory: path.join(root, "launcher"),
     dataDirectory: path.join(root, "data"),
     downloadsDirectory: path.join(root, "downloads"),
     installationFile: path.join(root, "installation.json"),

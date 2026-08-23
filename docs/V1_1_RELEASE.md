@@ -6,7 +6,7 @@ The existing v1.0 contract remains frozen in [V1_RELEASE.md](V1_RELEASE.md). Wor
 
 ## Product promise
 
-A new operator can install Socium, choose where durable data and local models live, connect either local or hosted AI, confirm a brand profile, generate a channel-aware post and image, request human approval, and publish the exact approved revision. The application starts automatically after login, consumes minimal resources while idle, recovers safely after restart, and reports updates inside the dashboard.
+A new operator can install Socium, choose where durable data and local models live, connect either local or hosted AI, confirm a brand profile, generate a channel-aware post and image, request human approval, and publish the exact approved revision. When the operator enables autostart, the application starts after login, consumes minimal resources while idle, recovers safely after restart, and reports updates inside the dashboard.
 
 ## Fixed product boundaries
 
@@ -30,7 +30,7 @@ A new operator can install Socium, choose where durable data and local models li
 7. [x] Generate brand-aware posts, hashtags, calls to action, and image prompts.
 8. [x] Add revision-bound Approve, Regenerate, Edit, and Skip actions to dashboard, Telegram, and Slack.
 9. [x] Replace always-heavy execution with a lightweight supervisor and bounded workers.
-10. [ ] Add native autostart, tray controls, in-product updates, backup, and rollback.
+10. [x] Add native autostart, tray controls, in-product updates, backup, and rollback.
 11. [ ] Pass release hardening and publish `v1.1.0`.
 
 ### Phase 1 evidence
@@ -106,6 +106,18 @@ A new operator can install Socium, choose where durable data and local models li
 - The scheduler card reports idle/working/faulted mode, the next wake, active worker count, idle time, and recovery count. A reload-safe accessible dialog exposes all three overdue decisions and never silently publishes.
 - Phase-specific backend tests cover explicit recovery, revision rejection, leases, expiry recovery, timeouts, exponential retry, one-worker concurrency, crash loops, listener hibernation, and a 20,000-wake memory/coalescing soak. The real Chromium workflow covers restart-style reload, WCAG A/AA recovery UI, rescheduling, cancellation, and scheduler telemetry.
 - The complete `pnpm check` passed on 2026-08-24: TypeScript, ESLint, Ruff, CLI 15 of 15, backend 67 of 67, Playwright 6 of 6 including accessibility and mobile-keyboard coverage, and the optimized production build.
+
+### Phase 10 evidence
+
+- Release bundles now contain a managed Node runtime, a versioned controller, and a stable launcher that resolves the active runtime from the installation record. Windows onboarding creates Start-menu and desktop shortcuts, can opt into start-after-login, and exposes a notification-area controller for opening the dashboard, restarting, and stopping Socium without a visible terminal.
+- macOS LaunchAgent and Linux XDG autostart records use the stable launcher when explicitly enabled, so they follow an activated update instead of retaining a versioned path. Their verified CLI path remains the release contract until native packaging completes in Phase 11.
+- The System screen checks at most once per 24 hours, shows installed/latest versions and release notes, and sends only a Socium version/platform user agent to the HTTPS manifest endpoint. Installing an update is disabled outside the managed release runtime and while a bounded worker is active.
+- Every update downloads with byte/percentage progress, verifies the published SHA-256, creates a durable pre-update archive, activates an isolated runtime, runs migrations through a temporary loopback health check, and restores the prior runtime plus data snapshot if that check fails.
+- Online backups use SQLite's consistent backup API, exclude transient locks/WAL files, include the encryption key and durable assets, and receive a SHA-256 sidecar. Offline CLI commands list and restore archives while preserving the replaced data directory; one prior runtime remains available for one-click rollback.
+- Normal uninstall removes shortcuts and replaceable runtimes while preserving durable data and backups. Permanent deletion still requires both `--yes` and `--purge-data`.
+- Phase-specific tests cover online SQLite backup consistency, minimal update metadata, unmanaged-action rejection, semantic version selection, checksum-backed offline backup/restore, and preservation of the pre-restore directory. The real Chromium System workflow covers backup creation, managed-control gating, and WCAG A/AA accessibility.
+- The complete `pnpm check` passed on 2026-08-24: TypeScript, ESLint, Ruff, CLI 18 of 18, backend 71 of 71, Playwright 7 of 7, accessibility checks, and the optimized production build.
+- The Windows x64 native artifact was rebuilt locally and passed both bundled-API migration/encryption smoke and the disposable clean-install smoke through its own managed Node/controller, including checksum install, doctor, loopback health, and explicit disposable teardown.
 
 ## Storage contract
 

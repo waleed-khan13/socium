@@ -25,6 +25,7 @@ export async function uninstall({ paths = sociumPaths(), purgeData = false, conf
   await Promise.all([
     rm(paths.runtimesDirectory, { force: true, recursive: true, maxRetries: 20, retryDelay: 200 }),
     rm(paths.downloadsDirectory, { force: true, recursive: true, maxRetries: 20, retryDelay: 200 }),
+    rm(paths.launcherDirectory, { force: true, recursive: true, maxRetries: 20, retryDelay: 200 }),
     rm(paths.installationFile, { force: true }),
   ]);
   return { purgedData: false, preservedData: true, dataDirectory: installation?.dataDirectory || paths.dataDirectory };

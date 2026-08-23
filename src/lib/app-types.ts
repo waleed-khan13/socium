@@ -583,6 +583,27 @@ export interface PublicAppState {
     moveCommand: string;
     sourcePreservation: string;
   };
+  lifecycle: {
+    currentVersion: string;
+    latestVersion: string | null;
+    updateAvailable: boolean;
+    releaseNotes: string;
+    releaseNotesUrl: string | null;
+    publishedAt: string | null;
+    checkedAt: string | null;
+    status: "idle" | "ready" | "error";
+    lastError: string | null;
+    managedRuntime: boolean;
+    automaticChecks: boolean;
+    rollbackAvailable: boolean;
+  };
+  backups: Array<{
+    name: string;
+    path: string;
+    sizeBytes: number;
+    createdAt: string;
+    checksum: string;
+  }>;
 }
 
 export interface ProviderConnectionResult {

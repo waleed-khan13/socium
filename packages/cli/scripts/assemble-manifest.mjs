@@ -44,6 +44,8 @@ const manifest = {
   product: "socium",
   version: packageJson.version,
   publishedAt: new Date().toISOString(),
+  releaseNotes: process.env.SOCIUM_RELEASE_NOTES?.trim() || "",
+  releaseNotesUrl: `${serverUrl}/${repository}/releases/tag/${tag}`,
   assets,
 };
 const outputPath = path.join(fragmentsRoot, "socium-manifest.json");

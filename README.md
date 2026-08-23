@@ -106,6 +106,16 @@ The update verifies and activates the newest runtime while preserving the local 
 npx socium@latest update --force
 ```
 
+The installed **System & updates** screen can check and apply releases, create a consistent local backup, restart or stop the managed runtime, and roll back the previous release. CLI recovery remains available:
+
+```bash
+npx socium backup create
+npx socium backup list
+npx socium backup restore --file "/path/to/backup.tar.gz"
+npx socium rollback
+npx socium autostart enable
+```
+
 ### Check the installation
 
 ```bash

@@ -1,6 +1,6 @@
 # Installing Socium
 
-Socium runs entirely on your computer. The normal installation needs Node.js 20.9 or newer; it does not need Docker, Python, uv, pnpm, or a source checkout.
+Socium runs entirely on your computer. The first `npx` installation needs Node.js 20.9 or newer; the installed release carries its own Node runtime for shortcuts and background starts. It does not need Docker, Python, uv, pnpm, or a source checkout.
 
 ## Install and start
 
@@ -8,6 +8,12 @@ Run the same command in PowerShell, Terminal, or a Linux shell:
 
 ```bash
 npx -y socium@latest onboard
+```
+
+Add `--autostart` to start Socium after login, or `--no-shortcuts` if desktop/Start-menu shortcuts are not wanted:
+
+```powershell
+npx -y socium@latest onboard --autostart
 ```
 
 Choose separate locations during the first install when the system drive is small:
@@ -47,7 +53,26 @@ npx socium@latest update
 npx socium@latest update --force
 ```
 
-`start` and `run` open the same installed runtime. `doctor` checks Node, installation metadata, native API and web files, the data directory, and default ports. `update` verifies and activates the latest runtime without replacing local data.
+`start` and `run` open the same installed runtime. `doctor` checks Node, installation metadata, native API and web files, the data directory, and default ports. **System & updates** in the dashboard performs the same safe update through the local controller. Before activation, Socium creates a backup, verifies the downloaded SHA-256, applies migrations in a temporary health check, and automatically rolls back if that check fails.
+
+Manage start-after-login explicitly:
+
+```bash
+npx socium autostart status
+npx socium autostart enable
+npx socium autostart disable
+```
+
+Create, inspect, or restore durable data backups while Socium is stopped:
+
+```bash
+npx socium backup create
+npx socium backup list
+npx socium backup restore --file "/path/to/socium-backup-....tar.gz"
+npx socium rollback
+```
+
+The dashboard can create a consistent backup while Socium is running. Offline restore preserves the replaced directory as `data.before-restore-<timestamp>` rather than deleting it. Keep the archive and its `.sha256` sidecar together.
 
 To move one or both durable locations later, stop Socium with `Ctrl+C`, choose paths that do not already exist, and run:
 
@@ -79,7 +104,7 @@ That command removes installed runtimes, downloads, the SQLite database, `master
 | macOS | `~/Library/Application Support/Socium` |
 | Linux | `$XDG_DATA_HOME/socium` or `~/.local/share/socium` |
 
-The root contains `runtimes/<version>/<target>` for replaceable program files plus the installation record. Durable data and local models use the paths chosen during onboarding; their defaults are `data` and `models` under the application root. Set `SOCIUM_HOME` before every CLI command only when an advanced or portable location is required.
+The root contains `runtimes/<version>/<target>` for replaceable program files, `launcher` for the stable native entry, `backups` for offline/update archives, and the installation record. Durable data and local models use the paths chosen during onboarding; their defaults are `data` and `models` under the application root. Set `SOCIUM_HOME` before every CLI command only when an advanced or portable location is required.
 
 Open **Connections → Local storage** in the dashboard to see the runtime, data, and model paths, per-category data use, drive free space, and reliability warnings. Prefer a fixed local drive. SQLite on removable, network, or cloud-synced storage can be disconnected or synchronized at unsafe times.
 
@@ -95,6 +120,6 @@ Lead intelligence and Local SEO remain preview workspaces in v1. Start them expl
 
 ## Release verification
 
-Every GitHub Release includes the platform archive, a matching `.sha256` file, and `socium-manifest.json`. The CLI verifies the manifest checksum before extraction and validates the version/target metadata inside the archive. It refuses plain HTTP release downloads by default.
+Every GitHub Release includes the platform archive, a matching `.sha256` file, and `socium-manifest.json`. The CLI verifies the published archive checksum before extraction and validates the version/target metadata inside the archive. It refuses plain HTTP release downloads by default. The dashboard checks no more than once per day while idle and sends only the installed version, operating system, and CPU architecture needed to select a release.
 
 Docker Compose remains available as an optional advanced deployment path. It is not used by the one-command installer.

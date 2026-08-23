@@ -1,10 +1,13 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import net from "node:net";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { DEFAULT_API_PORT, DEFAULT_WEB_PORT } from "./constants.mjs";
-import { loadInstallation } from "./installation.mjs";
+import { loadInstallation } from "./state.mjs";
 import { backendFileName } from "./platform.mjs";
 import { sociumPaths } from "./paths.mjs";
 
@@ -23,6 +26,7 @@ export function runtimeLayout(installation) {
     apiExecutable: path.join(installation.runtimePath, "backend", backendFileName(platform)),
     webDirectory: path.join(installation.runtimePath, "web"),
     webServer: path.join(installation.runtimePath, "web", "server.js"),
+    nodeExecutable: path.join(installation.runtimePath, "bin", platform === "win32" ? "node.exe" : "node"),
   };
 }
 
@@ -77,6 +81,49 @@ function terminateProcessTree(child) {
   child.kill();
 }
 
+function launchUpdateHelper({ manifestSource, restart, waitPid, rollback = false }) {
+  const executable = process.execPath;
+  const managedCli = path.join(path.dirname(fileURLToPath(import.meta.url)), "managed-cli.mjs");
+  const args = [managedCli, rollback ? "rollback" : "update", "--from-app", "--wait-pid", String(waitPid)];
+  if (manifestSource) args.push("--manifest", manifestSource);
+  if (restart) args.push("--restart");
+  const child = spawn(executable, args, { detached: true, stdio: "ignore", windowsHide: true });
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve(child.pid);
+    });
+  });
+}
+
+async function createControlServer({ token, state, onAction }) {
+  const server = createServer(async (request, response) => {
+    response.setHeader("content-type", "application/json");
+    if (request.headers.authorization !== `Bearer ${token}`) {
+      response.writeHead(401).end(JSON.stringify({ ok: false, error: "Unauthorized" }));
+      return;
+    }
+    if (request.method === "GET" && request.url === "/status") {
+      response.end(JSON.stringify({ ok: true, ...state() }));
+      return;
+    }
+    if (request.method === "POST" && ["/stop", "/restart", "/update", "/rollback"].includes(request.url)) {
+      const action = request.url.slice(1);
+      response.end(JSON.stringify({ ok: true, action }));
+      setTimeout(() => Promise.resolve(onAction(action)).catch(() => undefined), 150).unref?.();
+      return;
+    }
+    response.writeHead(404).end(JSON.stringify({ ok: false, error: "Not found" }));
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen({ host: "127.0.0.1", port: 0 }, resolve);
+  });
+  server.unref();
+  return server;
+}
+
 async function alreadyRunning(webPort) {
   try {
     const response = await fetch(`http://127.0.0.1:${webPort}/api/health`, {
@@ -96,6 +143,7 @@ export async function startRuntime({
   apiPort = DEFAULT_API_PORT,
   shouldOpenBrowser = true,
   labsEnabled = false,
+  updateManifest,
   log = console.log,
 } = {}) {
   if (!(await isPortAvailable(webPort))) {
@@ -148,21 +196,37 @@ export async function startRuntime({
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
-  await writeFile(runtimeLock, `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`, { flag: "w" });
-
   const children = new Set();
   let stopping = false;
+  let requestedAction = "stop";
   const launch = (command, args, options) => {
     const child = spawn(command, args, { stdio: "inherit", windowsHide: true, ...options });
     children.add(child);
     child.once("exit", () => children.delete(child));
     return child;
   };
-  const stop = () => {
+  const stop = (action = "stop") => {
     if (stopping) return;
+    requestedAction = action;
     stopping = true;
     for (const child of children) terminateProcessTree(child);
   };
+
+  const controlToken = randomBytes(24).toString("hex");
+  const controlServer = await createControlServer({
+    token: controlToken,
+    state: () => ({ version: installation.version, webPort, apiPort, pid: process.pid }),
+    async onAction(action) {
+      if (action === "update") {
+        const preparedManifest = path.join(installation.dataDirectory, ".updates", "prepared-manifest.json");
+        await launchUpdateHelper({ manifestSource: await exists(preparedManifest) ? preparedManifest : updateManifest || installation.manifestSource, restart: true, waitPid: process.pid });
+      }
+      if (action === "rollback") await launchUpdateHelper({ restart: true, waitPid: process.pid, rollback: true });
+      stop(action);
+    },
+  });
+  const controlPort = controlServer.address().port;
+  await writeFile(runtimeLock, `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), webPort, apiPort, controlPort, controlToken, version: installation.version })}\n`, { flag: "w" });
 
   const signalHandlers = new Map();
   for (const signal of ["SIGINT", "SIGTERM"]) {
@@ -180,6 +244,11 @@ export async function startRuntime({
     SOCIUM_RUNTIME_DIR: installation.runtimePath,
     SOCIUM_STORAGE_REQUIRE_MARKER: "1",
     SOCIUM_ENABLE_LABS: labsEnabled ? "1" : "0",
+    SOCIUM_CONTROL_URL: `http://127.0.0.1:${controlPort}`,
+    SOCIUM_CONTROL_TOKEN: controlToken,
+    SOCIUM_APP_VERSION: installation.version,
+    SOCIUM_RELEASE_TARGET: installation.target,
+    SOCIUM_RELEASE_MANIFEST: updateManifest || installation.manifestSource || "",
   };
 
   try {
@@ -189,7 +258,8 @@ export async function startRuntime({
     });
     await waitForHttp(`http://127.0.0.1:${apiPort}/api/health`, api);
 
-    const web = launch(process.execPath, [layout.webServer], {
+    const nodeExecutable = (await exists(layout.nodeExecutable)) ? layout.nodeExecutable : process.execPath;
+    const web = launch(nodeExecutable, [layout.webServer], {
       cwd: layout.webDirectory,
       env: {
         ...sharedEnvironment,
@@ -209,9 +279,10 @@ export async function startRuntime({
       web.once("exit", (code) => resolve(code ?? 0));
     });
     stop();
-    return { alreadyRunning: false, exitCode, url };
+    return { alreadyRunning: false, exitCode, url, action: requestedAction };
   } finally {
     stop();
+    await new Promise((resolve) => controlServer.close(resolve));
     await rm(runtimeLock, { force: true });
     for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler);
   }

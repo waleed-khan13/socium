@@ -435,6 +435,7 @@ launch(
     SOCIUM_SCHEDULER_INTERVAL: "0.25",
     SOCIUM_SLACK_SOCKET_MODE: "0",
     SOCIUM_ENABLE_LABS: "0",
+    SOCIUM_AUTO_UPDATE_CHECKS: "0",
     SOCIUM_META_GRAPH_BASE_URL: `http://127.0.0.1:${mockPort}/meta`,
     SOCIUM_INSTAGRAM_GRAPH_BASE_URL: `http://127.0.0.1:${mockPort}/instagram`,
     SOCIUM_LINKEDIN_API_BASE_URL: `http://127.0.0.1:${mockPort}/linkedin`,

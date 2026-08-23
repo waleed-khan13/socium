@@ -27,6 +27,7 @@ class Settings:
     scheduler_crash_limit: int
     slack_socket_enabled: bool
     labs_enabled: bool
+    migration_check: bool
 
     @property
     def database_url(self) -> str:
@@ -84,6 +85,12 @@ def get_settings() -> Settings:
         "yes",
         "on",
     }
+    migration_check = os.getenv("SOCIUM_MIGRATION_CHECK", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     return Settings(
         project_root=project_root,
         data_dir=data_dir,
@@ -104,4 +111,5 @@ def get_settings() -> Settings:
         scheduler_crash_limit=scheduler_crash_limit,
         slack_socket_enabled=slack_socket_enabled,
         labs_enabled=labs_enabled,
+        migration_check=migration_check,
     )

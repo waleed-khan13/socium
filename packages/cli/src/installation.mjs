@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { chmod, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pipeline } from "node:stream/promises";
@@ -12,6 +12,9 @@ import { INSTALLATION_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION } from "./constants
 import { assertSafeHttpUrl, readJsonSource, resolveAssetSource, validateManifest } from "./manifest.mjs";
 import { backendFileName, releaseTarget } from "./platform.mjs";
 import { assertSafeManagedDirectory, isPathInside, sociumPaths } from "./paths.mjs";
+import { loadInstallation, writeJsonAtomically } from "./state.mjs";
+
+export { loadInstallation, writeJsonAtomically } from "./state.mjs";
 
 const RELEASE_DOWNLOAD_IDLE_TIMEOUT_MS = 2 * 60_000;
 
@@ -95,43 +98,6 @@ export async function sha256File(filePath) {
   return hash.digest("hex");
 }
 
-export async function writeJsonAtomically(filePath, value) {
-  const temporary = `${filePath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
-  await rename(temporary, filePath);
-}
-
-export async function loadInstallation(paths = sociumPaths()) {
-  let state;
-  try {
-    state = JSON.parse(await readFile(paths.installationFile, "utf8"));
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    throw new Error(`Could not read ${paths.installationFile}: ${error.message}`);
-  }
-  if (![1, INSTALLATION_SCHEMA_VERSION].includes(state.schemaVersion) || typeof state.runtimePath !== "string") {
-    throw new Error("The Socium installation record is invalid. Run `socium update --force`.");
-  }
-  if (!isPathInside(paths.runtimesDirectory, state.runtimePath)) {
-    throw new Error("The Socium installation record points outside the managed runtime directory.");
-  }
-  if (state.schemaVersion === 1) {
-    return {
-      ...state,
-      schemaVersion: INSTALLATION_SCHEMA_VERSION,
-      dataDirectory: paths.dataDirectory,
-      modelsDirectory: paths.modelsDirectory,
-      legacyInstallation: true,
-    };
-  }
-  if (typeof state.dataDirectory !== "string" || typeof state.modelsDirectory !== "string") {
-    throw new Error("The Socium installation record has no durable storage locations. Run `socium update --force`.");
-  }
-  assertSafeManagedDirectory(state.dataDirectory, { label: "Data directory" });
-  assertSafeManagedDirectory(state.modelsDirectory, { label: "Model directory" });
-  return state;
-}
-
 async function directoryIsEmpty(directory) {
   try {
     return (await readdir(directory)).length === 0;
@@ -177,7 +143,7 @@ async function validateBundle(runtimePath, version, target) {
   const metadataPath = path.join(runtimePath, "bundle.json");
   const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
   if (
-    metadata.schemaVersion !== 1 ||
+    ![1, 2].includes(metadata.schemaVersion) ||
     metadata.product !== "socium" ||
     metadata.version !== version ||
     metadata.target !== target
@@ -188,10 +154,20 @@ async function validateBundle(runtimePath, version, target) {
     path.join(runtimePath, "web", "server.js"),
     path.join(runtimePath, "backend", backendFileName(target.split("-")[0])),
   ];
+  if (metadata.schemaVersion >= 2) {
+    required.push(
+      path.join(runtimePath, "bin", target.startsWith("win32-") ? "node.exe" : "node"),
+      path.join(runtimePath, "controller", "controller.mjs"),
+      path.join(runtimePath, "controller", "managed-cli.mjs"),
+    );
+  }
   for (const filePath of required) {
     if (!(await pathExists(filePath))) throw new Error(`Downloaded bundle is missing ${path.relative(runtimePath, filePath)}.`);
   }
-  if (!target.startsWith("win32-")) await chmod(required[1], 0o755);
+  if (!target.startsWith("win32-")) {
+    await chmod(required[1], 0o755);
+    if (metadata.schemaVersion >= 2) await chmod(required[2], 0o755);
+  }
 }
 
 export async function installRelease({
@@ -203,6 +179,7 @@ export async function installRelease({
   onDownloadProgress,
   dataDirectory,
   modelsDirectory,
+  backupPath,
   log = console.log,
 } = {}) {
   if (!manifestSource) throw new Error("A release manifest source is required.");
@@ -264,13 +241,20 @@ export async function installRelease({
     });
     await validateBundle(stagingPath, version, target);
 
+    let replacedRuntimePath = null;
     if (await pathExists(runtimePath)) {
       if (!force) {
         await rm(stagingPath, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
       } else {
-        await rm(runtimePath, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
+        replacedRuntimePath = `${runtimePath}.previous-${nonce}`;
+        await rename(runtimePath, replacedRuntimePath);
         await mkdir(path.dirname(runtimePath), { recursive: true });
-        await rename(stagingPath, runtimePath);
+        try {
+          await rename(stagingPath, runtimePath);
+        } catch (error) {
+          await rename(replacedRuntimePath, runtimePath);
+          throw error;
+        }
       }
     } else {
       await mkdir(path.dirname(runtimePath), { recursive: true });
@@ -286,6 +270,14 @@ export async function installRelease({
       modelsDirectory: selectedModelsDirectory,
       installedAt: new Date().toISOString(),
       manifestSource,
+      previousRelease: previous
+        ? {
+            version: previous.version,
+            target: previous.target,
+            runtimePath: replacedRuntimePath || previous.runtimePath,
+            backupPath: backupPath || null,
+          }
+        : null,
     };
     await writeJsonAtomically(paths.installationFile, installation);
     log(`Installed Socium ${version} at ${runtimePath}`);
