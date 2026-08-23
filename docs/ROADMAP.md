@@ -46,7 +46,7 @@ The implementation order, fixed boundaries, storage and recovery rules, and rele
 - [x] Access-gated LinkedIn Company Page text publishing with OIDC identity checks, `ORGANIC_SHARE_CREATE` authorization verification, encrypted tokens, and exact-revision delivery.
 - [x] Slack Socket Mode approval listener, outbound Block Kit requests, and version-bound interactive decisions.
 - [x] WordPress REST publisher with encrypted Application Passwords, health checks, remote links, and durable Blog scheduling.
-- [x] WhatsApp Cloud approved-template notification adapter with encrypted tokens, business-number verification, exact draft previews, and returned message IDs; interactive approval remains excluded because Meta requires a reachable webhook.
+- [x] The v1.0 notification-only connector was retired for v1.1; its product surface and runtime were removed and existing encrypted account records are deleted by migration.
 - [x] Private local media library with verified raster uploads, SHA-256 deduplication, previews, metadata, audited deletion, and social-size image transforms.
 - [x] AI image generation with separately encrypted OpenAI-compatible and local Automatic1111/Forge providers, connection tests, validated ingestion, and durable provenance.
 - [x] ComfyUI API-format workflow adapter with explicit placeholders, durable SQLite generation queue, progress, cancellation, retry, restart recovery, and final asset references.

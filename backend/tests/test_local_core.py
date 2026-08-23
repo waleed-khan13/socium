@@ -905,6 +905,36 @@ def test_connector_vault_redacts_secrets_and_validates_slack(client, monkeypatch
     slack_manifest = next(item for item in catalog.json()["catalog"] if item["adapterId"] == "slack")
     assert slack_manifest["availability"] == "available"
     assert set(slack_manifest["requiredScopes"]) == {"chat:write", "connections:write"}
+    approval_adapters = {
+        item["adapterId"] for item in catalog.json()["catalog"] if "approval" in item["capabilities"]
+    }
+    assert approval_adapters == {"telegram", "slack"}
+    assert all(item["adapterId"] != "whatsapp" for item in catalog.json()["catalog"])
+
+    removed_connector = client.post(
+        "/api/connectors",
+        json={
+            "adapterId": "whatsapp",
+            "name": "Removed approval transport",
+            "config": {},
+            "secrets": {},
+            "scopes": [],
+            "enabled": True,
+        },
+    )
+    assert removed_connector.status_code == 404
+    assert removed_connector.json()["error"] == "Unknown connector adapter."
+
+    removed_generation_option = client.post(
+        "/api/posts/generate",
+        json={
+            "topic": "Removed approval transport",
+            "channel": "linkedin",
+            "notifyTelegram": False,
+            "notifyWhatsapp": True,
+        },
+    )
+    assert removed_generation_option.status_code == 422
 
     invalid = client.post(
         "/api/connectors",
@@ -2398,247 +2428,6 @@ def test_linkedin_company_authorization_and_payload(monkeypatch) -> None:
         },
         "lifecycleState": "PUBLISHED",
         "isReshareDisabledByAuthor": False,
-    }
-
-
-def test_whatsapp_connector_sends_encrypted_template_notification(client, monkeypatch) -> None:
-    from app.connectors.base import ConnectorTestResult
-    from app.schemas import GeneratedContent
-    from app.services.whatsapp import WhatsAppDeliveryResult
-
-    catalog = client.get("/api/connectors").json()["catalog"]
-    manifest = next(item for item in catalog if item["adapterId"] == "whatsapp")
-    assert manifest["availability"] == "notification-only"
-    assert manifest["capabilities"] == ["notification"]
-    assert set(manifest["requiredScopes"]) == {
-        "whatsapp_business_messaging",
-        "whatsapp_business_management",
-    }
-
-    access_token = "EAA-whatsapp-permanent-secret"
-    created = client.post(
-        "/api/connectors",
-        json={
-            "adapterId": "whatsapp",
-            "name": "Owner review number",
-            "config": {
-                "phone_number_id": "155500011122233",
-                "recipient_phone": "+92 300 1234567",
-                "api_version": "v25.0",
-                "template_name": "socium_draft_review",
-                "template_language": "en_US",
-            },
-            "secrets": {"access_token": access_token},
-            "scopes": ["whatsapp_business_messaging", "whatsapp_business_management"],
-            "enabled": True,
-        },
-    )
-    assert created.status_code == 200
-    account = created.json()["account"]
-    assert account["secretStatus"] == {"access_token": True}
-    assert access_token not in created.text
-
-    from app.config import get_settings
-
-    with sqlite3.connect(get_settings().database_path) as connection:
-        encrypted = connection.execute(
-            "SELECT encrypted_secrets FROM connector_accounts WHERE id = ?",
-            (account["id"],),
-        ).fetchone()[0]
-    assert access_token not in encrypted
-
-    async def fake_test(_self, config, secrets):
-        assert config["phone_number_id"] == "155500011122233"
-        assert secrets == {"access_token": access_token}
-        return ConnectorTestResult(
-            ok=True,
-            message="Connected to WhatsApp Business Northstar Studio.",
-            remote_account_id="155500011122233",
-            details={"business": "Northstar Studio", "qualityRating": "GREEN"},
-        )
-
-    monkeypatch.setattr("app.connectors.whatsapp.WhatsAppAdapter.test_connection", fake_test)
-    tested = client.post(f"/api/connectors/{account['id']}/test")
-    assert tested.status_code == 200
-    assert tested.json()["remoteAccountId"] == "155500011122233"
-
-    async def fake_generate(*_args, **_kwargs):
-        return GeneratedContent(
-            title="Review this launch",
-            body="An exact WhatsApp template notification preview.",
-            hashtags=["#socium"],
-            rationale="Exercises the localhost-safe notification path.",
-        )
-
-    captured: dict = {}
-
-    async def fake_send(number_id, recipient, version, template, language, token, post):
-        captured.update(
-            {
-                "number_id": number_id,
-                "recipient": recipient,
-                "version": version,
-                "template": template,
-                "language": language,
-                "token": token,
-                "post": post,
-            }
-        )
-        return WhatsAppDeliveryResult(remote_id="wamid.socium-notification")
-
-    monkeypatch.setattr("app.main.generate_content", fake_generate)
-    monkeypatch.setattr("app.connectors.service.send_whatsapp_approval_template", fake_send)
-    generated = client.post(
-        "/api/posts/generate",
-        json={
-            "topic": "WhatsApp review workflow",
-            "channel": "facebook",
-            "tone": "Clear",
-            "objective": "Notify the owner before publishing",
-            "notifyTelegram": False,
-            "notifySlack": False,
-            "notifyWhatsapp": True,
-        },
-    )
-    assert generated.status_code == 200
-    post = generated.json()["post"]
-    assert generated.json()["notifications"] == [
-        {
-            "channel": "whatsapp",
-            "ok": True,
-            "message": "Draft review notification sent to WhatsApp.",
-            "messageId": "wamid.socium-notification",
-        }
-    ]
-    assert captured == {
-        "number_id": "155500011122233",
-        "recipient": "+92 300 1234567",
-        "version": "v25.0",
-        "template": "socium_draft_review",
-        "language": "en_US",
-        "token": access_token,
-        "post": post,
-    }
-    audit = client.get("/api/state").json()["audit"]
-    assert any(
-        item["entityId"] == post["id"]
-        and item["action"] == "approval.sent"
-        and item["summary"]
-        == "Approval request sent to WhatsApp; remote message ID wamid.socium-notification."
-        for item in audit
-    )
-
-
-def test_whatsapp_template_payload_and_security_validation(monkeypatch) -> None:
-    import httpx
-
-    from app.errors import ExternalServiceError
-    from app.services.whatsapp import (
-        normalize_recipient_phone,
-        send_whatsapp_approval_template,
-        validate_template_name,
-        validate_whatsapp_graph_base_url,
-        whatsapp_graph_request,
-    )
-
-    assert normalize_recipient_phone("+92 (300) 123-4567") == "923001234567"
-    assert validate_whatsapp_graph_base_url("http://127.0.0.1:4100/whatsapp/") == (
-        "http://127.0.0.1:4100/whatsapp"
-    )
-    with pytest.raises(ExternalServiceError, match="HTTPS"):
-        validate_whatsapp_graph_base_url("http://graph.example.com")
-    with pytest.raises(ExternalServiceError, match="lowercase"):
-        validate_template_name("Draft Review")
-
-    leaked_token = "whatsapp-token-that-must-not-leak"
-    request_capture: dict = {}
-
-    class FakeAsyncClient:
-        def __init__(self, **_kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return None
-
-        async def request(self, method, endpoint, **kwargs):
-            request_capture.update({"method": method, "endpoint": endpoint, **kwargs})
-            return httpx.Response(
-                400,
-                json={"error": {"code": 190, "message": f"Invalid token {leaked_token}"}},
-            )
-
-    monkeypatch.setenv("SOCIUM_WHATSAPP_GRAPH_BASE_URL", "http://127.0.0.1:4100/whatsapp")
-    monkeypatch.setattr("app.services.whatsapp.httpx.AsyncClient", FakeAsyncClient)
-    with pytest.raises(ExternalServiceError) as error:
-        asyncio.run(
-            whatsapp_graph_request(
-                "155500011122233",
-                leaked_token,
-                api_version="v25.0",
-                params={"fields": "id,verified_name"},
-            )
-        )
-    assert leaked_token not in str(error.value)
-    assert "[redacted]" in str(error.value)
-    assert leaked_token not in request_capture["endpoint"]
-    assert request_capture["headers"]["Authorization"] == f"Bearer {leaked_token}"
-
-    captured: dict = {}
-
-    async def fake_request(phone_number_id, access_token, resource="", **kwargs):
-        captured.update(
-            {
-                "phone_number_id": phone_number_id,
-                "access_token": access_token,
-                "resource": resource,
-                **kwargs,
-            }
-        )
-        return {"messages": [{"id": "wamid.exact-payload"}]}
-
-    monkeypatch.setattr("app.services.whatsapp.whatsapp_graph_request", fake_request)
-    result = asyncio.run(
-        send_whatsapp_approval_template(
-            "155500011122233",
-            "+92 300 1234567",
-            "v25.0",
-            "socium_draft_review",
-            "en_US",
-            "never-log-this-token",
-            {
-                "channel": "linkedin-company",
-                "title": "An approved review title",
-                "revision": 4,
-                "body": "Review this exact draft before publishing.",
-            },
-        )
-    )
-    assert result.remote_id == "wamid.exact-payload"
-    assert captured["resource"] == "messages"
-    assert captured["method"] == "POST"
-    assert captured["json_body"] == {
-        "messaging_product": "whatsapp",
-        "recipient_type": "individual",
-        "to": "923001234567",
-        "type": "template",
-        "template": {
-            "name": "socium_draft_review",
-            "language": {"code": "en_US"},
-            "components": [
-                {
-                    "type": "body",
-                    "parameters": [
-                        {"type": "text", "text": "linkedin-company"},
-                        {"type": "text", "text": "An approved review title"},
-                        {"type": "text", "text": "4"},
-                        {"type": "text", "text": "Review this exact draft before publishing."},
-                    ],
-                }
-            ],
-        },
     }
 
 

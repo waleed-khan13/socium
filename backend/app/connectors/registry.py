@@ -8,7 +8,6 @@ from app.connectors.instagram import InstagramAdapter
 from app.connectors.linkedin import LinkedInMemberAdapter, LinkedInOrganizationAdapter
 from app.connectors.meta import MetaPagesAdapter
 from app.connectors.slack import SlackAdapter
-from app.connectors.whatsapp import WhatsAppAdapter
 from app.connectors.wordpress import WordPressAdapter
 from app.errors import AppError
 
@@ -19,7 +18,6 @@ _meta = MetaPagesAdapter()
 _instagram = InstagramAdapter()
 _linkedin = LinkedInMemberAdapter()
 _linkedin_organization = LinkedInOrganizationAdapter()
-_whatsapp = WhatsAppAdapter()
 _adapters: dict[str, ConnectorAdapter] = {
     "slack": _slack,
     "wordpress": _wordpress,
@@ -28,7 +26,6 @@ _adapters: dict[str, ConnectorAdapter] = {
     "instagram": _instagram,
     "linkedin": _linkedin,
     "linkedin-organization": _linkedin_organization,
-    "whatsapp": _whatsapp,
 }
 
 _catalog: tuple[ConnectorManifest, ...] = (
@@ -46,7 +43,6 @@ _catalog: tuple[ConnectorManifest, ...] = (
     _instagram.manifest,
     _linkedin.manifest,
     _linkedin_organization.manifest,
-    _whatsapp.manifest,
 )
 
 

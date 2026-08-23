@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from sqlalchemy import delete, select
@@ -648,16 +648,13 @@ def create_post(
 
 def record_approval_sent(
     post_id: str,
-    source: str = "telegram",
-    remote_message_id: str | None = None,
+    source: Literal["telegram", "slack"] = "telegram",
 ) -> None:
     with write_session() as session:
         if session.get(Post, post_id) is None:
             return
-        channel = {"slack": "Slack", "whatsapp": "WhatsApp"}.get(source, "Telegram")
+        channel = "Slack" if source == "slack" else "Telegram"
         summary = f"Approval request sent to {channel}."
-        if remote_message_id:
-            summary = f"Approval request sent to {channel}; remote message ID {remote_message_id}."
         _append_audit(
             session,
             action="approval.sent",

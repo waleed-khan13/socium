@@ -46,7 +46,7 @@ async function expectNoAccessibilityViolations(page: Page, testInfo: TestInfo, n
   expect(violations, `${name} has automated WCAG A/AA violations`).toEqual([]);
 }
 
-test("runs real publishing workflows and a WhatsApp draft notification", async ({ page }) => {
+test("runs real publishing and approval workflows", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
   await expect(page.getByText(/SOCIUM LOCAL.*v1\.0\.5/)).toBeVisible();
@@ -68,6 +68,8 @@ test("runs real publishing workflows and a WhatsApp draft notification", async (
   await navigate(page, "Integrations", "Connections");
   await expect(page.getByText("Connect only what you use", { exact: true })).toBeVisible();
   await expect(page.getByText("ALL OTHERS OPTIONAL", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Phone Number ID")).toHaveCount(0);
+  await expect(page.getByRole("switch", { name: "WhatsApp alert" })).toHaveCount(0);
 
   await page.getByLabel("Workspace name").fill("E2E workspace");
   await page.getByLabel("Business name").fill("Northstar Studio");
@@ -496,95 +498,6 @@ test("runs real publishing workflows and a WhatsApp draft notification", async (
   expect(linkedinCompanyMockState.lastLinkedInOrganizationPost.commentary).toContain("Share one useful company lesson");
   expect(linkedinCompanyMockState.lastLinkedInOrganizationPost.commentary).toContain("#HumanReviewed");
 
-  await navigate(page, "Integrations", "Connections");
-  const whatsappForm = page.getByLabel("Phone Number ID").locator("xpath=ancestor::form");
-  await whatsappForm.getByLabel("Connection name").fill("E2E WhatsApp reviews");
-  await whatsappForm.getByLabel("Phone Number ID").fill("155500011122233");
-  await whatsappForm.getByLabel("Review recipient").fill("+92 300 1234567");
-  await whatsappForm.getByLabel("Graph API version").fill("v25.0");
-  await whatsappForm.getByLabel("Template name").fill("socium_draft_review");
-  await whatsappForm.getByLabel("Template language").fill("en_US");
-  await whatsappForm.getByLabel("Permanent access token").fill("e2e-whatsapp-access-token");
-  await whatsappForm.getByRole("button", { name: "Save & test" }).click();
-  await expect(page.getByText("Connected to WhatsApp Business Northstar Studio.")).toBeVisible();
-  await expect(whatsappForm.getByLabel("Permanent access token")).toHaveValue("");
-  const whatsappCard = whatsappForm.locator('xpath=ancestor::div[@data-slot="card"]');
-  await expect(whatsappCard.getByText("Stored", { exact: true })).toBeVisible();
-
-  await navigate(page, "Create content", "Create a draft");
-  await page.getByLabel("Topic or source brief").fill(
-    "Create a concise Facebook draft and notify the owner on WhatsApp for review.",
-  );
-  await page.getByLabel("Channel").click();
-  await page.getByRole("option", { name: "Facebook" }).click();
-  await page.getByRole("switch", { name: "WhatsApp alert" }).click();
-
-  const whatsappGenerateResponse = page.waitForResponse(
-    (response) => response.url().endsWith("/api/posts/generate") && response.request().method() === "POST",
-  );
-  await page.getByRole("button", { name: "Generate review draft" }).click();
-  const whatsappGeneratedResponse = await whatsappGenerateResponse;
-  expect(whatsappGeneratedResponse.status()).toBe(200);
-  const whatsappGenerated = await whatsappGeneratedResponse.json() as {
-    notifications: Array<{ channel: string; messageId?: string; ok: boolean }>;
-  };
-  expect(whatsappGenerated.notifications).toEqual([
-    {
-      channel: "whatsapp",
-      message: "Draft review notification sent to WhatsApp.",
-      messageId: "wamid.e2e-draft-review",
-      ok: true,
-    },
-  ]);
-  await expect(page.getByText("Draft review notification sent to WhatsApp.")).toBeVisible();
-  await expect(page.getByRole("heading", { level: 2, name: "A WhatsApp-reviewed Facebook update" })).toBeVisible();
-
-  const whatsappMockResponse = await page.request.get(`${mockBaseUrl}/__e2e/state`);
-  const whatsappMockState = (await whatsappMockResponse.json()) as {
-    generationRequests: number;
-    lastWhatsAppTemplate: {
-      messaging_product: string;
-      recipient_type: string;
-      template: {
-        components: Array<{ parameters: Array<{ text: string; type: string }>; type: string }>;
-        language: { code: string };
-        name: string;
-      };
-      to: string;
-      type: string;
-    };
-    whatsappAuthChecks: number;
-    whatsappMessages: number;
-  };
-  expect(whatsappMockState).toMatchObject({
-    generationRequests: 6,
-    whatsappAuthChecks: 1,
-    whatsappMessages: 1,
-  });
-  expect(whatsappMockState.lastWhatsAppTemplate).toEqual({
-    messaging_product: "whatsapp",
-    recipient_type: "individual",
-    to: "923001234567",
-    type: "template",
-    template: {
-      name: "socium_draft_review",
-      language: { code: "en_US" },
-      components: [
-        {
-          type: "body",
-          parameters: [
-            { type: "text", text: "facebook" },
-            { type: "text", text: "A WhatsApp-reviewed Facebook update" },
-            { type: "text", text: "1" },
-            {
-              type: "text",
-              text: "Send this exact draft preview to the owner on WhatsApp before any publishing decision.",
-            },
-          ],
-        },
-      ],
-    },
-  });
 });
 
 test("offers simple prebuilt AI providers without a Socium account", async ({ page }) => {
@@ -643,7 +556,6 @@ test("offers simple prebuilt AI providers without a Socium account", async ({ pa
     "https://developer.wordpress.org/rest-api/using-the-rest-api/authentication/",
   );
   await expect(page.getByRole("link", { name: "Get Page token", exact: true })).toHaveAttribute("href", "https://developers.facebook.com/tools/explorer/");
-  await expect(page.getByRole("link", { name: "Get permanent token", exact: true })).toHaveAttribute("href", "https://business.facebook.com/settings/system-users");
   await expect(page.getByRole("link", { name: "Get OAuth token", exact: true }).first()).toHaveAttribute("href", "https://www.linkedin.com/developers/tools/oauth/token-generator");
 });
 

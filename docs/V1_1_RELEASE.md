@@ -21,17 +21,25 @@ A new operator can install Socium, choose where durable data and local models li
 
 ## Delivery order
 
-1. Freeze the baseline and release contract.
-2. Remove WhatsApp and narrow approval scope.
-3. Separate runtime, durable data, and AI-model storage.
-4. Add the durable brand profile and content preferences.
-5. Replace documentation-led setup with a first-run wizard.
-6. Make local AI installation and hosted/custom provider discovery guided and testable.
-7. Generate brand-aware posts, hashtags, calls to action, and image prompts.
-8. Add revision-bound Approve, Regenerate, Edit, and Skip actions to dashboard, Telegram, and Slack.
-9. Replace always-heavy execution with a lightweight supervisor and bounded workers.
-10. Add native autostart, tray controls, in-product updates, backup, and rollback.
-11. Pass release hardening and publish `v1.1.0`.
+1. [x] Freeze the baseline and release contract.
+2. [x] Remove WhatsApp and narrow approval scope.
+3. [ ] Separate runtime, durable data, and AI-model storage.
+4. [ ] Add the durable brand profile and content preferences.
+5. [ ] Replace documentation-led setup with a first-run wizard.
+6. [ ] Make local AI installation and hosted/custom provider discovery guided and testable.
+7. [ ] Generate brand-aware posts, hashtags, calls to action, and image prompts.
+8. [ ] Add revision-bound Approve, Regenerate, Edit, and Skip actions to dashboard, Telegram, and Slack.
+9. [ ] Replace always-heavy execution with a lightweight supervisor and bounded workers.
+10. [ ] Add native autostart, tray controls, in-product updates, backup, and rollback.
+11. [ ] Pass release hardening and publish `v1.1.0`.
+
+### Phase 1 evidence
+
+- Dashboard approval remains built in; Telegram and Slack are the only connector manifests with approval capability.
+- The removed adapter is rejected by the connector API, and its legacy generation option is rejected instead of being ignored.
+- Alembic revision `20260823_0013` deletes only legacy WhatsApp connector rows, including their encrypted secret envelopes, while preserving other connector accounts.
+- Connector UI, delivery services, external-service mocks, credential guidance, and active product documentation no longer expose the retired integration.
+- The complete `pnpm check` passed on 2026-08-23: CLI 9 of 9, backend 43 of 43, Playwright 6 of 6, accessibility checks, and the optimized production build.
 
 ## Storage contract
 

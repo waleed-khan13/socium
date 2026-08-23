@@ -80,7 +80,7 @@ It borrows the useful control-plane ideas from agent-management products—goals
 - Weekly/monthly calendar with recurrence and channel-specific variants.
 - Text, image brief, carousel outline, short-video script, blog, and newsletter drafts.
 - Duplicate/claim checks, UTM builder, hashtag suggestions, and asset library.
-- Approval from the dashboard, Telegram long polling, or Slack Socket Mode; WhatsApp can notify but interactive callbacks require Meta's public webhook infrastructure.
+- Approval from the dashboard, Telegram long polling, or Slack Socket Mode.
 - Official publisher adapters for Meta, LinkedIn, X, Telegram channels, and WordPress as access permits.
 
 ### Lead intelligence

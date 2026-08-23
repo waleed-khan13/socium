@@ -21,7 +21,6 @@ See [docs/V1_RELEASE.md](docs/V1_RELEASE.md) for the current stable contract, [d
 - Schedule approved Telegram revisions with a restart-safe SQLite job queue, pause/resume, catch-up, cancellation, and reviewed retries.
 - Save a scoped Slack connector in the local vault and verify its bot identity and Socket Mode app token against Slack's real API.
 - Send revision-bound Slack approval buttons and receive approve/reject decisions through an outbound-only Socket Mode listener.
-- Send approved-template draft previews through WhatsApp Cloud and retain the returned message ID in the local audit response.
 - Save and verify a WordPress connector with encrypted Application Password credentials.
 - Publish or schedule an exact approved Blog revision through the official WordPress REST API and retain its remote post link.
 - Save and verify a Facebook Page connector with an encrypted Page Access Token and a deliberately pinned Meta Graph API version.
@@ -152,8 +151,6 @@ Every credential field in the UI includes its official **Get key/token** page an
 Socium fills the official endpoint and a working default model for OpenAI, Gemini, Claude, OpenRouter, and NVIDIA. Open **Advanced settings** only to change the model, change Ollama's local port, or configure LM Studio, LocalAI, and other custom OpenAI-compatible servers. Hosted preset keys are never sent to a user-entered URL, are encrypted before SQLite storage, and remain on this computer. Socium has no hosted login or cloud account requirement.
 
 Slack can also be configured under Integrations. Socium stores its `xoxb-` and `xapp-` tokens encrypted, exposes only presence flags to the browser, and starts the outbound Socket Mode listener after the connection is verified. Approval buttons carry the post ID and exact revision, so edited, repeated, unauthorized-channel, or stale decisions are rejected.
-
-WhatsApp Cloud can be configured as a notification-only connector under Integrations. Supply the business Phone Number ID, one international review-recipient number, a pinned Graph API version, an approved template name/language, and a permanent system-user token with `whatsapp_business_messaging` and `whatsapp_business_management`. The template body must contain four text variables in this order: channel, title, revision, and draft excerpt. **Save & test** verifies the business-number identity; generation can then send the preview and store Meta's returned `wamid`. Approval and rejection still happen in the local UI, Telegram, or Slack because interactive WhatsApp callbacks require a public HTTPS webhook, which strict-localhost mode deliberately does not expose.
 
 For a personal or business blog, add a WordPress connection under Integrations using the site root URL, username, and a WordPress Application Password. Remote sites must use HTTPS. After **Save & test**, generate a `Blog` draft, approve that exact revision, then publish immediately or schedule it with the same durable local worker. Socium stores the returned WordPress post ID and link in local state and the audit trail.
 

@@ -95,6 +95,8 @@ class PollingUpdate(ApiModel):
 
 
 class GeneratePostRequest(ApiModel):
+    model_config = ConfigDict(extra="forbid")
+
     topic: str = Field(min_length=1, max_length=1_000)
     channel: Literal[
         "linkedin",
@@ -110,7 +112,6 @@ class GeneratePostRequest(ApiModel):
     media_url: str | None = Field(default=None, max_length=2_048)
     notify_telegram: bool = True
     notify_slack: bool = False
-    notify_whatsapp: bool = False
 
     _validate_media_url = field_validator("media_url")(_validate_post_media_url)
 
