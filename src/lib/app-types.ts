@@ -66,7 +66,28 @@ export interface PublicProviderSettings {
   model: string;
   hasApiKey: boolean;
   configured: boolean;
+  verified: boolean;
   updatedAt: string | null;
+}
+
+export type OnboardingStep = "welcome" | "storage" | "ai" | "brand" | "finish";
+
+export interface PublicOnboardingState {
+  version: number;
+  status: "not-started" | "in-progress" | "dismissed" | "completed";
+  showWizard: boolean;
+  currentStep: OnboardingStep;
+  startedAt: string | null;
+  dismissedAt: string | null;
+  completedAt: string | null;
+  storageConfirmed: boolean;
+  storageReady: boolean;
+  aiConfigured: boolean;
+  aiVerified: boolean;
+  brandConfirmed: boolean;
+  ready: boolean;
+  completedSteps: number;
+  totalSteps: number;
 }
 
 export interface PublicImageProviderSettings {
@@ -507,6 +528,7 @@ export interface PublicAppState {
   };
   workspace: WorkspaceSettings;
   provider: PublicProviderSettings;
+  onboarding: PublicOnboardingState;
   imageProvider: PublicImageProviderSettings;
   telegram: PublicTelegramSettings;
   posts: GeneratedPost[];

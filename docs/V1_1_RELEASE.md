@@ -25,7 +25,7 @@ A new operator can install Socium, choose where durable data and local models li
 2. [x] Remove WhatsApp and narrow approval scope.
 3. [x] Separate runtime, durable data, and AI-model storage.
 4. [x] Add the durable brand profile and content preferences.
-5. [ ] Replace documentation-led setup with a first-run wizard.
+5. [x] Replace documentation-led setup with a first-run wizard.
 6. [x] Make local AI installation and hosted/custom provider discovery guided and testable.
 7. [ ] Generate brand-aware posts, hashtags, calls to action, and image prompts.
 8. [ ] Add revision-bound Approve, Regenerate, Edit, and Skip actions to dashboard, Telegram, and Slack.
@@ -67,6 +67,16 @@ A new operator can install Socium, choose where durable data and local models li
 - Rich brand context enters a generation prompt only when the profile is complete and confirmed. The prompt identifies the exact revision and carries target audience, offer, goals, call to action, voice, pillars, branded hashtags, visual direction, and explicit restricted-claim guardrails.
 - Backend tests cover legacy-row migration, validation, asset binding, persistence, revision increments, audit history, and the confirmed-context boundary. A real Chromium workflow confirms the profile and proves that its revision and guardrails reach generation before the exact draft is approved and published.
 - The complete `pnpm check` passed on 2026-08-23: TypeScript, ESLint, Ruff, CLI 15 of 15, backend 52 of 52, Playwright 6 of 6 including the expanded accessibility audit and mobile-keyboard coverage, and the optimized production build.
+
+### Phase 5 evidence
+
+- A clean local database opens an accessible modal wizard automatically. Its current step, dismissal, storage confirmation, and completion timestamps are stored in SQLite so setup can be dismissed, resumed, and reviewed without a Socium account.
+- The storage step displays the active runtime, durable-data, and model locations with drive availability and free space. Reliability warnings require an explicit acknowledgement; changing locations remains a safe stopped-runtime operation with the exact checksum-verified move command available inside the wizard.
+- The AI step recommends local Ollama, detects hardware and installed models, can stream and verify the recommended download, and supports a direct model connection. Cloud setup provides OpenRouter, NVIDIA, OpenAI, Gemini, Anthropic, and an explicitly selected OpenAI-compatible endpoint with official credential links.
+- A provider becomes onboarding-ready only after a live test. Verification is bound to a fingerprint of its kind, endpoint, model, and settings revision, so changing those settings invalidates the verified state.
+- The brand step reuses the complete confirmed-profile editor and local Media Library boundary from Phase 4. Completion is rejected transactionally until storage, AI, and brand readiness are all true; Telegram, Slack, and publishers remain optional.
+- The browser acceptance flow now starts from a fresh installation, completes the wizard, reloads to prove durable completion, and then continues through generation, exact-revision approval, and publishing. Automated WCAG A/AA checks include the first-run welcome screen.
+- The complete `pnpm check` passed on 2026-08-23: TypeScript, ESLint, Ruff, CLI 15 of 15, backend 53 of 53, Playwright 6 of 6, and the optimized production build.
 
 ## Storage contract
 

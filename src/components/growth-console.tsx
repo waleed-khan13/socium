@@ -47,6 +47,7 @@ import { toast } from "sonner";
 import { LeadsWorkspace } from "@/components/leads-workspace";
 import { BrandProfileCard } from "@/components/brand-profile-card";
 import { MediaLibrary } from "@/components/media-library";
+import { OnboardingWizard } from "@/components/onboarding-wizard";
 import { CredentialHelp } from "@/components/credential-help";
 import {
   InstagramConnectorCard,
@@ -581,6 +582,7 @@ function IntegrationIcon({ children }: { children: React.ReactNode }) {
 export function GrowthConsole() {
   const [activeView, setActiveView] = useState<ViewId>("command");
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [appState, setAppState] = useState<PublicAppState | null>(null);
   const [initialError, setInitialError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -717,6 +719,7 @@ export function GrowthConsole() {
       .then((next) => {
         if (cancelled) return;
         setAppState(next);
+        if (next.onboarding.showWizard) setOnboardingOpen(true);
         setProviderForm({
           kind: next.provider.kind,
           baseUrl: next.provider.baseUrl,
@@ -837,7 +840,7 @@ export function GrowthConsole() {
 
   const setup = useMemo(() => {
     const business = Boolean(appState?.workspace.profileComplete);
-    const provider = Boolean(appState?.provider.configured);
+    const provider = Boolean(appState?.provider.verified);
     const telegram = Boolean(appState?.telegram.configured && appState.telegram.pollingEnabled);
     return { business, provider, telegram, complete: [business, provider, telegram].filter(Boolean).length };
   }, [appState]);
@@ -914,6 +917,7 @@ export function GrowthConsole() {
         });
         setAppState(selected.state);
         setProviderForm((current) => ({ ...current, apiKey: "", model: detectedModel }));
+        await requestJson<ProviderConnectionResult>("/api/providers/test", { method: "POST" });
       }
 
       setProviderVerified(Boolean(nextForm.model || models[0]));
@@ -1671,6 +1675,22 @@ export function GrowthConsole() {
     <div className="min-h-screen bg-black text-zinc-100">
       <div aria-hidden className="control-grid pointer-events-none fixed inset-x-0 top-0 h-[520px] opacity-80" />
 
+      {appState ? (
+        <OnboardingWizard
+          onOpenAdvancedAi={() => {
+            setOnboardingOpen(false);
+            navigate("integrations");
+          }}
+          onOpenChange={setOnboardingOpen}
+          onStateChange={(state) => {
+            setAppState(state);
+            setGenerateForm((current) => ({ ...current, tone: state.workspace.tone || current.tone }));
+          }}
+          open={onboardingOpen}
+          state={appState}
+        />
+      ) : null}
+
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-zinc-900 bg-[#050505] lg:block">
         <SidebarContent active={activeView} onNavigate={navigate} state={appState} />
       </aside>
@@ -1699,11 +1719,11 @@ export function GrowthConsole() {
             <h1 className="mt-1 truncate text-sm font-semibold text-zinc-100 sm:text-base">{meta.title}</h1>
           </div>
           <div className="ml-3 flex items-center gap-2">
-            <Button aria-label="Open setup guide" className="md:hidden" onClick={() => navigate("guide")} size="icon" variant="ghost">
+            <Button aria-label={appState?.onboarding.status === "completed" ? "Open setup guide" : "Resume guided setup"} className="md:hidden" onClick={() => appState?.onboarding.status === "completed" ? navigate("guide") : setOnboardingOpen(true)} size="icon" variant="ghost">
               <BookOpenCheck className="size-4" />
             </Button>
-            <Button className="hidden md:inline-flex" onClick={() => navigate("guide")} variant="outline">
-              <BookOpenCheck /> Setup guide
+            <Button className="hidden md:inline-flex" onClick={() => appState?.onboarding.status === "completed" ? navigate("guide") : setOnboardingOpen(true)} variant="outline">
+              <BookOpenCheck /> {appState?.onboarding.status === "completed" ? "Setup guide" : "Resume setup"}
             </Button>
             <Button className="hidden sm:inline-flex" onClick={() => navigate("create")}>
               <Plus /> New content
@@ -1738,6 +1758,7 @@ export function GrowthConsole() {
               onOpenConnections={() => navigate("integrations")}
               onOpenQueue={() => navigate("queue")}
               onOpenScheduler={() => navigate("scheduler")}
+              onOpenOnboarding={() => setOnboardingOpen(true)}
               state={appState}
             />
           ) : null}
@@ -2298,7 +2319,7 @@ export function GrowthConsole() {
                       <IntegrationIcon><Bot className="size-4" /></IntegrationIcon>
                       <div><CardTitle>AI provider</CardTitle><CardDescription>Choose a service, add its key, and connect.</CardDescription></div>
                     </div>
-                    <CardAction><ConnectionStatus configured={appState.provider.configured} verified={providerVerified} /></CardAction>
+                    <CardAction><ConnectionStatus configured={appState.provider.configured} verified={providerVerified || appState.provider.verified} /></CardAction>
                   </CardHeader>
                   <CardContent>
                     <form className="space-y-4" onSubmit={(event) => void testProviderConnection(event)}>

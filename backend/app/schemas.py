@@ -101,6 +101,18 @@ class BrandProfileUpdate(ApiModel):
         return cleaned
 
 
+class OnboardingUpdate(ApiModel):
+    action: Literal["start", "set-step", "confirm-storage", "dismiss", "complete", "reset"]
+    step: Literal["welcome", "storage", "ai", "brand", "finish"] | None = None
+    acknowledge_warnings: bool = False
+
+    @model_validator(mode="after")
+    def require_step_for_navigation(self) -> Self:
+        if self.action == "set-step" and self.step is None:
+            raise ValueError("Choose an onboarding step.")
+        return self
+
+
 class ProviderUpdate(ApiModel):
     kind: Literal[
         "ollama",

@@ -18,6 +18,8 @@ npx -y socium@latest onboard --data-dir "D:\Socium\data" --models-dir "D:\Socium
 
 The data directory contains SQLite and its WAL files, `master.key`, media, logs, exports, and backups. The model directory is separate so large local-AI downloads can use another drive. Both selections are saved and preserved by future updates.
 
+When Socium opens with a fresh database, the browser starts a guided first-run wizard. It shows the exact selected paths and drive health, guides one local or cloud AI connection, confirms the brand profile, and stores resumable progress only in local SQLite. **Set up later** closes the wizard without pretending setup is complete; reopen it from **Setup guide**. No Socium login is created.
+
 The CLI detects the operating system and CPU, downloads the matching GitHub Release archive over HTTPS, verifies its published SHA-256 checksum, installs it, starts FastAPI and Next.js on loopback, and opens `http://127.0.0.1:3000`. The first start creates SQLite, applies migrations, and generates the local encryption key.
 
 Supported release targets are Windows x64/ARM64, macOS Intel/Apple silicon, and Linux x64/ARM64. A release is published only after its native runner completes the installed-bundle health smoke test.

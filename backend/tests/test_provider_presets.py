@@ -308,6 +308,7 @@ def test_provider_settings_accept_local_auto_detection_and_presets(client) -> No
         "model": "gpt-5.6-luna",
         "hasApiKey": True,
         "configured": True,
+        "verified": False,
         "updatedAt": public["updatedAt"],
     }
 

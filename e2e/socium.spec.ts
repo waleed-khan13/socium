@@ -46,8 +46,62 @@ async function expectNoAccessibilityViolations(page: Page, testInfo: TestInfo, n
   expect(violations, `${name} has automated WCAG A/AA violations`).toEqual([]);
 }
 
-test("runs real publishing and approval workflows", async ({ page }) => {
+async function dismissOnboardingIfPresent(page: Page) {
+  const dialog = page.getByRole("dialog", { name: "Socium first-run setup" });
+  if (await dialog.isVisible().catch(() => false)) {
+    await dialog.getByRole("button", { name: "Set up later" }).click();
+    await expect(dialog).toHaveCount(0);
+  }
+}
+
+test("runs first-run onboarding, publishing, and approval workflows", async ({ page }, testInfo) => {
   await page.goto("/");
+  const onboarding = page.getByRole("dialog", { name: "Socium first-run setup" });
+  await expect(onboarding.getByRole("heading", { name: "Welcome to Socium" })).toBeVisible();
+  await expect(onboarding.getByText("LOCAL-FIRST · NO SOCIUM ACCOUNT")).toBeVisible();
+  await expectNoAccessibilityViolations(page, testInfo, "onboarding-welcome");
+
+  await onboarding.getByRole("button", { name: "Start setup" }).click();
+  await expect(onboarding.getByRole("heading", { name: "Confirm private storage" })).toBeVisible();
+  await expect(onboarding.getByText("Both durable locations are available.")).toBeVisible();
+  await onboarding.getByRole("button", { name: "Confirm these locations" }).click();
+
+  await expect(onboarding.getByRole("heading", { name: "Connect one AI" })).toBeVisible();
+  await onboarding.getByRole("button", { name: "Set up cloud AI" }).click();
+  await onboarding.getByLabel("AI service").click();
+  await page.getByRole("option", { name: "Custom / I'm not sure" }).click();
+  await onboarding.getByLabel("API base URL").fill(mockBaseUrl);
+  await onboarding.getByLabel("Model").fill("e2e-model");
+  await onboarding.getByLabel("API key").fill("e2e-provider-key");
+  await onboarding.getByRole("button", { name: "Connect and verify cloud AI" }).click();
+  await expect(page.getByText("AI connection verified")).toBeVisible();
+  await expect(onboarding.getByText("AI verified", { exact: true })).toBeVisible();
+  await onboarding.getByRole("button", { name: "Continue to brand" }).click();
+
+  await expect(onboarding.getByRole("heading", { name: "Confirm your brand" })).toBeVisible();
+  await onboarding.getByLabel("Workspace name").fill("E2E workspace");
+  await onboarding.getByLabel("Business name").fill("Northstar Studio");
+  await onboarding
+    .getByLabel("What the business does")
+    .fill("Northstar Studio helps local service businesses build clear, useful marketing systems.");
+  await onboarding.getByLabel("Products or services").fill("Private social publishing workflows with human approval.");
+  await onboarding.getByLabel("Target audience").fill("Privacy-conscious local service businesses.");
+  await onboarding.getByLabel("Marketing goals").fill("Build useful awareness\nEarn qualified conversations");
+  await onboarding.getByLabel("Content pillars").fill("Local-first AI\nHuman-reviewed publishing");
+  await onboarding.getByLabel("Default call to action").fill("Book a practical workflow review.");
+  await onboarding.getByLabel("Restricted claims or topics").fill("Guaranteed growth\nInvented customer results");
+  await onboarding.getByLabel("Branded hashtags").fill("#NorthstarStudio #HumanReviewed");
+  await onboarding.getByLabel("Preferred visual style").fill("Dark, clear layouts with authentic product imagery.");
+  await onboarding.getByLabel("Timezone").fill("Asia/Karachi");
+  await onboarding.getByRole("button", { name: "Save & confirm profile" }).click();
+  await expect(page.getByText("Brand profile revision 1 confirmed")).toBeVisible();
+  await expect(onboarding.getByText("CONFIRMED · R1")).toBeVisible();
+  await onboarding.getByRole("button", { name: "Review setup" }).click();
+
+  await expect(onboarding.getByRole("heading", { name: "Ready for your first draft" })).toBeVisible();
+  await expect(onboarding.getByText("AI connection verified")).toBeVisible();
+  await onboarding.getByRole("button", { name: "Finish setup" }).click();
+  await expect(onboarding).toHaveCount(0);
   await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
   await expect(page.getByText(/SOCIUM LOCAL.*v1\.0\.5/)).toBeVisible();
   const primaryNavigation = page.getByRole("navigation", { name: "Primary" });
@@ -64,6 +118,12 @@ test("runs real publishing and approval workflows", async ({ page }) => {
   const releaseState = (await releaseStateResponse.json()) as PublicAppState;
   expect(releaseState.features).toEqual({ edition: "social-v1", labsEnabled: false, previewModules: [] });
   expect(releaseState.runtime.version).toBe("1.0.5");
+  expect(releaseState.onboarding.status).toBe("completed");
+  expect(releaseState.onboarding.ready).toBe(true);
+
+  await page.reload();
+  await expect(page.getByRole("dialog", { name: "Socium first-run setup" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
 
   await navigate(page, "Integrations", "Connections");
   await expect(page.getByText("Connect only what you use", { exact: true })).toBeVisible();
@@ -71,33 +131,7 @@ test("runs real publishing and approval workflows", async ({ page }) => {
   await expect(page.getByLabel("Phone Number ID")).toHaveCount(0);
   await expect(page.getByRole("switch", { name: "WhatsApp alert" })).toHaveCount(0);
 
-  await page.getByLabel("Workspace name").fill("E2E workspace");
-  await page.getByLabel("Business name").fill("Northstar Studio");
-  await page
-    .getByLabel("What the business does")
-    .fill("Northstar Studio helps local service businesses build clear, useful marketing systems.");
-  await page.getByLabel("Products or services").fill("Private social publishing workflows with human approval.");
-  await page.getByLabel("Target audience").fill("Privacy-conscious local service businesses.");
-  await page.getByLabel("Marketing goals").fill("Build useful awareness\nEarn qualified conversations");
-  await page.getByLabel("Content pillars").fill("Local-first AI\nHuman-reviewed publishing");
-  await page.getByLabel("Default call to action").fill("Book a practical workflow review.");
-  await page.getByLabel("Restricted claims or topics").fill("Guaranteed growth\nInvented customer results");
-  await page.getByLabel("Branded hashtags").fill("#NorthstarStudio #HumanReviewed");
-  await page.getByLabel("Preferred visual style").fill("Dark, clear layouts with authentic product imagery.");
-  await page.getByLabel("Timezone").fill("Asia/Karachi");
-  await page.getByRole("button", { name: "Save & confirm profile" }).click();
-  await expect(page.getByText("Brand profile revision 1 confirmed")).toBeVisible();
   await expect(page.getByText("CONFIRMED · R1")).toBeVisible();
-
-  await page.getByRole("button", { name: "Use cloud API" }).click();
-  await page.getByLabel("AI service").click();
-  await page.getByRole("option", { name: "Custom / I'm not sure" }).click();
-  await page.getByLabel("Base URL").fill(mockBaseUrl);
-  await page.getByLabel("Model").fill("e2e-model");
-  await page.getByLabel("API key").fill("e2e-provider-key");
-  const providerForm = page.getByLabel("Base URL").locator("xpath=ancestor::form");
-  await providerForm.getByRole("button", { name: "Connect provider" }).click();
-  await expect(page.getByText("Provider connected with 1 visible model(s).")).toBeVisible();
 
   const wordpressForm = page.getByLabel("Site URL").locator("xpath=ancestor::form");
   await wordpressForm.getByLabel("Connection name").fill("E2E WordPress");
@@ -519,6 +553,7 @@ test("runs real publishing and approval workflows", async ({ page }) => {
 test("offers simple prebuilt AI providers without a Socium account", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
+  await dismissOnboardingIfPresent(page);
   await navigate(page, "Integrations", "Connections");
 
   const providerCard = page
@@ -585,6 +620,7 @@ test("offers simple prebuilt AI providers without a Socium account", async ({ pa
 test("manages a real local media asset and hands its HTTPS source to a draft", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
+  await dismissOnboardingIfPresent(page);
   await navigate(page, "Media library", "Media library");
   await expect(page.getByText("No media stored yet")).toBeVisible();
 
@@ -689,6 +725,7 @@ test("manages a real local media asset and hands its HTTPS source to a draft", a
 test("passes automated accessibility checks in core workflow views", async ({ page }, testInfo) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
+  await dismissOnboardingIfPresent(page);
   await expectNoAccessibilityViolations(page, testInfo, "growth-command");
 
   await navigate(page, "Setup guide", "Setup guide");
@@ -707,6 +744,8 @@ test("passes automated accessibility checks in core workflow views", async ({ pa
 test("supports keyboard navigation on the mobile layout", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
+  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
+  await dismissOnboardingIfPresent(page);
 
   const navigationTrigger = page.getByRole("button", { name: "Open navigation" });
   await navigationTrigger.focus();

@@ -83,6 +83,7 @@ from app.schemas import (
     LocalModelPullRequest,
     MediaAssetUpdate,
     MediaTransformRequest,
+    OnboardingUpdate,
     OutreachDecisionRequest,
     OutreachDraftUpdate,
     OutreachExportRequest,
@@ -144,10 +145,12 @@ from app.store import (
     finish_publish,
     image_provider_runtime,
     initialize_storage,
+    onboarding_state,
     post_for_approval,
     provider_runtime,
     public_state,
     record_approval_sent,
+    record_provider_verified,
     reserve_publish,
     retry_job,
     schedule_post,
@@ -156,6 +159,7 @@ from app.store import (
     telegram_runtime,
     update_brand_profile,
     update_image_provider,
+    update_onboarding,
     update_provider,
     update_telegram,
     update_workspace,
@@ -220,6 +224,7 @@ def state_response() -> dict[str, Any]:
     state["leadSummary"] = lead_summary()
     state["icpProfile"] = icp_profile_state()
     state["storage"] = storage_state()
+    state["onboarding"] = onboarding_state(state["storage"])
     return state
 
 
@@ -242,6 +247,13 @@ def get_state() -> JSONResponse:
 @app.get("/api/storage")
 def get_storage() -> JSONResponse:
     return JSONResponse(storage_state(refresh=True), headers={"Cache-Control": "no-store"})
+
+
+@app.put("/api/onboarding")
+def save_onboarding(payload: OnboardingUpdate) -> dict[str, Any]:
+    current_storage = storage_state(refresh=payload.action == "confirm-storage")
+    update_onboarding(payload, current_storage)
+    return {"ok": True, "state": state_response()}
 
 
 @app.get("/api/media")
@@ -552,7 +564,10 @@ def save_provider(payload: ProviderUpdate) -> dict[str, Any]:
 
 @app.post("/api/providers/test")
 async def provider_health() -> JSONResponse:
-    result = await test_provider(provider_runtime())
+    runtime = provider_runtime()
+    result = await test_provider(runtime)
+    if result.ok and runtime["model"]:
+        record_provider_verified()
     return JSONResponse(
         result.model_dump(by_alias=True, exclude_none=True),
         status_code=200 if result.ok else 502,

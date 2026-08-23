@@ -30,6 +30,7 @@ from app.schemas import (
     BrandProfileUpdate,
     EditPostRequest,
     ImageProviderUpdate,
+    OnboardingUpdate,
     ProviderUpdate,
     SchedulePostRequest,
     TelegramUpdate,
@@ -408,6 +409,209 @@ def _workspace_dict(session: Session, workspace: Workspace) -> dict[str, Any]:
     }
 
 
+ONBOARDING_KEYS = (
+    "onboarding_started_at",
+    "onboarding_current_step",
+    "onboarding_storage_snapshot",
+    "onboarding_storage_confirmed_at",
+    "onboarding_dismissed_at",
+    "onboarding_completed_at",
+)
+
+
+def _metadata_value(session: Session, key: str) -> str | None:
+    metadata = session.get(AppMetadata, key)
+    return metadata.value if metadata is not None else None
+
+
+def _set_metadata(session: Session, key: str, value: str) -> None:
+    metadata = session.get(AppMetadata, key)
+    if metadata is None:
+        session.add(AppMetadata(key=key, value=value))
+    else:
+        metadata.value = value
+
+
+def _provider_fingerprint(provider: ProviderSettings) -> str:
+    return json.dumps(
+        {
+            "kind": provider.kind,
+            "baseUrl": provider.base_url,
+            "model": provider.model,
+            "updatedAt": provider.updated_at,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _storage_snapshot(storage: dict[str, Any]) -> str:
+    locations = storage.get("locations") or {}
+    return json.dumps(
+        {
+            "data": (locations.get("data") or {}).get("path", ""),
+            "models": (locations.get("models") or {}).get("path", ""),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _onboarding_dict(
+    session: Session,
+    workspace: Workspace,
+    provider: ProviderSettings,
+    storage: dict[str, Any],
+) -> dict[str, Any]:
+    started_at = _metadata_value(session, "onboarding_started_at")
+    dismissed_at = _metadata_value(session, "onboarding_dismissed_at")
+    completed_at = _metadata_value(session, "onboarding_completed_at")
+    current_step = _metadata_value(session, "onboarding_current_step") or "welcome"
+    if current_step not in {"welcome", "storage", "ai", "brand", "finish"}:
+        current_step = "welcome"
+    storage_confirmed = bool(
+        _metadata_value(session, "onboarding_storage_confirmed_at")
+        and _metadata_value(session, "onboarding_storage_snapshot") == _storage_snapshot(storage)
+    )
+    provider_configured = bool(provider.base_url and provider.model)
+    provider_verified = bool(
+        provider_configured
+        and _metadata_value(session, "provider_verified_snapshot") == _provider_fingerprint(provider)
+    )
+    profile_complete = bool(workspace.confirmed_at and not _brand_missing(workspace))
+    ready = storage_confirmed and provider_verified and profile_complete
+    status = (
+        "completed"
+        if completed_at
+        else "dismissed"
+        if dismissed_at
+        else "in-progress"
+        if started_at
+        else "not-started"
+    )
+    return {
+        "version": 1,
+        "status": status,
+        "showWizard": status in {"not-started", "in-progress"},
+        "currentStep": "finish" if completed_at else current_step,
+        "startedAt": started_at,
+        "dismissedAt": dismissed_at,
+        "completedAt": completed_at,
+        "storageConfirmed": storage_confirmed,
+        "storageReady": bool(
+            (storage.get("volumes") or {}).get("data", {}).get("available")
+            and (storage.get("volumes") or {}).get("models", {}).get("available")
+        ),
+        "aiConfigured": provider_configured,
+        "aiVerified": provider_verified,
+        "brandConfirmed": profile_complete,
+        "ready": ready,
+        "completedSteps": sum((storage_confirmed, provider_verified, profile_complete)),
+        "totalSteps": 3,
+    }
+
+
+def onboarding_state(storage: dict[str, Any]) -> dict[str, Any]:
+    with read_session() as session:
+        workspace = session.get(Workspace, 1)
+        provider = session.get(ProviderSettings, 1)
+        if workspace is None or provider is None:
+            raise RuntimeError("Local storage has not been initialized.")
+        return _onboarding_dict(session, workspace, provider, storage)
+
+
+def update_onboarding(payload: OnboardingUpdate, storage: dict[str, Any]) -> None:
+    with write_session() as session:
+        workspace = session.get(Workspace, 1)
+        provider = session.get(ProviderSettings, 1)
+        if workspace is None or provider is None:
+            raise RuntimeError("Local storage has not been initialized.")
+        now = utc_now()
+        if payload.action == "reset":
+            for key in ONBOARDING_KEYS:
+                metadata = session.get(AppMetadata, key)
+                if metadata is not None:
+                    session.delete(metadata)
+            return
+        if payload.action == "start":
+            if _metadata_value(session, "onboarding_started_at") is None:
+                _set_metadata(session, "onboarding_started_at", now)
+            dismissed = session.get(AppMetadata, "onboarding_dismissed_at")
+            if dismissed is not None:
+                session.delete(dismissed)
+            return
+        if payload.action == "set-step":
+            _set_metadata(session, "onboarding_current_step", payload.step or "welcome")
+            return
+        if payload.action == "confirm-storage":
+            volumes = storage.get("volumes") or {}
+            if not (volumes.get("data") or {}).get("available") or not (
+                volumes.get("models") or {}
+            ).get("available"):
+                raise AppError("The selected data and model drives must both be available.")
+            if storage.get("warnings") and not payload.acknowledge_warnings:
+                raise AppError("Review and acknowledge the storage warnings before continuing.")
+            _set_metadata(session, "onboarding_storage_snapshot", _storage_snapshot(storage))
+            _set_metadata(session, "onboarding_storage_confirmed_at", now)
+            _set_metadata(session, "onboarding_current_step", "ai")
+            _append_audit(
+                session,
+                action="onboarding.storage_confirmed",
+                entity_type="settings",
+                entity_id="onboarding",
+                summary="Confirmed the active durable data and local model locations.",
+            )
+            return
+        if payload.action == "dismiss":
+            _set_metadata(session, "onboarding_dismissed_at", now)
+            _append_audit(
+                session,
+                action="onboarding.dismissed",
+                entity_type="settings",
+                entity_id="onboarding",
+                summary="First-run setup was dismissed and can be resumed later.",
+            )
+            return
+        state = _onboarding_dict(session, workspace, provider, storage)
+        if not state["ready"]:
+            missing = []
+            if not state["storageConfirmed"]:
+                missing.append("storage confirmation")
+            if not state["aiVerified"]:
+                missing.append("a verified AI provider")
+            if not state["brandConfirmed"]:
+                missing.append("a confirmed brand profile")
+            raise AppError(f"Finish {', '.join(missing)} before completing setup.")
+        _set_metadata(session, "onboarding_completed_at", now)
+        _set_metadata(session, "onboarding_current_step", "finish")
+        dismissed = session.get(AppMetadata, "onboarding_dismissed_at")
+        if dismissed is not None:
+            session.delete(dismissed)
+        _append_audit(
+            session,
+            action="onboarding.completed",
+            entity_type="settings",
+            entity_id="onboarding",
+            summary="Completed local-first setup with verified storage, AI, and brand context.",
+        )
+
+
+def record_provider_verified() -> None:
+    with write_session() as session:
+        provider = session.get(ProviderSettings, 1)
+        if provider is None or not provider.base_url or not provider.model:
+            raise AppError("Choose a working provider model before verification.")
+        _set_metadata(session, "provider_verified_snapshot", _provider_fingerprint(provider))
+        _set_metadata(session, "provider_verified_at", utc_now())
+        _append_audit(
+            session,
+            action="provider.verified",
+            entity_type="provider",
+            entity_id=provider.kind,
+            summary=f"Verified the saved {provider.kind} provider and selected model.",
+        )
+
+
 def public_state(
     polling: dict[str, Any] | None = None,
     scheduler: dict[str, Any] | None = None,
@@ -434,6 +638,12 @@ def public_state(
             ).all()
         )
         paused = session.get(AppMetadata, "scheduler_paused")
+        provider_verified = bool(
+            provider.base_url
+            and provider.model
+            and _metadata_value(session, "provider_verified_snapshot")
+            == _provider_fingerprint(provider)
+        )
         return {
             "workspace": _workspace_dict(session, workspace),
             "provider": {
@@ -442,6 +652,7 @@ def public_state(
                 "model": provider.model,
                 "hasApiKey": bool(provider.api_key),
                 "configured": bool(provider.base_url and provider.model),
+                "verified": provider_verified,
                 "updatedAt": provider.updated_at,
             },
             "imageProvider": {
@@ -585,6 +796,12 @@ def update_provider(payload: ProviderUpdate) -> None:
             else None
         )
         provider.updated_at = utc_now()
+        verified = session.get(AppMetadata, "provider_verified_snapshot")
+        if verified is not None:
+            session.delete(verified)
+        verified_at = session.get(AppMetadata, "provider_verified_at")
+        if verified_at is not None:
+            session.delete(verified_at)
         _append_audit(
             session,
             action="provider.updated",

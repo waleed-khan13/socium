@@ -27,6 +27,7 @@ type SetupGuideProps = {
   onOpenConnections: () => void;
   onOpenQueue: () => void;
   onOpenScheduler: () => void;
+  onOpenOnboarding: () => void;
 };
 
 type GuideStep = {
@@ -102,6 +103,7 @@ export function SetupGuide({
   onOpenConnections,
   onOpenQueue,
   onOpenScheduler,
+  onOpenOnboarding,
 }: SetupGuideProps) {
   const approvalReady = Boolean(
     (state.telegram.configured && state.telegram.pollingEnabled)
@@ -121,7 +123,7 @@ export function SetupGuide({
   const steps: GuideStep[] = [
     {
       action: "Add business profile",
-      complete: Boolean(state.workspace.businessName && state.workspace.description),
+      complete: state.workspace.profileComplete,
       description: "Give generation a factual description of the business, audience, location, and safe claims.",
       detail: "This profile becomes reusable context for every draft. Do not place API keys or private customer data in the description.",
       icon: Building2,
@@ -130,7 +132,7 @@ export function SetupGuide({
     },
     {
       action: "Connect an AI provider",
-      complete: state.provider.configured,
+      complete: state.provider.verified,
       description: "Choose local Ollama, OpenAI, Gemini, Claude, OpenRouter, or NVIDIA and connect it with one form.",
       detail: "Hosted presets only need their own API key. Socium supplies the endpoint and a working default model. Ollama models are detected locally. No Socium account is required.",
       icon: Bot,
@@ -184,9 +186,9 @@ export function SetupGuide({
                 Complete the live checklist below. Your progress is calculated from this local workspace and updates as connections are verified.
               </CardDescription>
             </div>
-            <div className="min-w-36 rounded-md border border-zinc-800 bg-black/70 p-4">
-              <p className="font-mono text-2xl font-semibold text-white">{completed}/{steps.length}</p>
-              <p className="mt-1 text-[10px] font-medium tracking-[0.14em] text-zinc-600 uppercase">Milestones ready</p>
+            <div className="grid min-w-44 gap-3 rounded-md border border-zinc-800 bg-black/70 p-4">
+              <div><p className="font-mono text-2xl font-semibold text-white">{completed}/{steps.length}</p><p className="mt-1 text-[10px] font-medium tracking-[0.14em] text-zinc-600 uppercase">Milestones ready</p></div>
+              <Button onClick={onOpenOnboarding} size="sm">{state.onboarding.status === "completed" ? "Review guided setup" : "Resume guided setup"}<ArrowRight /></Button>
             </div>
           </div>
           <Progress aria-label="Setup guide progress" value={(completed / steps.length) * 100} />

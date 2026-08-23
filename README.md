@@ -63,6 +63,8 @@ npx -y socium@latest onboard
 
 The `-y` makes the npm download prompt-free. The command downloads the bundle for the current operating system and CPU, verifies its published SHA-256 checksum, keeps the runtime separate from business data, starts both services on loopback, and opens [http://127.0.0.1:3000](http://127.0.0.1:3000). Updates and normal uninstalls preserve the SQLite database, encryption key, media, and exports. See [docs/INSTALLATION.md](docs/INSTALLATION.md) for paths, lifecycle commands, troubleshooting, and permanent removal.
 
+On a fresh database, the browser opens Socium's resumable first-run wizard automatically. It confirms the active data/model locations, guides either private local Ollama or one cloud API connection, verifies the exact saved model, and collects the confirmed brand profile. Setup progress stays in local SQLite, can be dismissed and resumed from **Setup guide**, and does not require a Socium account. Telegram, Slack, and every publisher remain optional.
+
 Choose another drive for durable data and large local-AI models during first install:
 
 ```powershell
@@ -149,14 +151,15 @@ pnpm dev
 
 Open [http://127.0.0.1:3000](http://127.0.0.1:3000). `pnpm dev` starts both the local FastAPI service on loopback port `8000` and the Next.js console on loopback port `3000`.
 
-Complete the checklist in the dashboard:
+The first-run wizard completes the required setup in the dashboard:
 
-1. Open **Integrations → Brand profile**, enter the business facts and content preferences, choose optional logo/reference assets from the private Media Library, then select **Save & confirm profile**. Required fields are shown in the form, and confirmation creates an auditable revision.
-2. Open **Integrations → AI provider** and choose **Local AI - Recommended** or **Cloud API**. Local setup inspects this computer, recommends a model, and downloads it with 1% progress when Ollama is running. Cloud setup needs only the selected provider's API key.
-3. Generate a draft and approve it in the built-in dashboard; no approval connector is required.
-4. Optionally connect Telegram or Slack if approvals should also reach another app.
-5. Connect only the publishing destination you want to use; the other connectors can stay unconfigured.
-6. Publish immediately or schedule the exact approved revision from the local queue.
+1. Review the current durable-data and model locations. If a reliability warning is present, the wizard explains it and requires acknowledgement. Moving existing storage still requires Socium to be stopped; the exact safe command is shown and can be copied in the wizard.
+2. Choose **Local AI - Recommended** or **Cloud API**. Local setup inspects this computer, recommends a model, and downloads it with 1% progress when Ollama is running. Cloud setup needs only the selected provider's API key.
+3. Enter the business facts and content preferences, choose optional logo/reference assets from the private Media Library, then select **Save & confirm profile**. Confirmation creates an auditable revision.
+4. Finish setup, generate a draft, and approve it in the built-in dashboard; no approval connector is required.
+5. Optionally connect Telegram or Slack if approvals should also reach another app.
+6. Connect only the publishing destination you want to use; the other connectors can stay unconfigured.
+7. Publish immediately or schedule the exact approved revision from the local queue.
 
 Every credential field in the UI includes its official **Get key/token** page and short setup instructions. The complete provider-by-provider directory is in [Connector credentials](docs/CREDENTIALS.md).
 

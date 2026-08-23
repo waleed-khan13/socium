@@ -29,6 +29,23 @@ def test_health_state_and_encrypted_settings(client) -> None:
         "labsEnabled": False,
         "previewModules": [],
     }
+    assert initial.json()["onboarding"] == {
+        "version": 1,
+        "status": "not-started",
+        "showWizard": True,
+        "currentStep": "welcome",
+        "startedAt": None,
+        "dismissedAt": None,
+        "completedAt": None,
+        "storageConfirmed": False,
+        "storageReady": True,
+        "aiConfigured": False,
+        "aiVerified": False,
+        "brandConfirmed": False,
+        "ready": False,
+        "completedSteps": 0,
+        "totalSteps": 3,
+    }
 
     workspace = client.put(
         "/api/settings/workspace",
@@ -135,6 +152,69 @@ def test_confirmed_brand_profile_persists_assets_preferences_and_revision(client
     assert missing_asset.status_code == 400
     assert "no longer exist" in missing_asset.json()["error"]
     assert client.delete(f"/api/media/{logo['id']}").status_code == 200
+
+
+def test_onboarding_is_resumable_and_requires_verified_live_settings(client) -> None:
+    started = client.put("/api/onboarding", json={"action": "start"})
+    assert started.status_code == 200
+    assert started.json()["state"]["onboarding"]["status"] == "in-progress"
+
+    moved = client.put(
+        "/api/onboarding",
+        json={"action": "set-step", "step": "storage"},
+    )
+    assert moved.json()["state"]["onboarding"]["currentStep"] == "storage"
+    dismissed = client.put("/api/onboarding", json={"action": "dismiss"})
+    assert dismissed.json()["state"]["onboarding"]["status"] == "dismissed"
+    assert dismissed.json()["state"]["onboarding"]["showWizard"] is False
+    resumed = client.put("/api/onboarding", json={"action": "start"})
+    assert resumed.json()["state"]["onboarding"]["status"] == "in-progress"
+    assert resumed.json()["state"]["onboarding"]["currentStep"] == "storage"
+
+    storage = client.put(
+        "/api/onboarding",
+        json={"action": "confirm-storage", "acknowledgeWarnings": True},
+    )
+    assert storage.status_code == 200
+    onboarding = storage.json()["state"]["onboarding"]
+    assert onboarding["storageConfirmed"] is True
+    assert onboarding["currentStep"] == "ai"
+
+    incomplete = client.put("/api/onboarding", json={"action": "complete"})
+    assert incomplete.status_code == 400
+    assert "verified AI provider" in incomplete.json()["error"]
+
+    from app.store import record_provider_verified
+
+    record_provider_verified()
+    verified = client.get("/api/state").json()
+    assert verified["provider"]["verified"] is True
+    assert verified["onboarding"]["aiVerified"] is True
+    assert verified["onboarding"]["brandConfirmed"] is True
+    assert verified["onboarding"]["ready"] is True
+
+    completed = client.put("/api/onboarding", json={"action": "complete"})
+    assert completed.status_code == 200
+    assert completed.json()["state"]["onboarding"]["status"] == "completed"
+    assert completed.json()["state"]["onboarding"]["showWizard"] is False
+    assert any(
+        event["action"] == "onboarding.completed"
+        for event in completed.json()["state"]["audit"]
+    )
+
+    changed = client.put(
+        "/api/settings/provider",
+        json={
+            "kind": "openai-compatible",
+            "baseUrl": "https://provider.example/v1",
+            "model": "replacement-model",
+            "apiKey": "",
+        },
+    )
+    assert changed.status_code == 200
+    assert changed.json()["state"]["provider"]["verified"] is False
+    assert changed.json()["state"]["onboarding"]["aiVerified"] is False
+    assert changed.json()["state"]["onboarding"]["status"] == "completed"
 
 
 def test_labs_require_an_explicit_environment_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
