@@ -4,9 +4,21 @@ import asyncio
 from contextlib import suppress
 from typing import Any
 
-from app.errors import ExternalServiceError
-from app.services.telegram import answer_callback, get_updates
-from app.store import process_telegram_update, telegram_runtime
+from app.approval_actions import apply_remote_approval_action
+from app.errors import AppError, ExternalServiceError
+from app.services.telegram import (
+    answer_callback,
+    get_updates,
+    send_approval_request,
+    send_status_message,
+)
+from app.store import (
+    create_approval_action,
+    fail_approval_delivery,
+    process_telegram_update,
+    record_approval_sent,
+    telegram_runtime,
+)
 
 
 class TelegramPoller:
@@ -69,12 +81,60 @@ class TelegramPoller:
                         int(runtime["last_update_id"]) + 1,
                         self.poll_timeout,
                     )
+                    action_error: str | None = None
                     for update in updates:
                         callback = process_telegram_update(update)
-                        if callback is not None:
-                            callback_id, message = callback
-                            await answer_callback(token, callback_id, message)
-                    self._last_error = None
+                        if callback is None:
+                            continue
+                        callback_id = callback["callbackId"]
+                        if callback.get("error"):
+                            await answer_callback(token, callback_id, callback["error"])
+                            continue
+                        action = callback["action"]
+                        if action == "regenerate":
+                            await answer_callback(token, callback_id, "Regenerating this revision locally…")
+                        try:
+                            result = await apply_remote_approval_action(
+                                callback["actionId"], action, "telegram"  # type: ignore[arg-type]
+                            )
+                            if result.regenerated:
+                                approval = create_approval_action(
+                                    result.post["id"], result.post["revision"], "telegram"
+                                )
+                                try:
+                                    message_id = await send_approval_request(
+                                        token,
+                                        str(runtime["chat_id"]),
+                                        result.post,
+                                        approval["id"],
+                                    )
+                                    record_approval_sent(approval["id"], message_id)
+                                except ExternalServiceError as error:
+                                    fail_approval_delivery(approval["id"], error.message)
+                                    action_error = (
+                                        "Draft regenerated, but its new Telegram approval could not be sent."
+                                    )
+                            else:
+                                await answer_callback(token, callback_id, result.message)
+                        except AppError as error:
+                            if action != "regenerate":
+                                await answer_callback(token, callback_id, error.message)
+                            else:
+                                try:
+                                    await send_status_message(
+                                        token,
+                                        str(runtime["chat_id"]),
+                                        f"Socium could not regenerate this draft: {error.message}",
+                                    )
+                                except ExternalServiceError:
+                                    pass
+                            action_error = error.message
+                        except Exception as error:  # noqa: BLE001 - return safe action feedback.
+                            message = error.message if hasattr(error, "message") else "Approval action failed."
+                            if action != "regenerate":
+                                await answer_callback(token, callback_id, str(message))
+                            action_error = str(message)
+                    self._last_error = action_error
                     backoff = 2
                 except ExternalServiceError as error:
                     self._active = False

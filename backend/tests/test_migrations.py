@@ -95,6 +95,9 @@ def test_v1_1_migrations_preserve_data_and_add_brand_content_fields(tmp_path: Pa
             row[1] for row in connection.execute("PRAGMA table_info(workspace)").fetchall()
         }
         post_columns = {row[1] for row in connection.execute("PRAGMA table_info(posts)").fetchall()}
+        approval_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(approval_actions)").fetchall()
+        }
         brand_defaults = connection.execute(
             """
             SELECT language, tone, goals, content_pillars, profile_version, confirmed_at
@@ -110,7 +113,7 @@ def test_v1_1_migrations_preserve_data_and_add_brand_content_fields(tmp_path: Pa
         ).fetchone()
 
     assert accounts == [("keep-slack", "slack", "encrypted-local-secret")]
-    assert revision == ("20260823_0015",)
+    assert revision == ("20260823_0016",)
     assert {"target_audience", "logo_media_id", "reference_media_ids", "confirmed_at"} <= workspace_columns
     assert {
         "call_to_action",
@@ -119,5 +122,14 @@ def test_v1_1_migrations_preserve_data_and_add_brand_content_fields(tmp_path: Pa
         "image_alt_text",
         "brand_profile_version",
     } <= post_columns
+    assert {
+        "post_id",
+        "revision",
+        "transport",
+        "status",
+        "selected_action",
+        "expires_at",
+        "consumed_at",
+    } <= approval_columns
     assert brand_defaults == ("English", "Clear and confident", "[]", "[]", 0, None)
     assert content_kit_defaults == ("", "", "", "", 0)

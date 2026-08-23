@@ -35,11 +35,15 @@ async def test_saved_connector(account_id: str) -> ConnectorTestResult:
     return result
 
 
-async def send_saved_slack_approval(post: dict[str, Any]) -> dict[str, str]:
+async def send_saved_slack_approval(
+    post: dict[str, Any],
+    approval_action_id: str,
+) -> dict[str, str]:
     runtime = primary_connector_runtime("slack", verified_only=True)
     message_ts = await send_approval_message(
         str(runtime["secrets"].get("bot_token") or ""),
         str(runtime["config"].get("approval_channel_id") or ""),
         post,
+        approval_action_id,
     )
     return {"accountId": str(runtime["id"]), "messageTs": message_ts}

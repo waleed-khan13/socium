@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from app import __version__
+from app.approval_actions import regenerate_post_revision
 from app.config import get_settings
 from app.connector_store import (
     create_connector,
@@ -92,6 +93,7 @@ from app.schemas import (
     ProviderDiscoveryRequest,
     ProviderUpdate,
     PublishRequest,
+    RevisionRequest,
     SchedulePostRequest,
     SchedulerUpdate,
     SeoAuditRequest,
@@ -136,10 +138,13 @@ from app.services.telegram import (
 from app.slack_listener import SlackSocketListener
 from app.storage_health import storage_state
 from app.store import (
+    acknowledge_remote_edit,
     cancel_job,
+    create_approval_action,
     create_post,
     decide_post,
     edit_post,
+    fail_approval_delivery,
     fail_publish,
     fail_publish_uncertain,
     finish_publish,
@@ -682,16 +687,31 @@ async def generate_post(payload: GeneratePostRequest) -> dict[str, Any]:
             telegram = telegram_runtime()
             if not telegram["bot_token"] or not telegram["chat_id"]:
                 raise AppError("Telegram approval is not configured.")
-            await send_approval_request(str(telegram["bot_token"]), str(telegram["chat_id"]), post)
-            record_approval_sent(post["id"])
+            approval = create_approval_action(post["id"], post["revision"], "telegram")
+            try:
+                message_id = await send_approval_request(
+                    str(telegram["bot_token"]),
+                    str(telegram["chat_id"]),
+                    post,
+                    approval["id"],
+                )
+                record_approval_sent(approval["id"], message_id)
+            except AppError as error:
+                fail_approval_delivery(approval["id"], error.message)
+                raise
             notification = {"ok": True, "message": "Approval request sent to Telegram."}
         except AppError as error:
             notification = {"ok": False, "message": error.message}
         notifications.append({"channel": "telegram", **notification})
     if payload.notify_slack:
         try:
-            await send_saved_slack_approval(post)
-            record_approval_sent(post["id"], source="slack")
+            approval = create_approval_action(post["id"], post["revision"], "slack")
+            try:
+                delivery = await send_saved_slack_approval(post, approval["id"])
+                record_approval_sent(approval["id"], delivery["messageTs"])
+            except AppError as error:
+                fail_approval_delivery(approval["id"], error.message)
+                raise
             notifications.append(
                 {"channel": "slack", "ok": True, "message": "Approval request sent to Slack."}
             )
@@ -714,15 +734,37 @@ def update_post(post_id: str, payload: EditPostRequest) -> dict[str, Any]:
 
 @app.post("/api/posts/{post_id}/decision")
 def post_decision(post_id: str, payload: DecisionRequest) -> dict[str, Any]:
-    decide_post(post_id, payload.revision, payload.decision == "approve")
+    decide_post(post_id, payload.revision, payload.decision)
     return {"ok": True, "state": state_response()}
+
+
+@app.post("/api/posts/{post_id}/regenerate")
+async def regenerate_post(post_id: str, payload: RevisionRequest) -> dict[str, Any]:
+    post = await regenerate_post_revision(post_id, payload.revision)
+    return {
+        "ok": True,
+        "post": post,
+        "message": f"Revision {payload.revision} regenerated as revision {post['revision']}.",
+        "state": state_response(),
+    }
+
+
+@app.post("/api/approval-actions/{action_id}/edit/ack")
+def acknowledge_edit_request(action_id: str) -> dict[str, Any]:
+    acknowledge_remote_edit(action_id)
+    return {"ok": True}
 
 
 @app.post("/api/posts/{post_id}/approvals/slack")
 async def request_slack_approval(post_id: str, payload: ApprovalRequest) -> dict[str, Any]:
     post = post_for_approval(post_id, payload.revision)
-    delivery = await send_saved_slack_approval(post)
-    record_approval_sent(post_id, source="slack")
+    approval = create_approval_action(post_id, payload.revision, "slack")
+    try:
+        delivery = await send_saved_slack_approval(post, approval["id"])
+        record_approval_sent(approval["id"], delivery["messageTs"])
+    except AppError as error:
+        fail_approval_delivery(approval["id"], error.message)
+        raise
     return {
         "ok": True,
         "delivery": delivery,

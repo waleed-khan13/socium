@@ -9,7 +9,7 @@ export type ProviderKind =
   | "openai-compatible";
 export type ImageProviderKind = "openai-images" | "automatic1111" | "comfyui";
 export type ContentChannel = "linkedin" | "linkedin-company" | "instagram" | "facebook" | "x" | "telegram" | "blog";
-export type PostStatus = "pending" | "approved" | "rejected" | "publishing" | "published" | "failed";
+export type PostStatus = "pending" | "approved" | "skipped" | "rejected" | "publishing" | "published" | "failed";
 export type LocalJobStatus = "queued" | "retrying" | "running" | "completed" | "failed" | "cancelled" | "missed";
 export type ConnectorCapability = "approval" | "notification" | "publish" | "leads" | "analytics" | "cms";
 export type ConnectorAvailability = "available" | "planned" | "access-gated" | "notification-only" | "built-in";
@@ -537,6 +537,13 @@ export interface PublicAppState {
   imageProvider: PublicImageProviderSettings;
   telegram: PublicTelegramSettings;
   posts: GeneratedPost[];
+  remoteEditRequest: {
+    id: string;
+    postId: string;
+    revision: number;
+    source: "telegram" | "slack";
+    createdAt: string;
+  } | null;
   jobs: LocalJob[];
   scheduler: PublicSchedulerState;
   connectors: PublicConnectorsState;

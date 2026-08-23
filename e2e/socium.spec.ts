@@ -164,6 +164,20 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
     .getByRole("heading", { level: 2, name: generatedTitle })
     .locator('xpath=ancestor::div[@data-slot="card"]');
   await expect(postCard.getByText("pending", { exact: true })).toBeVisible();
+  const regenerateResponse = page.waitForResponse(
+    (response) => /\/api\/posts\/[^/]+\/regenerate$/.test(response.url()) && response.request().method() === "POST",
+  );
+  await postCard.getByRole("button", { name: "Regenerate" }).click();
+  await expect((await regenerateResponse).status()).toBe(200);
+  await expect(page.getByText("Fresh revision generated")).toBeVisible();
+  const regeneratedStateResponse = await page.request.get("/api/state");
+  const regeneratedState = (await regeneratedStateResponse.json()) as PublicAppState;
+  const regeneratedPost = regeneratedState.posts.find((post) => post.channel === "blog");
+  expect(regeneratedPost?.revision).toBe(2);
+  const staleDecision = await page.request.post(`/api/posts/${regeneratedPost?.id}/decision`, {
+    data: { decision: "approve", revision: 1 },
+  });
+  expect(staleDecision.status()).toBe(400);
   await postCard.getByText("Brand content kit · profile R1").click();
   await expect(postCard.getByText("Book a practical workflow review.", { exact: true })).toBeVisible();
   await expect(postCard.getByText(/A dark editorial small-business workspace/)).toBeVisible();
@@ -214,7 +228,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
     channel: "blog",
     remoteId: "4242",
     remoteUrl: `${mockBaseUrl}/posts/4242`,
-    revision: 2,
+    revision: 3,
     status: "published",
     title: editedTitle,
     callToAction: "Read the reviewed workflow guide.",
@@ -234,7 +248,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
     lastGenerationRequest: { messages: Array<{ role: string; content: string }> };
   };
   expect(mockState).toMatchObject({
-    generationRequests: 1,
+    generationRequests: 2,
     modelRequests: 1,
     wordpressAuthChecks: 1,
     wordpressPublishes: 1,
@@ -305,7 +319,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
     metaPublishes: number;
   };
   expect(finalMockState).toMatchObject({
-    generationRequests: 2,
+    generationRequests: 3,
     metaAuthChecks: 1,
     metaPublishes: 1,
   });
@@ -377,7 +391,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
     lastInstagramPublish: { creation_id: string };
   };
   expect(instagramMockState).toMatchObject({
-    generationRequests: 3,
+    generationRequests: 4,
     instagramAuthChecks: 1,
     instagramContainers: 1,
     instagramPublishes: 1,
@@ -457,7 +471,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
     linkedinPublishes: number;
   };
   expect(linkedinMockState).toMatchObject({
-    generationRequests: 4,
+    generationRequests: 5,
     linkedinAuthChecks: 1,
     linkedinPublishes: 1,
   });
@@ -547,7 +561,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
     linkedinOrganizationPublishes: number;
   };
   expect(linkedinCompanyMockState).toMatchObject({
-    generationRequests: 5,
+    generationRequests: 6,
     linkedinAuthChecks: 2,
     linkedinOrganizationAuthChecks: 1,
     linkedinOrganizationPublishes: 1,
@@ -566,6 +580,34 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   });
   expect(linkedinCompanyMockState.lastLinkedInOrganizationPost.commentary).toContain("Share one useful company lesson");
   expect(linkedinCompanyMockState.lastLinkedInOrganizationPost.commentary).toContain("#HumanReviewed");
+
+  await navigate(page, "Create content", "Create a draft");
+  await page.getByLabel("Topic or source brief").fill("Phase eight skip: do not publish this review draft.");
+  await page.getByLabel("Channel").click();
+  await page.getByRole("option", { name: "X / Twitter" }).click();
+  const skipGenerateResponse = page.waitForResponse(
+    (response) => response.url().endsWith("/api/posts/generate") && response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Generate review draft" }).click();
+  await expect((await skipGenerateResponse).status()).toBe(200);
+  await page.getByRole("button", { name: /^all / }).click();
+  const skipCard = page
+    .getByRole("heading", { level: 2, name: "A skippable X review draft" })
+    .locator('xpath=ancestor::div[@data-slot="card"]');
+  await expect(skipCard.getByRole("button", { name: "Regenerate" })).toBeVisible();
+  await expect(skipCard.getByRole("button", { name: "Edit" })).toBeVisible();
+  await expect(skipCard.getByRole("button", { name: "Approve" })).toBeVisible();
+  await skipCard.getByRole("button", { name: "Skip" }).click();
+  await expect(skipCard.getByText("skipped", { exact: true })).toBeVisible();
+  await expect(skipCard.getByRole("button", { name: "Approve" })).toHaveCount(0);
+
+  const skippedState = (await (await page.request.get("/api/state")).json()) as PublicAppState;
+  expect(skippedState.posts.find((post) => post.title === "A skippable X review draft")).toMatchObject({
+    revision: 1,
+    status: "skipped",
+    approvedAt: null,
+    publishedAt: null,
+  });
 
 });
 

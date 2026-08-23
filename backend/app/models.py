@@ -132,6 +132,24 @@ class Post(Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class ApprovalAction(Base):
+    __tablename__ = "approval_actions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    post_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("posts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    transport: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="created", index=True)
+    selected_action: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    remote_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    expires_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    consumed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class MediaAsset(Base):
     __tablename__ = "media_assets"
 

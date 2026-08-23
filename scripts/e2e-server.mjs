@@ -79,16 +79,22 @@ const mockServer = createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
       mockState.generationRequests += 1;
       mockState.lastGenerationRequest = await readJson(request);
-      const facebookDraft = mockState.generationRequests === 2;
-      const instagramDraft = mockState.generationRequests === 3;
-      const linkedinDraft = mockState.generationRequests === 4;
-      const linkedinOrganizationDraft = mockState.generationRequests === 5;
+      const generationPrompt = mockState.lastGenerationRequest.messages
+        ?.map((message) => message.content)
+        .join("\n") ?? "";
+      const facebookDraft = generationPrompt.includes("Channel: facebook");
+      const instagramDraft = generationPrompt.includes("Channel: instagram");
+      const linkedinDraft = generationPrompt.includes("Channel: linkedin\n");
+      const linkedinOrganizationDraft = generationPrompt.includes("Channel: linkedin-company");
+      const skipDraft = generationPrompt.includes("Topic: Phase eight skip");
       sendJson(response, 200, {
         choices: [
           {
             message: {
               content: JSON.stringify({
-                title: linkedinOrganizationDraft
+                title: skipDraft
+                  ? "A skippable X review draft"
+                  : linkedinOrganizationDraft
                   ? "A reviewed LinkedIn Company Page update"
                   : linkedinDraft
                   ? "A reviewed LinkedIn member update"
@@ -97,7 +103,9 @@ const mockServer = createServer(async (request, response) => {
                   : facebookDraft
                     ? "A useful Facebook Page update"
                     : "A practical local growth checklist",
-                body: linkedinOrganizationDraft
+                body: skipDraft
+                  ? "This revision exists only to verify an explicit non-publication decision."
+                  : linkedinOrganizationDraft
                   ? "Share one useful company lesson, make the customer value clear, and publish only the exact reviewed Page update."
                   : linkedinDraft
                   ? "Share one practical lesson, make the professional value clear, and keep the published text human-reviewed."
@@ -106,7 +114,9 @@ const mockServer = createServer(async (request, response) => {
                   : facebookDraft
                   ? "Share one useful local insight, invite a relevant response, and keep the final post human-reviewed."
                   : "Start with one clear customer problem, publish a useful answer, and review the result before the next post.",
-                hashtags: linkedinOrganizationDraft
+                hashtags: skipDraft
+                  ? ["#Socium", "#SkipReview"]
+                  : linkedinOrganizationDraft
                   ? ["#CompanyGrowth", "#HumanReviewed"]
                   : linkedinDraft
                   ? ["#ProfessionalGrowth", "#HumanReviewed"]
@@ -119,7 +129,9 @@ const mockServer = createServer(async (request, response) => {
                 imagePrompt: "A dark editorial small-business workspace with amber and emerald lighting, authentic tools, clear composition, no embedded text",
                 imageNegativePrompt: "watermark, distorted logo, unreadable text, duplicate objects",
                 imageAltText: "Small-business workspace arranged for a practical marketing workflow review",
-                rationale: linkedinOrganizationDraft
+                rationale: skipDraft
+                  ? "A disposable draft proves that Skip is distinct from approval and publication."
+                  : linkedinOrganizationDraft
                   ? "A concise Page post exercises permission-verified LinkedIn organization publishing."
                   : linkedinDraft
                   ? "A concise public text post exercises the official LinkedIn Posts API member flow."

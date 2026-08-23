@@ -41,7 +41,7 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { LeadsWorkspace } from "@/components/leads-workspace";
@@ -239,6 +239,7 @@ const statusStyles: Record<PostStatus, string> = {
   pending: "border-amber-500/25 bg-amber-500/8 text-amber-300",
   approved: "border-sky-500/25 bg-sky-500/8 text-sky-300",
   rejected: "border-zinc-700 bg-zinc-900 text-zinc-400",
+  skipped: "border-zinc-700 bg-zinc-900 text-zinc-400",
   publishing: "border-violet-500/25 bg-violet-500/8 text-violet-300",
   published: "border-emerald-500/25 bg-emerald-500/8 text-emerald-300",
   failed: "border-red-500/25 bg-red-500/8 text-red-300",
@@ -584,6 +585,7 @@ export function GrowthConsole() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [appState, setAppState] = useState<PublicAppState | null>(null);
+  const handledRemoteEdits = useRef(new Set<string>());
   const [initialError, setInitialError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -700,18 +702,60 @@ export function GrowthConsole() {
     notifySlack: false,
   });
 
+  const acceptAppState = useCallback((next: PublicAppState) => {
+    setAppState(next);
+    const request = next.remoteEditRequest;
+    if (!request || handledRemoteEdits.current.has(request.id)) return;
+    handledRemoteEdits.current.add(request.id);
+    const post = next.posts.find(
+      (item) => item.id === request.postId && item.revision === request.revision,
+    );
+    if (post) {
+      setQueueFilter("pending");
+      setActiveView("queue");
+      setMobileOpen(false);
+      setEditPost(post);
+      setEditForm({
+        title: post.title,
+        body: post.body,
+        hashtags: post.hashtags.join(" "),
+        callToAction: post.callToAction,
+        imagePrompt: post.imagePrompt,
+        imageNegativePrompt: post.imageNegativePrompt,
+        imageAltText: post.imageAltText,
+        mediaUrl: post.mediaUrl ?? "",
+      });
+      toast.info(`Edit requested from ${request.source}`, {
+        description: `Revision ${request.revision} is open. Saving will create a fresh revision.`,
+      });
+    } else {
+      toast.warning("Remote edit request is stale", {
+        description: "Open the latest draft revision from the approval queue.",
+      });
+    }
+    void requestJson<{ ok: boolean }>(`/api/approval-actions/${request.id}/edit/ack`, {
+      method: "POST",
+    }).then(() => {
+      setAppState((current) => (
+        current?.remoteEditRequest?.id === request.id
+          ? { ...current, remoteEditRequest: null }
+          : current
+      ));
+    }).catch(() => undefined);
+  }, []);
+
   const loadState = useCallback(async () => {
     setLoading(true);
     setInitialError("");
     try {
       const next = await requestJson<PublicAppState>("/api/state", { cache: "no-store" });
-      setAppState(next);
+      acceptAppState(next);
     } catch (error) {
       setInitialError(error instanceof Error ? error.message : "Could not load the local workspace.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [acceptAppState]);
 
   const refreshLocalAi = useCallback(async (baseUrl: string) => {
     try {
@@ -733,7 +777,7 @@ export function GrowthConsole() {
     void requestJson<PublicAppState>("/api/state", { cache: "no-store" })
       .then((next) => {
         if (cancelled) return;
-        setAppState(next);
+        acceptAppState(next);
         if (next.onboarding.showWizard) setOnboardingOpen(true);
         setProviderForm({
           kind: next.provider.kind,
@@ -821,7 +865,7 @@ export function GrowthConsole() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [acceptAppState]);
 
   const schedulerShouldRefresh = Boolean(
     !appState?.scheduler.paused
@@ -837,11 +881,11 @@ export function GrowthConsole() {
     if (!appState?.telegram.pollingEnabled && !schedulerShouldRefresh && !slackShouldRefresh) return;
     const interval = window.setInterval(() => {
       void requestJson<PublicAppState>("/api/state", { cache: "no-store" })
-        .then(setAppState)
+        .then(acceptAppState)
         .catch(() => undefined);
     }, 5_000);
     return () => window.clearInterval(interval);
-  }, [appState?.telegram.pollingEnabled, schedulerShouldRefresh, slackShouldRefresh]);
+  }, [acceptAppState, appState?.telegram.pollingEnabled, schedulerShouldRefresh, slackShouldRefresh]);
 
   const counts = useMemo(() => {
     const posts = appState?.posts ?? [];
@@ -1123,7 +1167,7 @@ export function GrowthConsole() {
     }
   }
 
-  async function decidePost(post: GeneratedPost, decision: "approve" | "reject") {
+  async function decidePost(post: GeneratedPost, decision: "approve" | "skip") {
     setBusy(`${decision}-${post.id}`);
     try {
       const response = await requestJson<StateResponse>(`/api/posts/${post.id}/decision`, {
@@ -1131,9 +1175,29 @@ export function GrowthConsole() {
         body: JSON.stringify({ decision, revision: post.revision }),
       });
       setAppState(response.state);
-      toast.success(decision === "approve" ? "Draft approved and locked" : "Draft rejected");
+      toast.success(decision === "approve" ? "Draft approved and locked" : "Draft skipped without publishing");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Decision failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function regeneratePost(post: GeneratedPost) {
+    setBusy(`regenerate-${post.id}`);
+    try {
+      const response = await requestJson<StateResponse & { post: GeneratedPost; message: string }>(
+        `/api/posts/${post.id}/regenerate`,
+        {
+          method: "POST",
+          body: JSON.stringify({ revision: post.revision }),
+        },
+      );
+      setAppState(response.state);
+      toast.success("Fresh revision generated", { description: response.message });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not regenerate this draft.");
+      await loadState();
     } finally {
       setBusy(null);
     }
@@ -1272,6 +1336,7 @@ export function GrowthConsole() {
       const response = await requestJson<StateResponse>(`/api/posts/${editPost.id}`, {
         method: "PATCH",
         body: JSON.stringify({
+          revision: editPost.revision,
           title: editForm.title,
           body: editForm.body,
           hashtags,
@@ -2024,7 +2089,7 @@ export function GrowthConsole() {
             <div className="space-y-4">
               <div className="flex flex-col gap-3 rounded-lg border border-zinc-900 bg-[#050505] p-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex gap-1 overflow-x-auto">
-                  {(["all", "pending", "approved", "publishing", "published", "rejected"] as QueueFilter[]).map((filter) => {
+                  {(["all", "pending", "approved", "publishing", "published", "skipped"] as QueueFilter[]).map((filter) => {
                     const total = filter === "all" ? appState.posts.length : appState.posts.filter((post) => post.status === filter).length;
                     return (
                       <button className={cn("flex h-8 items-center gap-2 whitespace-nowrap rounded-md px-3 text-xs font-medium transition-colors", queueFilter === filter ? "bg-zinc-800 text-white" : "text-zinc-600 hover:bg-zinc-900 hover:text-zinc-300")} key={filter} onClick={() => setQueueFilter(filter)} type="button">
@@ -2122,7 +2187,8 @@ export function GrowthConsole() {
                                 {slackAccount?.status === "verified" && slackAccount.enabled ? (
                                   <Button disabled={busy === `slack-approval-${post.id}`} onClick={() => void sendSlackApproval(post)} size="sm" variant="outline">{busy === `slack-approval-${post.id}` ? <Loader2 className="animate-spin" /> : <MessageCircle />} Send to Slack</Button>
                                 ) : null}
-                                <Button disabled={busy === `reject-${post.id}`} onClick={() => void decidePost(post, "reject")} size="sm" variant="ghost">{busy === `reject-${post.id}` ? <Loader2 className="animate-spin" /> : <X />} Reject</Button>
+                                <Button disabled={busy === `regenerate-${post.id}`} onClick={() => void regeneratePost(post)} size="sm" variant="outline">{busy === `regenerate-${post.id}` ? <Loader2 className="animate-spin" /> : <RefreshCw />} Regenerate</Button>
+                                <Button disabled={busy === `skip-${post.id}`} onClick={() => void decidePost(post, "skip")} size="sm" variant="ghost">{busy === `skip-${post.id}` ? <Loader2 className="animate-spin" /> : <X />} Skip</Button>
                                 <Button disabled={busy === `approve-${post.id}`} onClick={() => void decidePost(post, "approve")} size="sm">{busy === `approve-${post.id}` ? <Loader2 className="animate-spin" /> : <Check />} Approve</Button>
                               </>
                             ) : null}
@@ -2687,7 +2753,7 @@ export function GrowthConsole() {
                       <div className="rounded-md border border-zinc-900 p-3"><p className="text-zinc-600">App token</p><p className={cn("mt-1", slackAccount?.secretStatus.app_token ? "text-emerald-300" : "text-zinc-500")}>{slackAccount?.secretStatus.app_token ? "Stored" : "Missing"}</p></div>
                     </div>
                     {slackAccount?.lastVerifiedAt ? <p className="font-mono text-[10px] text-zinc-600">Last verified {formatDate(slackAccount.lastVerifiedAt)}</p> : null}
-                    <p className="text-[11px] leading-5 text-zinc-700">Slack actions are bound to the exact draft revision. Stale or repeated clicks are rejected by the same transactional approval boundary as the dashboard.</p>
+                    <p className="text-[11px] leading-5 text-zinc-700">Approve, Regenerate, Edit, and Skip are one-time actions bound to the exact draft revision. They expire after 72 hours; stale, repeated, or mismatched clicks fail closed.</p>
                   </div>
                 </CardContent>
               </Card>

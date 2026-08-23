@@ -39,7 +39,7 @@ It borrows the useful control-plane ideas from agent-management products—goals
 | Provider | Cloud or local model endpoint plus capabilities, limits, health, and cost rules. |
 | Campaign | Goal, channels, audience, budget, dates, and content pillars. |
 | Content item | Versioned draft with per-channel variants, assets, provenance, and schedule. |
-| Approval | Immutable decision request: approve, reject, edit, expire, or escalate. |
+| Approval | Immutable decision request: approve, regenerate, edit, skip, or expire. |
 | Connector | Typed integration for approvals, publishing, lead sources, analytics, or CMS. |
 | Lead | Permission-aware prospect record with source, evidence, score, and retention state. |
 | SEO audit | Crawl snapshot, issue set, proposed fix, and before/after evidence. |

@@ -60,6 +60,7 @@ async def send_approval_message(
     bot_token: str,
     channel_id: str,
     post: dict[str, Any],
+    approval_action_id: str,
 ) -> str:
     hashtag_line = f"\n\n{' '.join(post['hashtags'])}" if post.get("hashtags") else ""
     preview = f"{post['body']}{hashtag_line}"[:2_600]
@@ -105,14 +106,26 @@ async def send_approval_message(
                             "text": {"type": "plain_text", "text": "Approve"},
                             "style": "primary",
                             "action_id": "socium_approve",
-                            "value": f"lg:approve:{post['id']}:{post['revision']}",
+                            "value": f"sa:a:{approval_action_id}",
                         },
                         {
                             "type": "button",
-                            "text": {"type": "plain_text", "text": "Reject"},
+                            "text": {"type": "plain_text", "text": "Regenerate"},
+                            "action_id": "socium_regenerate",
+                            "value": f"sa:r:{approval_action_id}",
+                        },
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "Edit in Socium"},
+                            "action_id": "socium_edit",
+                            "value": f"sa:e:{approval_action_id}",
+                        },
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "Skip"},
                             "style": "danger",
-                            "action_id": "socium_reject",
-                            "value": f"lg:reject:{post['id']}:{post['revision']}",
+                            "action_id": "socium_skip",
+                            "value": f"sa:s:{approval_action_id}",
                         },
                     ],
                 },

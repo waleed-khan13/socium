@@ -207,6 +207,7 @@ class GeneratePostRequest(ApiModel):
 
 
 class EditPostRequest(ApiModel):
+    revision: int = Field(ge=1)
     title: str = Field(min_length=1, max_length=160)
     body: str = Field(min_length=1, max_length=12_000)
     hashtags: list[str] = Field(default_factory=list, max_length=20)
@@ -226,7 +227,11 @@ class EditPostRequest(ApiModel):
 
 
 class DecisionRequest(ApiModel):
-    decision: Literal["approve", "reject"]
+    decision: Literal["approve", "skip"]
+    revision: int = Field(ge=1)
+
+
+class RevisionRequest(ApiModel):
     revision: int = Field(ge=1)
 
 

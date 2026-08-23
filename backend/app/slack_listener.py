@@ -10,10 +10,11 @@ from typing import Any
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
 
+from app.approval_actions import apply_remote_approval_action
 from app.connector_store import connector_runtimes
 from app.errors import AppError, ExternalServiceError
-from app.services.slack import open_socket_url, send_decision_feedback
-from app.store import decide_post
+from app.services.slack import open_socket_url, send_approval_message, send_decision_feedback
+from app.store import create_approval_action, fail_approval_delivery, record_approval_sent
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +22,8 @@ class SlackInteractionResult:
     channel_id: str
     user_id: str
     message: str
+    action_id: str = ""
+    action: str = ""
 
 
 def _payload_id(payload: dict[str, Any], key: str) -> str:
@@ -46,7 +49,8 @@ def process_slack_interaction(
             item
             for item in actions
             if isinstance(item, dict)
-            and item.get("action_id") in {"socium_approve", "socium_reject"}
+            and item.get("action_id")
+            in {"socium_approve", "socium_regenerate", "socium_edit", "socium_skip"}
         ),
         None,
     )
@@ -61,21 +65,16 @@ def process_slack_interaction(
 
     raw_value = str(action.get("value") or "")
     parts = raw_value.split(":")
-    if len(parts) != 4 or parts[0] != "lg" or parts[1] not in {"approve", "reject"}:
+    if len(parts) != 3 or parts[0] != "sa" or parts[1] not in {"a", "r", "e", "s"}:
         return SlackInteractionResult(channel_id, user_id, "Unknown Socium approval action.")
-    _, decision, post_id, raw_revision = parts
-    try:
-        revision = int(raw_revision)
-    except ValueError:
-        return SlackInteractionResult(channel_id, user_id, "Invalid draft revision.")
-
-    approved = decision == "approve"
-    try:
-        decide_post(post_id, revision, approved, source="slack")
-    except AppError as error:
-        return SlackInteractionResult(channel_id, user_id, error.message)
-    message = f"Revision {revision} approved and locked." if approved else f"Revision {revision} rejected."
-    return SlackInteractionResult(channel_id, user_id, message)
+    action_names = {"a": "approve", "r": "regenerate", "e": "edit", "s": "skip"}
+    return SlackInteractionResult(
+        channel_id,
+        user_id,
+        "",
+        action_id=parts[2],
+        action=action_names[parts[1]],
+    )
 
 
 class SlackSocketListener:
@@ -241,6 +240,39 @@ class SlackSocketListener:
         result = process_slack_interaction(payload, expected_channel_id)
         if result is None:
             return False
+        if result.action_id:
+            try:
+                applied = await apply_remote_approval_action(
+                    result.action_id,
+                    result.action,  # type: ignore[arg-type]
+                    "slack",
+                )
+                result = SlackInteractionResult(
+                    result.channel_id,
+                    result.user_id,
+                    applied.message,
+                )
+                if applied.regenerated:
+                    approval = create_approval_action(
+                        applied.post["id"], applied.post["revision"], "slack"
+                    )
+                    try:
+                        message_ts = await send_approval_message(
+                            bot_token,
+                            expected_channel_id,
+                            applied.post,
+                            approval["id"],
+                        )
+                        record_approval_sent(approval["id"], message_ts)
+                    except ExternalServiceError as error:
+                        fail_approval_delivery(approval["id"], error.message)
+                        result = SlackInteractionResult(
+                            result.channel_id,
+                            result.user_id,
+                            f"{applied.message} The new Slack approval message could not be sent.",
+                        )
+            except AppError as error:
+                result = SlackInteractionResult(result.channel_id, result.user_id, error.message)
         try:
             await send_decision_feedback(
                 bot_token,

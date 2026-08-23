@@ -66,10 +66,15 @@ async def get_updates(token: str, offset: int, poll_timeout: int) -> list[dict[s
     return [item for item in result if isinstance(item, dict)] if isinstance(result, list) else []
 
 
-async def send_approval_request(token: str, chat_id: str, post: dict[str, Any]) -> None:
+async def send_approval_request(
+    token: str,
+    chat_id: str,
+    post: dict[str, Any],
+    action_id: str,
+) -> str:
     hashtag_line = f"\n\n{' '.join(post['hashtags'])}" if post.get("hashtags") else ""
     preview = f"{post['body']}{hashtag_line}"[:3_000]
-    await telegram_request(
+    result = await telegram_request(
         token,
         "sendMessage",
         {
@@ -80,17 +85,30 @@ async def send_approval_request(token: str, chat_id: str, post: dict[str, Any]) 
                     [
                         {
                             "text": "Approve",
-                            "callback_data": f"lg:approve:{post['id']}:{post['revision']}",
+                            "callback_data": f"sa:a:{action_id}",
                         },
                         {
-                            "text": "Reject",
-                            "callback_data": f"lg:reject:{post['id']}:{post['revision']}",
+                            "text": "Regenerate",
+                            "callback_data": f"sa:r:{action_id}",
+                        },
+                    ],
+                    [
+                        {
+                            "text": "Edit in Socium",
+                            "callback_data": f"sa:e:{action_id}",
+                        },
+                        {
+                            "text": "Skip",
+                            "callback_data": f"sa:s:{action_id}",
                         },
                     ]
                 ]
             },
         },
     )
+    if not isinstance(result, dict) or result.get("message_id") is None:
+        raise ExternalServiceError("Telegram did not return an approval message ID.")
+    return str(result["message_id"])
 
 
 async def publish_post(token: str, chat_id: str, post: dict[str, Any]) -> str:
@@ -110,4 +128,12 @@ async def answer_callback(token: str, callback_id: str, text: str) -> None:
         token,
         "answerCallbackQuery",
         {"callback_query_id": callback_id, "text": text[:200]},
+    )
+
+
+async def send_status_message(token: str, chat_id: str, text: str) -> None:
+    await telegram_request(
+        token,
+        "sendMessage",
+        {"chat_id": chat_id, "text": text[:4_096]},
     )

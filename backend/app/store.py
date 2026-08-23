@@ -16,6 +16,7 @@ from app.database import read_session, run_migrations, write_session
 from app.errors import AppError
 from app.models import (
     AppMetadata,
+    ApprovalAction,
     AuditEvent,
     IcpProfile,
     ImageProviderSettings,
@@ -76,11 +77,26 @@ def initialize_storage() -> None:
     with write_session() as session:
         if session.get(Workspace, 1) is not None:
             _ensure_singletons(session)
+            _recover_interrupted_approval_actions(session)
             return
         if settings.legacy_json_path.exists():
             _import_legacy_json(session, settings.legacy_json_path)
         else:
             _seed_defaults(session)
+        _recover_interrupted_approval_actions(session)
+
+
+def _recover_interrupted_approval_actions(session: Session) -> None:
+    interrupted = session.scalars(
+        select(ApprovalAction).where(ApprovalAction.status.in_(("created", "processing")))
+    ).all()
+    if not interrupted:
+        return
+    now = utc_now()
+    for action in interrupted:
+        action.status = "failed"
+        action.consumed_at = action.consumed_at or now
+        action.last_error = "Socium restarted before this approval action completed. Send it again."
 
 
 def _ensure_singletons(session: Session) -> None:
@@ -193,7 +209,15 @@ def _import_legacy_json(session: Session, path: Path) -> None:
         "telegram",
         "blog",
     }
-    allowed_statuses = {"pending", "approved", "rejected", "publishing", "published", "failed"}
+    allowed_statuses = {
+        "pending",
+        "approved",
+        "skipped",
+        "rejected",
+        "publishing",
+        "published",
+        "failed",
+    }
     for raw_post in payload.get("posts", []):
         if not isinstance(raw_post, dict):
             continue
@@ -649,6 +673,15 @@ def public_state(
             and _metadata_value(session, "provider_verified_snapshot")
             == _provider_fingerprint(provider)
         )
+        remote_edit_request: dict[str, Any] | None = None
+        raw_edit_request = _metadata_value(session, "remote_edit_request")
+        if raw_edit_request:
+            try:
+                parsed_edit_request = json.loads(raw_edit_request)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                parsed_edit_request = None
+            if isinstance(parsed_edit_request, dict):
+                remote_edit_request = parsed_edit_request
         return {
             "workspace": _workspace_dict(session, workspace),
             "provider": {
@@ -688,6 +721,7 @@ def public_state(
                 "updatedAt": telegram.updated_at,
             },
             "posts": [_post_dict(post) for post in posts],
+            "remoteEditRequest": remote_edit_request,
             "jobs": [_job_dict(job) for job in jobs],
             "scheduler": {
                 "paused": paused is not None and paused.value == "true",
@@ -1018,22 +1052,68 @@ def create_post(
     return _post_dict(post)
 
 
-def record_approval_sent(
+def create_approval_action(
     post_id: str,
-    source: Literal["telegram", "slack"] = "telegram",
-) -> None:
+    revision: int,
+    source: Literal["telegram", "slack"],
+) -> dict[str, Any]:
+    now = datetime.now(UTC)
+    action = ApprovalAction(
+        id=str(uuid4()),
+        post_id=post_id,
+        revision=revision,
+        transport=source,
+        status="created",
+        selected_action=None,
+        remote_ref=None,
+        created_at=_utc_iso(now),
+        expires_at=_utc_iso(now + timedelta(hours=72)),
+        consumed_at=None,
+        last_error=None,
+    )
     with write_session() as session:
-        if session.get(Post, post_id) is None:
-            return
-        channel = "Slack" if source == "slack" else "Telegram"
-        summary = f"Approval request sent to {channel}."
+        post = session.get(Post, post_id)
+        if post is None:
+            raise AppError("Draft not found.", 404)
+        if post.revision != revision:
+            raise AppError("This draft changed. Send the latest revision for approval.")
+        if post.status != "pending":
+            raise AppError(f"Only pending drafts can be sent for approval. Current status: {post.status}.")
+        session.add(action)
+    return {
+        "id": action.id,
+        "postId": action.post_id,
+        "revision": action.revision,
+        "transport": action.transport,
+        "expiresAt": action.expires_at,
+    }
+
+
+def record_approval_sent(action_id: str, remote_ref: str | None = None) -> None:
+    with write_session() as session:
+        action = session.get(ApprovalAction, action_id)
+        if action is None or action.status != "created":
+            raise AppError("Approval request is no longer available.")
+        action.status = "sent"
+        action.remote_ref = remote_ref
+        channel = "Slack" if action.transport == "slack" else "Telegram"
         _append_audit(
             session,
             action="approval.sent",
             entity_type="post",
-            entity_id=post_id,
-            summary=summary,
+            entity_id=action.post_id,
+            summary=f"Revision {action.revision} approval request sent to {channel}; expires in 72 hours.",
         )
+
+
+def fail_approval_delivery(action_id: str, message: str) -> None:
+    with write_session() as session:
+        action = session.get(ApprovalAction, action_id)
+        if action is None or action.status != "created":
+            return
+        action.status = "failed"
+        action.last_error = message[:2_000]
+        action.consumed_at = utc_now()
 
 
 def post_for_approval(post_id: str, revision: int) -> dict[str, Any]:
@@ -1048,11 +1128,35 @@ def post_for_approval(post_id: str, revision: int) -> dict[str, Any]:
         return _post_dict(post)
 
 
+def _supersede_approval_actions(
+    session: Session,
+    post_id: str,
+    revision: int,
+    *,
+    except_id: str | None = None,
+) -> None:
+    actions = session.scalars(
+        select(ApprovalAction).where(
+            ApprovalAction.post_id == post_id,
+            ApprovalAction.revision == revision,
+            ApprovalAction.status.in_(("created", "sent")),
+        )
+    ).all()
+    now = utc_now()
+    for action in actions:
+        if action.id == except_id:
+            continue
+        action.status = "superseded"
+        action.consumed_at = now
+
+
 def edit_post(post_id: str, payload: EditPostRequest) -> None:
     with write_session() as session:
         post = session.get(Post, post_id)
         if post is None:
             raise AppError("Draft not found.", 404)
+        if post.revision != payload.revision:
+            raise AppError("This draft changed. Reopen the latest revision before saving.")
         if post.status == "published":
             raise AppError("Published content is immutable. Create a new draft instead.")
         if post.status == "publishing":
@@ -1071,6 +1175,7 @@ def edit_post(post_id: str, payload: EditPostRequest) -> None:
         if payload.image_alt_text is not None:
             post.image_alt_text = payload.image_alt_text
         post.media_url = payload.media_url or None
+        previous_revision = post.revision
         post.status = "pending"
         post.revision += 1
         post.approved_at = None
@@ -1079,6 +1184,7 @@ def edit_post(post_id: str, payload: EditPostRequest) -> None:
         post.remote_url = None
         post.updated_at = utc_now()
         post.last_error = None
+        _supersede_approval_actions(session, post.id, previous_revision)
         _cancel_pending_post_jobs(session, post.id, "Draft edited; scheduled publish cancelled.")
         _append_audit(
             session,
@@ -1089,7 +1195,12 @@ def edit_post(post_id: str, payload: EditPostRequest) -> None:
         )
 
 
-def decide_post(post_id: str, revision: int, approved: bool, source: str = "dashboard") -> None:
+def decide_post(
+    post_id: str,
+    revision: int,
+    decision: Literal["approve", "skip"],
+    source: str = "dashboard",
+) -> None:
     with write_session() as session:
         post = session.get(Post, post_id)
         if post is None:
@@ -1098,29 +1209,205 @@ def decide_post(post_id: str, revision: int, approved: bool, source: str = "dash
             raise AppError("This draft changed. Review the latest revision before deciding.")
         if post.status != "pending":
             raise AppError(f"Only pending drafts can be decided. Current status: {post.status}.")
-        post.status = "approved" if approved else "rejected"
+        approved = decision == "approve"
+        post.status = "approved" if approved else "skipped"
         post.approved_at = utc_now() if approved else None
         post.updated_at = utc_now()
         post.last_error = None
+        _supersede_approval_actions(session, post.id, revision)
+        if not approved:
+            _cancel_pending_post_jobs(session, post.id, "Draft skipped; scheduled publish cancelled.")
         external_source = source if source in {"telegram", "slack"} else None
         suffix = f".{external_source}" if external_source else ""
         source_label = external_source.title() if external_source else None
         _append_audit(
             session,
-            action=f"post.{'approved' if approved else 'rejected'}{suffix}",
+            action=f"post.{'approved' if approved else 'skipped'}{suffix}",
             entity_type="post",
             entity_id=post.id,
             summary=(
-                f"Revision {revision} {'approved' if approved else 'rejected'} from {source_label}."
+                f"Revision {revision} {'approved' if approved else 'skipped'} from {source_label}."
                 if source_label
                 else "Draft approved and version locked."
                 if approved
-                else "Draft rejected."
+                else "Draft skipped without publication."
             ),
         )
 
 
-def process_telegram_update(update: dict[str, Any]) -> tuple[str, str] | None:
+def post_for_regeneration(post_id: str, revision: int) -> dict[str, Any]:
+    with read_session() as session:
+        post = session.get(Post, post_id)
+        if post is None:
+            raise AppError("Draft not found.", 404)
+        if post.revision != revision:
+            raise AppError("This draft changed. Regenerate the latest revision instead.")
+        if post.status != "pending":
+            raise AppError(f"Only pending drafts can be regenerated. Current status: {post.status}.")
+        return _post_dict(post)
+
+
+def finish_post_regeneration(
+    post_id: str,
+    revision: int,
+    *,
+    content: dict[str, Any],
+    provider: dict[str, str],
+    brand_profile_version: int,
+    source: str = "dashboard",
+    approval_action_id: str | None = None,
+) -> dict[str, Any]:
+    with write_session() as session:
+        post = session.get(Post, post_id)
+        if post is None:
+            raise AppError("Draft not found.", 404)
+        if post.revision != revision or post.status != "pending":
+            raise AppError("This draft changed while regeneration was running. Review the latest revision.")
+        if approval_action_id:
+            action = session.get(ApprovalAction, approval_action_id)
+            if action is None or action.status != "processing" or action.selected_action != "regenerate":
+                raise AppError("This regeneration action is no longer active.")
+            action.status = "consumed"
+            action.consumed_at = utc_now()
+        post.title = content["title"]
+        post.body = content["body"]
+        post.hashtags = content.get("hashtags", [])
+        post.call_to_action = content.get("call_to_action", "")
+        post.image_prompt = content.get("image_prompt", "")
+        post.image_negative_prompt = content.get("image_negative_prompt", "")
+        post.image_alt_text = content.get("image_alt_text", "")
+        post.rationale = content.get("rationale", "")
+        post.provider_kind = provider["kind"]
+        post.model = provider["model"]
+        post.brand_profile_version = brand_profile_version
+        post.revision += 1
+        post.status = "pending"
+        post.approved_at = None
+        post.updated_at = utc_now()
+        post.last_error = None
+        _supersede_approval_actions(session, post.id, revision, except_id=approval_action_id)
+        _cancel_pending_post_jobs(session, post.id, "Draft regenerated; scheduled publish cancelled.")
+        _append_audit(
+            session,
+            action=f"post.regenerated{'.' + source if source in {'telegram', 'slack'} else ''}",
+            entity_type="post",
+            entity_id=post.id,
+            summary=f"Revision {revision} regenerated as revision {post.revision}; fresh approval required.",
+        )
+        return _post_dict(post)
+
+
+def claim_remote_approval_action(
+    action_id: str,
+    selected_action: Literal["approve", "regenerate", "edit", "skip"],
+    source: Literal["telegram", "slack"],
+) -> dict[str, Any]:
+    error: AppError | None = None
+    result: dict[str, Any] | None = None
+    with write_session() as session:
+        action = session.get(ApprovalAction, action_id)
+        if action is None or action.transport != source:
+            error = AppError("Unknown or mismatched Socium approval action.")
+        elif action.status != "sent":
+            error = AppError("This approval action was already used or is no longer active.")
+        elif datetime.fromisoformat(action.expires_at) <= datetime.now(UTC):
+            action.status = "expired"
+            action.consumed_at = utc_now()
+            error = AppError("This approval request expired. Send the latest revision again.")
+        else:
+            post = session.get(Post, action.post_id)
+            if post is None:
+                action.status = "invalid"
+                action.consumed_at = utc_now()
+                error = AppError("Draft no longer exists.")
+            elif post.revision != action.revision:
+                action.status = "superseded"
+                action.consumed_at = utc_now()
+                error = AppError("Stale action: review the latest draft revision.")
+            elif post.status != "pending":
+                action.status = "superseded"
+                action.consumed_at = utc_now()
+                error = AppError(f"Draft is already {post.status}.")
+            else:
+                action.selected_action = selected_action
+                action.consumed_at = utc_now()
+                if selected_action == "regenerate":
+                    action.status = "processing"
+                    result = _post_dict(post)
+                elif selected_action == "edit":
+                    action.status = "consumed"
+                    _set_metadata(
+                        session,
+                        "remote_edit_request",
+                        json.dumps(
+                            {
+                                "id": action.id,
+                                "postId": post.id,
+                                "revision": post.revision,
+                                "source": source,
+                                "createdAt": action.consumed_at,
+                            },
+                            separators=(",", ":"),
+                        ),
+                    )
+                    _append_audit(
+                        session,
+                        action=f"post.edit_requested.{source}",
+                        entity_type="post",
+                        entity_id=post.id,
+                        summary=f"Revision {post.revision} opened for editing from {source.title()}.",
+                    )
+                    result = _post_dict(post)
+                else:
+                    approved = selected_action == "approve"
+                    action.status = "consumed"
+                    post.status = "approved" if approved else "skipped"
+                    post.approved_at = utc_now() if approved else None
+                    post.updated_at = utc_now()
+                    post.last_error = None
+                    _supersede_approval_actions(session, post.id, post.revision, except_id=action.id)
+                    if not approved:
+                        _cancel_pending_post_jobs(
+                            session, post.id, "Draft skipped; scheduled publish cancelled."
+                        )
+                    _append_audit(
+                        session,
+                        action=f"post.{'approved' if approved else 'skipped'}.{source}",
+                        entity_type="post",
+                        entity_id=post.id,
+                        summary=f"Revision {post.revision} {'approved and locked' if approved else 'skipped'} from {source.title()}.",
+                    )
+                    result = _post_dict(post)
+    if error is not None:
+        raise error
+    if result is None:
+        raise AppError("Approval action could not be applied.")
+    return result
+
+
+def fail_remote_regeneration(action_id: str, message: str) -> None:
+    with write_session() as session:
+        action = session.get(ApprovalAction, action_id)
+        if action is None or action.status != "processing":
+            return
+        action.status = "failed"
+        action.last_error = message[:2_000]
+
+
+def acknowledge_remote_edit(action_id: str) -> None:
+    with write_session() as session:
+        metadata = session.get(AppMetadata, "remote_edit_request")
+        if metadata is None:
+            return
+        try:
+            request = json.loads(metadata.value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            request = {}
+        if request.get("id") == action_id:
+            session.delete(metadata)
+
+
+def process_telegram_update(update: dict[str, Any]) -> dict[str, str] | None:
     update_id = update.get("update_id")
     if not isinstance(update_id, int):
         return None
@@ -1134,47 +1421,20 @@ def process_telegram_update(update: dict[str, Any]) -> tuple[str, str] | None:
             return None
         callback_id = str(callback.get("id") or "")
         data = callback["data"].split(":")
-        if len(data) != 4 or data[0] != "lg" or data[1] not in {"approve", "reject"}:
-            return (callback_id, "Unknown Socium action.") if callback_id else None
-        _, decision, post_id, raw_revision = data
-        try:
-            revision = int(raw_revision)
-        except ValueError:
-            return (callback_id, "Invalid draft revision.") if callback_id else None
+        if len(data) != 3 or data[0] != "sa" or data[1] not in {"a", "r", "e", "s"}:
+            return {"callbackId": callback_id, "error": "Unknown Socium action."} if callback_id else None
 
         message = callback.get("message")
         chat = message.get("chat") if isinstance(message, dict) else None
         callback_chat = chat.get("id") if isinstance(chat, dict) else None
         if telegram.chat_id.lstrip("-").isdigit() and str(callback_chat) != telegram.chat_id:
-            return (
-                (callback_id, "This chat is not authorized for Socium approvals.")
-                if callback_id
-                else None
-            )
-        post = session.get(Post, post_id)
-        if post is None:
-            answer = "Draft no longer exists."
-        elif post.revision != revision:
-            answer = "Stale approval: review the latest draft revision."
-        elif post.status != "pending":
-            answer = f"Draft is already {post.status}."
-        else:
-            approved = decision == "approve"
-            post.status = "approved" if approved else "rejected"
-            post.approved_at = utc_now() if approved else None
-            post.updated_at = utc_now()
-            post.last_error = None
-            answer = (
-                f"Revision {revision} approved and locked." if approved else f"Revision {revision} rejected."
-            )
-            _append_audit(
-                session,
-                action="post.approved.telegram" if approved else "post.rejected.telegram",
-                entity_type="post",
-                entity_id=post.id,
-                summary=f"Revision {revision} {'approved' if approved else 'rejected'} from Telegram.",
-            )
-        return (callback_id, answer) if callback_id else None
+            return {"callbackId": callback_id, "error": "This chat is not authorized for Socium approvals."} if callback_id else None
+        action_names = {"a": "approve", "r": "regenerate", "e": "edit", "s": "skip"}
+        return {
+            "callbackId": callback_id,
+            "actionId": data[2],
+            "action": action_names[data[1]],
+        } if callback_id else None
 
 
 def reserve_publish(post_id: str, revision: int) -> dict[str, Any]:

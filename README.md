@@ -16,12 +16,12 @@ See [docs/V1_RELEASE.md](docs/V1_RELEASE.md) for the current stable contract, [d
 - Persist settings, drafts, revisions, and audit events in a local SQLite WAL database.
 - Encrypt AI, Telegram, and multi-secret connector credentials with an automatically generated local master key.
 - Import the previous v0.2 JSON store on first launch without deleting the original file.
-- Edit, approve, or reject exact draft revisions; edits invalidate prior approval.
-- Send Telegram approval requests and receive button decisions through local long polling.
+- Approve, regenerate, edit, or skip exact draft revisions; every content change requires fresh approval and Skip is an explicit non-publication decision.
+- Send 72-hour, one-time Telegram approval actions and receive decisions through local long polling.
 - Publish an approved Telegram draft exactly once and record its remote message ID.
 - Schedule approved Telegram revisions with a restart-safe SQLite job queue, pause/resume, catch-up, cancellation, and reviewed retries.
 - Save a scoped Slack connector in the local vault and verify its bot identity and Socket Mode app token against Slack's real API.
-- Send revision-bound Slack approval buttons and receive approve/reject decisions through an outbound-only Socket Mode listener.
+- Send revision-bound Slack Approve, Regenerate, Edit, and Skip buttons through an outbound-only Socket Mode listener.
 - Save and verify a WordPress connector with encrypted Application Password credentials.
 - Publish or schedule an exact approved Blog revision through the official WordPress REST API and retain its remote post link.
 - Save and verify a Facebook Page connector with an encrypted Page Access Token and a deliberately pinned Meta Graph API version.
@@ -170,7 +170,7 @@ Only a confirmed brand-profile revision supplies the AI with the expanded audien
 
 For another server, choose **Cloud API → Custom / I'm not sure**, enter its base URL, and select **Detect API & models**. Automatic discovery sends no secret. If the server requires authentication before it can identify itself, Socium asks you to select OpenAI-compatible, Anthropic-compatible, or Ollama first, then sends the key only to that one protocol on the entered origin. Saved keys are encrypted before SQLite storage and remain on this computer. Socium has no hosted login or cloud account requirement.
 
-Slack can also be configured under Integrations. Socium stores its `xoxb-` and `xapp-` tokens encrypted, exposes only presence flags to the browser, and starts the outbound Socket Mode listener after the connection is verified. Approval buttons carry the post ID and exact revision, so edited, repeated, unauthorized-channel, or stale decisions are rejected.
+Slack can also be configured under Integrations. Socium stores its `xoxb-` and `xapp-` tokens encrypted, exposes only presence flags to the browser, and starts the outbound Socket Mode listener after the connection is verified. Each approval message carries an opaque, one-time local action ID bound in SQLite to the exact post revision and Slack transport. Edited, repeated, expired, unauthorized-channel, wrong-transport, or stale actions are rejected.
 
 For a personal or business blog, add a WordPress connection under Integrations using the site root URL, username, and a WordPress Application Password. Remote sites must use HTTPS. After **Save & test**, generate a `Blog` draft, approve that exact revision, then publish immediately or schedule it with the same durable local worker. Socium stores the returned WordPress post ID and link in local state and the audit trail.
 
@@ -221,7 +221,7 @@ Compose runs the FastAPI service on a private container network and exposes only
 
 Telegram notifications and publishing are outbound API calls. Approval buttons use Telegram `getUpdates` long polling from the local worker, so no domain, public HTTPS endpoint, tunnel, webhook, or Socium cloud service is required.
 
-The application must be running to receive a new Telegram decision. Telegram retains pending bot updates temporarily; Socium stores the processed update ID in SQLite to reject replays after restart.
+The application must be running to receive a new Telegram decision. Telegram retains pending bot updates temporarily; Socium stores the processed update ID in SQLite to reject replays after restart. Each button set expires after 72 hours. Regenerate creates a fresh revision and approval message, Edit opens that revision in the local dashboard, and Skip records that it must not be published.
 
 ## Slack approvals without hosting
 

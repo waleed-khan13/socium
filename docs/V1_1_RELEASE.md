@@ -28,7 +28,7 @@ A new operator can install Socium, choose where durable data and local models li
 5. [x] Replace documentation-led setup with a first-run wizard.
 6. [x] Make local AI installation and hosted/custom provider discovery guided and testable.
 7. [x] Generate brand-aware posts, hashtags, calls to action, and image prompts.
-8. [ ] Add revision-bound Approve, Regenerate, Edit, and Skip actions to dashboard, Telegram, and Slack.
+8. [x] Add revision-bound Approve, Regenerate, Edit, and Skip actions to dashboard, Telegram, and Slack.
 9. [ ] Replace always-heavy execution with a lightweight supervisor and bounded workers.
 10. [ ] Add native autostart, tray controls, in-product updates, backup, and rollback.
 11. [ ] Pass release hardening and publish `v1.1.0`.
@@ -86,6 +86,16 @@ A new operator can install Socium, choose where durable data and local models li
 - The approval queue exposes every generated field for human review. **Create image from this brief** opens Media Studio with prompt, exclusions, and alt text prefilled; generated assets retain that alt text alongside their local AI provenance.
 - Provider, migration, persistence, durable media-worker, and real Chromium workflow coverage prove structured generation, legacy-row compatibility, exact revision edits, one-click visual handoff, approval, and publishing.
 - The complete `pnpm check` passed on 2026-08-23: TypeScript, ESLint, Ruff, CLI 15 of 15, backend 57 of 57, Playwright 6 of 6, and the optimized production build.
+
+### Phase 8 evidence
+
+- Dashboard, Telegram, and Slack now expose the same four human actions: **Approve** locks the exact revision, **Regenerate** creates a fresh pending revision, **Edit** opens the exact revision in the local dashboard, and **Skip** records an explicit non-publication state.
+- Alembic revision `20260823_0016` adds one-time approval-action records bound to post, revision, transport, issue time, 72-hour expiry, remote reference, selected action, and terminal state. Callback payloads contain only the opaque local action ID.
+- Every remote click is checked inside a SQLite write transaction. Wrong-transport, stale-revision, expired, already-used, unauthorized-channel, and Telegram update replays fail closed; deciding or changing a revision supersedes its remaining buttons.
+- Remote regeneration uses the current verified provider and confirmed brand snapshot, then sends a new approval request for the new revision. Interrupted in-memory actions become visible failed records on restart instead of remaining stuck in a processing state.
+- A remote Edit request is durable across restart, opens the matching dashboard dialog during the next local state refresh, and is acknowledged only after the browser receives it. Saving includes the expected revision and cannot overwrite a newer draft.
+- Backend acceptance coverage exercises all four actions, migration compatibility, expiry, transport binding, replay rejection, remote-edit recovery, and interrupted-action recovery. The real Chromium workflow covers dashboard Regenerate, Edit, Approve, Skip, stale-decision rejection, and exact approved publication.
+- The complete `pnpm check` passed on 2026-08-23: TypeScript, ESLint, Ruff, CLI 15 of 15, backend 60 of 60, Playwright 6 of 6 including accessibility and mobile-keyboard coverage, and the optimized production build.
 
 ## Storage contract
 

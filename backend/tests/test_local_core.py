@@ -877,6 +877,7 @@ def test_draft_version_approval_and_single_publish(client, monkeypatch) -> None:
     edited = client.patch(
         f"/api/posts/{post['id']}",
         json={
+            "revision": 1,
             "title": "Revised launch",
             "body": "Revised factual copy. Read the guide.",
             "hashtags": ["local"],
@@ -1065,14 +1066,25 @@ def test_slack_approval_message_buttons_are_revision_bound(monkeypatch) -> None:
                 "body": "Review this exact content.",
                 "hashtags": ["#local"],
             },
+            "action-token-123",
         )
     )
     assert message_ts == "1712345678.000200"
     assert captured["method"] == "chat.postMessage"
     assert captured["body"]["channel"] == "C1234567890"
     actions = captured["body"]["blocks"][-1]["elements"]
-    assert actions[0]["value"] == "lg:approve:post-123:7"
-    assert actions[1]["value"] == "lg:reject:post-123:7"
+    assert [action["action_id"] for action in actions] == [
+        "socium_approve",
+        "socium_regenerate",
+        "socium_edit",
+        "socium_skip",
+    ]
+    assert [action["value"] for action in actions] == [
+        "sa:a:action-token-123",
+        "sa:r:action-token-123",
+        "sa:e:action-token-123",
+        "sa:s:action-token-123",
+    ]
 
 
 def test_connector_vault_redacts_secrets_and_validates_slack(client, monkeypatch) -> None:
@@ -1212,10 +1224,13 @@ def test_connector_vault_redacts_secrets_and_validates_slack(client, monkeypatch
         )
 
     sent_posts: list[dict] = []
+    sent_action_ids: list[str] = []
 
-    async def fake_slack_send(_token: str, channel_id: str, post: dict):
+    async def fake_slack_send(_token: str, channel_id: str, post: dict, action_id: str):
         assert channel_id == "C9876543210"
+        assert action_id
         sent_posts.append(post)
+        sent_action_ids.append(action_id)
         return "1712345678.000100"
 
     monkeypatch.setattr("app.main.generate_content", fake_generate)
@@ -1254,7 +1269,7 @@ def test_connector_vault_redacts_secrets_and_validates_slack(client, monkeypatch
         "actions": [
             {
                 "action_id": "socium_approve",
-                "value": f"lg:approve:{post['id']}:{post['revision']}",
+                "value": f"sa:a:{sent_action_ids[-1]}",
             }
         ],
     }
@@ -1277,7 +1292,6 @@ def test_connector_vault_redacts_secrets_and_validates_slack(client, monkeypatch
     feedback: list[str] = []
 
     async def fake_feedback(_token: str, _channel: str, _user: str, message: str) -> None:
-        assert socket.sent == ['{"envelope_id": "env-1"}']
         feedback.append(message)
 
     monkeypatch.setattr("app.slack_listener.send_decision_feedback", fake_feedback)
@@ -1303,9 +1317,25 @@ def test_connector_vault_redacts_secrets_and_validates_slack(client, monkeypatch
     assert feedback == ["Revision 1 approved and locked."]
     approved = next(item for item in client.get("/api/state").json()["posts"] if item["id"] == post["id"])
     assert approved["status"] == "approved"
-    repeated = process_slack_interaction(interaction, "C9876543210")
-    assert repeated is not None
-    assert "Current status: approved" in repeated.message
+    repeated_socket = FakeSocket()
+    reconnect = asyncio.run(
+        listener._handle_envelope(
+            repeated_socket,  # type: ignore[arg-type]
+            json.dumps(
+                {
+                    "envelope_id": "env-2",
+                    "type": "interactive",
+                    "payload": interaction,
+                }
+            ),
+            bot_token,
+            "C9876543210",
+            account_id,
+        )
+    )
+    assert reconnect is False
+    assert socket.sent == ['{"envelope_id": "env-1"}']
+    assert "already used" in feedback[-1]
     assert any(event["action"] == "post.approved.slack" for event in client.get("/api/state").json()["audit"])
 
     removed = client.delete(f"/api/connectors/{account_id}")
