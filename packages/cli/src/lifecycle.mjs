@@ -60,6 +60,30 @@ async function reservePort() {
   return port;
 }
 
+async function terminateMigrationCheck(child, timeoutMs = 15_000) {
+  if (child.exitCode !== null) return;
+  if (process.platform === "win32") {
+    await new Promise((resolve) => {
+      const terminator = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+      terminator.once("error", resolve);
+      terminator.once("exit", resolve);
+    });
+  } else {
+    child.kill("SIGTERM");
+  }
+  const deadline = Date.now() + timeoutMs;
+  while (child.exitCode === null && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (child.exitCode === null) {
+    child.kill("SIGKILL");
+    throw new Error("The migration-check process did not release the durable data directory.");
+  }
+}
+
 async function verifyMigration(installation, timeoutMs = 90_000) {
   const port = await reservePort();
   const layout = runtimeLayout(installation);
@@ -91,21 +115,27 @@ async function verifyMigration(installation, timeoutMs = 90_000) {
     }
     throw new Error("The updated API did not become healthy after migration.");
   } finally {
-    if (child.exitCode === null) {
-      if (process.platform === "win32") spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
-      else child.kill("SIGTERM");
-    }
+    await terminateMigrationCheck(child);
   }
 }
 
-export async function applyUpdate({ manifestSource, paths = sociumPaths(), target = releaseTarget(), force = false, waitPid, onDownloadProgress, log = console.log } = {}) {
+export async function applyUpdate({
+  manifestSource,
+  paths = sociumPaths(),
+  target = releaseTarget(),
+  force = false,
+  waitPid,
+  onDownloadProgress,
+  log = console.log,
+  migrationVerifier = verifyMigration,
+} = {}) {
   await waitForProcess(waitPid);
   const previous = await loadInstallation(paths);
   if (!previous) throw new Error("Socium is not installed.");
   const backup = await createBackup({ paths, reason: "pre-update", log });
   try {
     const installed = await installRelease({ manifestSource: manifestSource || previous.manifestSource, paths, target, force, backupPath: backup.path, onDownloadProgress, log });
-    await verifyMigration(installed);
+    await migrationVerifier(installed);
     await rm(path.join(installed.dataDirectory, ".updates"), { recursive: true, force: true });
     log("Update migration and health checks passed.");
     return installed;

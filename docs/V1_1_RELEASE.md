@@ -31,7 +31,7 @@ A new operator can install Socium, choose where durable data and local models li
 8. [x] Add revision-bound Approve, Regenerate, Edit, and Skip actions to dashboard, Telegram, and Slack.
 9. [x] Replace always-heavy execution with a lightweight supervisor and bounded workers.
 10. [x] Add native autostart, tray controls, in-product updates, backup, and rollback.
-11. [ ] Pass release hardening and publish `v1.1.0`.
+11. [x] Pass release hardening and publish `v1.1.0`.
 
 ### Phase 1 evidence
 
@@ -110,7 +110,7 @@ A new operator can install Socium, choose where durable data and local models li
 ### Phase 10 evidence
 
 - Release bundles now contain a managed Node runtime, a versioned controller, and a stable launcher that resolves the active runtime from the installation record. Windows onboarding creates Start-menu and desktop shortcuts, can opt into start-after-login, and exposes a notification-area controller for opening the dashboard, restarting, and stopping Socium without a visible terminal.
-- macOS LaunchAgent and Linux XDG autostart records use the stable launcher when explicitly enabled, so they follow an activated update instead of retaining a versioned path. Their verified CLI path remains the release contract until native packaging completes in Phase 11.
+- macOS LaunchAgent and Linux XDG autostart records use the stable launcher when explicitly enabled, so they follow an activated update instead of retaining a versioned path. Phase 11 applies the same installed-runtime lifecycle smoke contract to every native release target.
 - The System screen checks at most once per 24 hours, shows installed/latest versions and release notes, and sends only a Socium version/platform user agent to the HTTPS manifest endpoint. Installing an update is disabled outside the managed release runtime and while a bounded worker is active.
 - Every update downloads with byte/percentage progress, verifies the published SHA-256, creates a durable pre-update archive, activates an isolated runtime, runs migrations through a temporary loopback health check, and restores the prior runtime plus data snapshot if that check fails.
 - Online backups use SQLite's consistent backup API, exclude transient locks/WAL files, include the encryption key and durable assets, and receive a SHA-256 sidecar. Offline CLI commands list and restore archives while preserving the replaced data directory; one prior runtime remains available for one-click rollback.
@@ -118,6 +118,15 @@ A new operator can install Socium, choose where durable data and local models li
 - Phase-specific tests cover online SQLite backup consistency, minimal update metadata, unmanaged-action rejection, semantic version selection, checksum-backed offline backup/restore, and preservation of the pre-restore directory. The real Chromium System workflow covers backup creation, managed-control gating, and WCAG A/AA accessibility.
 - The complete `pnpm check` passed on 2026-08-24: TypeScript, ESLint, Ruff, CLI 18 of 18, backend 71 of 71, Playwright 7 of 7, accessibility checks, and the optimized production build.
 - The Windows x64 native artifact was rebuilt locally and passed both bundled-API migration/encryption smoke and the disposable clean-install smoke through its own managed Node/controller, including checksum install, doctor, loopback health, and explicit disposable teardown.
+
+### Phase 11 evidence
+
+- Every release version source, the locked Python project, portable web runtime, changelog, health response, CLI, and release documentation now agree on `1.1.0`. Release verification rejects an incomplete Phase 11 contract or missing dated changelog entry.
+- Full-drive backup failure is atomic and actionable: incomplete archives and sidecars are removed. Interrupted downloads retain the active runtime, and failed migration health checks restore both the prior runtime and its verified durable snapshot.
+- The migration-check process is terminated and awaited before activation completes, preventing Windows SQLite locks from racing a later rollback. Normal uninstall continues to remove replaceable launchers/runtimes while preserving durable data and backups.
+- The native smoke now proves checksum install, doctor, optional autostart, stable launcher/controller status and stop, in-place update, rollback, and data-preserving uninstall. The release workflow runs that contract for Windows x64/ARM64, macOS Intel/Apple silicon, and Linux x64/ARM64 before publication.
+- Manifest assembly requires all six supported target fragments and includes the matching changelog notes. npm publication remains provenance-backed trusted publishing after the GitHub Release succeeds.
+- Production JavaScript, portable runtime, and synchronized Python dependencies pass the high-severity audit gate with no known vulnerabilities. The complete local acceptance suite covers CLI 22 of 22, backend 72 of 72, real Chromium workflows, WCAG A/AA checks, and the optimized production build.
 
 ## Storage contract
 
@@ -193,7 +202,7 @@ A release candidate is acceptable only when all of the following pass:
 5. Dashboard, Telegram, and Slack prove Approve, Regenerate, Edit, Skip, stale-action rejection, and restart recovery.
 6. Scheduled publication remains exactly-once, and overdue work always requires the configured explicit recovery decision.
 7. Full-disk, missing-drive, offline-provider, revoked-token, worker-crash, interrupted-update, and migration-failure scenarios preserve data and surface actionable errors.
-8. Windows clean install, autostart, tray, update, rollback, uninstall, and data preservation pass on a native runner. macOS and Linux retain the verified CLI path until their native packages pass the same contract.
+8. Windows clean install, autostart, tray, update, rollback, uninstall, and data preservation pass on a native runner. macOS and Linux native targets pass the same installed CLI lifecycle contract, with tray controls remaining Windows-specific.
 9. A memory soak demonstrates bounded idle usage and release of heavy local-AI resources after work.
 10. The release contains no WhatsApp product surface or runtime path, and Labs remain disabled by default.
 

@@ -36,13 +36,22 @@ async function assertStopped(dataDirectory) {
   }
 }
 
-export async function createBackup({ paths = sociumPaths(), reason = "manual", now = new Date(), log = console.log } = {}) {
+export async function createBackup({
+  paths = sociumPaths(),
+  reason = "manual",
+  now = new Date(),
+  log = console.log,
+  archive = tar.c,
+} = {}) {
   const installation = await loadInstallation(paths);
   if (!installation) throw new Error("Socium is not installed.");
   await assertStopped(installation.dataDirectory);
   await mkdir(paths.backupsDirectory, { recursive: true });
   const filename = backupName(now);
   const destination = path.join(paths.backupsDirectory, filename);
+  const partial = `${destination}.partial`;
+  const checksumDestination = `${destination}.sha256`;
+  const checksumPartial = `${checksumDestination}.partial`;
   const metadata = {
     schemaVersion: 1,
     product: "socium",
@@ -57,14 +66,25 @@ export async function createBackup({ paths = sociumPaths(), reason = "manual", n
     const entries = await readdir(installation.dataDirectory);
     const selected = entries.filter((entry) => entry !== ".socium-runtime.json" && entry !== "backups" && entry !== metadataName);
     selected.push(metadataName);
-    await tar.c({ cwd: installation.dataDirectory, file: destination, gzip: true, portable: true }, selected);
+    await archive({ cwd: installation.dataDirectory, file: partial, gzip: true, portable: true }, selected);
+    const checksum = await sha256File(partial);
+    await writeFile(checksumPartial, `${checksum}  ${filename}\n`, { encoding: "utf8", flag: "wx" });
+    await rename(partial, destination);
+    await rename(checksumPartial, checksumDestination);
+    log(`Backup created: ${destination}`);
+    return { path: destination, checksum, ...metadata };
+  } catch (error) {
+    await Promise.all([
+      rm(partial, { force: true }),
+      rm(checksumPartial, { force: true }),
+      rm(destination, { force: true }),
+      rm(checksumDestination, { force: true }),
+    ]);
+    if (error?.code === "ENOSPC") throw new Error("Backup could not be created because the selected drive is full.");
+    throw error;
   } finally {
     await rm(metadataPath, { force: true });
   }
-  const checksum = await sha256File(destination);
-  await writeFile(`${destination}.sha256`, `${checksum}  ${filename}\n`, "utf8");
-  log(`Backup created: ${destination}`);
-  return { path: destination, checksum, ...metadata };
 }
 
 export async function listBackups({ paths = sociumPaths() } = {}) {
@@ -73,6 +93,7 @@ export async function listBackups({ paths = sociumPaths() } = {}) {
   for (const name of await readdir(paths.backupsDirectory)) {
     if (!BACKUP_PATTERN.test(name)) continue;
     const filePath = path.join(paths.backupsDirectory, name);
+    if (!(await exists(`${filePath}.sha256`))) continue;
     const info = await stat(filePath);
     items.push({ name, path: filePath, sizeBytes: info.size, createdAt: info.mtime.toISOString() });
   }

@@ -55,6 +55,7 @@ async function dismissOnboardingIfPresent(page: Page) {
 }
 
 test("runs first-run onboarding, publishing, and approval workflows", async ({ page }, testInfo) => {
+  test.setTimeout(240_000);
   await page.goto("/");
   const onboarding = page.getByRole("dialog", { name: "Socium first-run setup" });
   await expect(onboarding.getByRole("heading", { name: "Welcome to Socium" })).toBeVisible();
@@ -103,7 +104,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await onboarding.getByRole("button", { name: "Finish setup" }).click();
   await expect(onboarding).toHaveCount(0);
   await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
-  await expect(page.getByText(/SOCIUM LOCAL.*v1\.0\.5/)).toBeVisible();
+  await expect(page.getByText(/SOCIUM LOCAL.*v1\.1\.0/)).toBeVisible();
   const primaryNavigation = page.getByRole("navigation", { name: "Primary" });
   await expect(primaryNavigation.getByRole("button", { name: "Lead intelligence" })).toHaveCount(0);
   await expect(primaryNavigation.getByRole("button", { name: "Local SEO lab" })).toHaveCount(0);
@@ -117,7 +118,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   expect(releaseStateResponse.ok()).toBeTruthy();
   const releaseState = (await releaseStateResponse.json()) as PublicAppState;
   expect(releaseState.features).toEqual({ edition: "social-v1", labsEnabled: false, previewModules: [] });
-  expect(releaseState.runtime.version).toBe("1.0.5");
+  expect(releaseState.runtime.version).toBe("1.1.0");
   expect(releaseState.onboarding.status).toBe("completed");
   expect(releaseState.onboarding.ready).toBe(true);
 

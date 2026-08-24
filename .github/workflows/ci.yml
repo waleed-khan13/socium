@@ -41,7 +41,7 @@ jobs:
       - name: Sync and audit the portable web runtime
         run: |
           pnpm runtime:sync
-          npm audit --omit=dev --audit-level=high --prefix packaging/web-runtime
+          pnpm security:audit
 
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium

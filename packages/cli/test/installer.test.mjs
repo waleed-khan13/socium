@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createReadStream } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -15,13 +15,13 @@ import { createBackup, listBackups, restoreBackup } from "../src/backup.mjs";
 import { createDownloadReporter, formatDownloadProgress } from "../src/download-progress.mjs";
 import { diagnose } from "../src/doctor.mjs";
 import { installRelease, loadInstallation } from "../src/installation.mjs";
+import { applyUpdate, compareVersions } from "../src/lifecycle.mjs";
 import { resolveAssetSource, validateManifest } from "../src/manifest.mjs";
-import { writePortableLauncher } from "../src/native-integration.mjs";
+import { autostartStatus, setAutostart, writePortableLauncher } from "../src/native-integration.mjs";
 import { sociumPaths, sociumRoot } from "../src/paths.mjs";
 import { backendFileName, releaseTarget } from "../src/platform.mjs";
 import { uninstall } from "../src/uninstall.mjs";
 import { relocateStorage } from "../src/storage.mjs";
-import { compareVersions } from "../src/lifecycle.mjs";
 
 async function checksum(filePath) {
   const hash = createHash("sha256");
@@ -29,11 +29,9 @@ async function checksum(filePath) {
   return hash.digest("hex");
 }
 
-async function fixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), "socium-cli-"));
-  const bundle = path.join(root, "bundle");
-  const target = releaseTarget();
-  const backend = path.join(bundle, "backend", backendFileName());
+async function writeReleaseFixture({ root, target, version }) {
+  const bundle = path.join(root, `bundle-${version}`);
+  const backend = path.join(bundle, "backend", backendFileName(target.split("-")[0]));
   await mkdir(path.join(bundle, "web"), { recursive: true });
   await mkdir(path.dirname(backend), { recursive: true });
   await writeFile(path.join(bundle, "web", "server.js"), "// fixture\n");
@@ -41,21 +39,28 @@ async function fixture() {
   if (process.platform !== "win32") await chmod(backend, 0o755);
   await writeFile(
     path.join(bundle, "bundle.json"),
-    JSON.stringify({ schemaVersion: 1, product: "socium", version: "1.0.5", target }),
+    JSON.stringify({ schemaVersion: 1, product: "socium", version, target }),
   );
-  const archive = path.join(root, "bundle.tar.gz");
+  const archive = path.join(root, `bundle-${version}.tar.gz`);
   await tar.c({ cwd: bundle, file: archive, gzip: true }, ["bundle.json", "backend", "web"]);
-  const manifest = path.join(root, "manifest.json");
+  const manifest = path.join(root, `manifest-${version}.json`);
   await writeFile(
     manifest,
     JSON.stringify({
       schemaVersion: 1,
       product: "socium",
-      version: "1.0.5",
+      version,
       assets: { [target]: { url: path.basename(archive), sha256: await checksum(archive) } },
     }),
   );
-  return { archive, manifest, paths: sociumPaths({ environment: { SOCIUM_HOME: path.join(root, "home") } }), root, target };
+  return { archive, manifest, version };
+}
+
+async function fixture() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "socium-cli-"));
+  const target = releaseTarget();
+  const release = await writeReleaseFixture({ root, target, version: "1.0.5" });
+  return { ...release, paths: sociumPaths({ environment: { SOCIUM_HOME: path.join(root, "home") } }), root, target };
 }
 
 test("maps application data to native OS locations", () => {
@@ -115,7 +120,7 @@ test("supports conventional version commands", async () => {
   for (const argument of ["version", "--version", "-v"]) {
     const output = [];
     assert.equal(await main([argument], { log: (value) => output.push(value) }), 0);
-    assert.deepEqual(output, ["1.0.5"]);
+    assert.deepEqual(output, ["1.1.0"]);
   }
 });
 
@@ -200,6 +205,20 @@ test("creates checksummed backups and restores without deleting the previous dat
   assert.equal(await readFile(path.join(restored.preservedDirectory, "business.json"), "utf8"), "changed");
 });
 
+test("removes incomplete backup artifacts when the selected drive is full", async (context) => {
+  const current = await fixture();
+  context.after(() => rm(current.root, { recursive: true, force: true }));
+  await installRelease({ manifestSource: current.manifest, paths: current.paths, target: current.target, log() {} });
+  const noSpace = Object.assign(new Error("disk full"), { code: "ENOSPC" });
+  await assert.rejects(
+    createBackup({ paths: current.paths, archive: async () => { throw noSpace; }, log() {} }),
+    /selected drive is full/,
+  );
+  assert.deepEqual(await listBackups({ paths: current.paths }), []);
+  assert.equal((await readdir(current.paths.dataDirectory)).some((item) => item.startsWith(".socium-backup-")), false);
+  assert.equal((await readdir(current.paths.backupsDirectory)).some((item) => item.endsWith(".partial")), false);
+});
+
 test("creates a stable launcher that resolves the active runtime after updates", async (context) => {
   const current = await fixture();
   context.after(() => rm(current.root, { recursive: true, force: true }));
@@ -214,6 +233,71 @@ test("creates a stable launcher that resolves the active runtime after updates",
   assert.match(script, /installation\.runtimePath/);
   assert.match(script, /controller\.mjs/);
   assert.doesNotMatch(script, new RegExp(installed.runtimePath.replaceAll("\\", "\\\\")));
+});
+
+test("macOS and Linux autostart records follow the stable active-runtime launcher", async (context) => {
+  const current = await fixture();
+  context.after(() => rm(current.root, { recursive: true, force: true }));
+  const installed = await installRelease({ manifestSource: current.manifest, paths: current.paths, target: current.target, log() {} });
+  for (const platform of ["darwin", "linux"]) {
+    const bundledNode = path.join(installed.runtimePath, "bin", "node");
+    await mkdir(path.dirname(bundledNode), { recursive: true });
+    await writeFile(bundledNode, "fixture node");
+    const homeDirectory = path.join(current.root, `native-${platform}`);
+    const environment = { XDG_CONFIG_HOME: path.join(homeDirectory, ".config") };
+    const enabled = await setAutostart({ paths: current.paths, enabled: true, platform, environment, homeDirectory });
+    const record = await readFile(enabled.path, "utf8");
+    assert.match(record, /launcher/);
+    assert.doesNotMatch(record, new RegExp(installed.runtimePath.replaceAll("\\", "\\\\")));
+    assert.equal((await autostartStatus({ platform, environment, homeDirectory })).enabled, true);
+    await setAutostart({ paths: current.paths, enabled: false, platform, environment, homeDirectory });
+    assert.equal((await autostartStatus({ platform, environment, homeDirectory })).enabled, false);
+  }
+});
+
+test("migration failure restores the previous runtime and durable backup", async (context) => {
+  const current = await fixture();
+  context.after(() => rm(current.root, { recursive: true, force: true }));
+  const installed = await installRelease({ manifestSource: current.manifest, paths: current.paths, target: current.target, log() {} });
+  const businessFile = path.join(installed.dataDirectory, "business.json");
+  await writeFile(businessFile, "before-update");
+  const next = await writeReleaseFixture({ root: current.root, target: current.target, version: "1.1.0" });
+
+  await assert.rejects(
+    applyUpdate({
+      manifestSource: next.manifest,
+      paths: current.paths,
+      target: current.target,
+      migrationVerifier: async () => {
+        await writeFile(businessFile, "failed-migration");
+        throw new Error("migration health check failed");
+      },
+      log() {},
+    }),
+    /migration health check failed/,
+  );
+  assert.equal((await loadInstallation(current.paths)).version, "1.0.5");
+  assert.equal(await readFile(businessFile, "utf8"), "before-update");
+});
+
+test("interrupted update leaves the active runtime and data unchanged", async (context) => {
+  const current = await fixture();
+  context.after(() => rm(current.root, { recursive: true, force: true }));
+  const installed = await installRelease({ manifestSource: current.manifest, paths: current.paths, target: current.target, log() {} });
+  const businessFile = path.join(installed.dataDirectory, "business.json");
+  await writeFile(businessFile, "durable-data");
+  const next = await writeReleaseFixture({ root: current.root, target: current.target, version: "1.1.0" });
+  const manifest = JSON.parse(await readFile(next.manifest, "utf8"));
+  manifest.assets[current.target].sha256 = "0".repeat(64);
+  await writeFile(next.manifest, JSON.stringify(manifest));
+
+  await assert.rejects(
+    applyUpdate({ manifestSource: next.manifest, paths: current.paths, target: current.target, migrationVerifier: async () => {}, log() {} }),
+    /checksum verification failed/,
+  );
+  assert.equal((await loadInstallation(current.paths)).runtimePath, installed.runtimePath);
+  assert.equal(await readFile(businessFile, "utf8"), "durable-data");
+  assert.equal((await readdir(current.paths.downloadsDirectory)).length, 0);
 });
 
 test("rejects wrong-product and path-like release metadata", () => {

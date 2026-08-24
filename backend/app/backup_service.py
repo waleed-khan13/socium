@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import shutil
@@ -33,7 +34,7 @@ def list_backups() -> list[dict[str, Any]]:
         try:
             checksum = checksum_path.read_text(encoding="utf-8").split()[0]
         except (OSError, IndexError):
-            checksum = ""
+            continue
         items.append(
             {
                 "name": archive.name,
@@ -53,41 +54,62 @@ def create_backup(*, reason: str = "manual") -> dict[str, Any]:
     now = datetime.now(UTC)
     filename = f"socium-backup-{now.strftime('%Y-%m-%dT%H-%M-%S-%fZ')}.tar.gz"
     destination = backup_dir / filename
-    with tempfile.TemporaryDirectory(prefix="socium-backup-") as temporary:
-        staging = Path(temporary)
-        for source in settings.data_dir.rglob("*"):
-            relative = source.relative_to(settings.data_dir)
-            if not relative.parts or relative.parts[0] in {"backups", ".updates"}:
-                continue
-            if source.is_symlink():
-                raise AppError("A symbolic link in the data directory prevented a safe backup.")
-            if source.name in {"socium.db", "socium.db-wal", "socium.db-shm", ".socium-runtime.json"}:
-                continue
-            target = staging / relative
-            if source.is_dir():
-                target.mkdir(parents=True, exist_ok=True)
-            elif source.is_file():
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source, target)
-        database_copy = staging / "socium.db"
-        with (
-            closing(sqlite3.connect(settings.database_path)) as source_db,
-            closing(sqlite3.connect(database_copy)) as target_db,
-        ):
-            source_db.backup(target_db)
-        metadata = {
-            "schemaVersion": 1,
-            "product": "socium",
-            "createdAt": now.isoformat(),
-            "appVersion": __import__("app").__version__,
-            "reason": reason,
+    partial = Path(f"{destination}.partial")
+    checksum_destination = Path(f"{destination}.sha256")
+    checksum_partial = Path(f"{checksum_destination}.partial")
+    try:
+        with tempfile.TemporaryDirectory(prefix="socium-backup-") as temporary:
+            staging = Path(temporary)
+            for source in settings.data_dir.rglob("*"):
+                relative = source.relative_to(settings.data_dir)
+                if not relative.parts or relative.parts[0] in {"backups", ".updates"}:
+                    continue
+                if source.is_symlink():
+                    raise AppError("A symbolic link in the data directory prevented a safe backup.")
+                if source.name in {"socium.db", "socium.db-wal", "socium.db-shm", ".socium-runtime.json"}:
+                    continue
+                target = staging / relative
+                if source.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                elif source.is_file():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, target)
+            database_copy = staging / "socium.db"
+            with (
+                closing(sqlite3.connect(settings.database_path)) as source_db,
+                closing(sqlite3.connect(database_copy)) as target_db,
+            ):
+                source_db.backup(target_db)
+            metadata = {
+                "schemaVersion": 1,
+                "product": "socium",
+                "createdAt": now.isoformat(),
+                "appVersion": __import__("app").__version__,
+                "reason": reason,
+            }
+            (staging / ".socium-backup.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+            with tarfile.open(partial, "w:gz") as archive:
+                for item in staging.iterdir():
+                    archive.add(item, arcname=item.name, recursive=True)
+        checksum = _digest(partial)
+        checksum_partial.write_text(f"{checksum}  {filename}\n", encoding="utf-8")
+        partial.replace(destination)
+        checksum_partial.replace(checksum_destination)
+        return {
+            "name": filename,
+            "path": str(destination),
+            "sizeBytes": destination.stat().st_size,
+            "checksum": checksum,
+            **metadata,
         }
-        (staging / ".socium-backup.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-        with tarfile.open(destination, "w:gz") as archive:
-            for item in staging.iterdir():
-                archive.add(item, arcname=item.name, recursive=True)
-    checksum = _digest(destination)
-    destination.with_suffix(destination.suffix + ".sha256").write_text(
-        f"{checksum}  {filename}\n", encoding="utf-8"
-    )
-    return {"name": filename, "path": str(destination), "sizeBytes": destination.stat().st_size, "checksum": checksum, **metadata}
+    except AppError:
+        raise
+    except OSError as error:
+        if error.errno == errno.ENOSPC:
+            raise AppError("Backup could not be created because the selected data drive is full.", status_code=507) from error
+        raise AppError(f"Backup could not be created: {error}", status_code=503) from error
+    finally:
+        partial.unlink(missing_ok=True)
+        checksum_partial.unlink(missing_ok=True)
+        if not checksum_destination.exists():
+            destination.unlink(missing_ok=True)

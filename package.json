@@ -1,6 +1,6 @@
 {
   "name": "socium-app",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "private": true,
   "description": "Open-source, localhost-only AI social publishing with human approval.",
   "license": "MIT",
@@ -36,6 +36,7 @@
     "release:bundle": "pnpm --filter socium bundle",
     "release:bundle:smoke": "node scripts/smoke-cli-bundle.mjs",
     "release:verify": "node scripts/verify-release-version.mjs",
+    "security:audit": "node scripts/security-audit.mjs",
     "runtime:sync": "npm ci --omit=dev --ignore-scripts --prefix packaging/web-runtime",
     "check": "pnpm typecheck && pnpm lint && pnpm cli:test && pnpm backend:lint && pnpm backend:test && pnpm test:e2e && pnpm build"
   },

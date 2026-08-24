@@ -5,7 +5,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { main } from "../packages/cli/src/cli.mjs";
+import { loadInstallation } from "../packages/cli/src/installation.mjs";
+import { autostartStatus, installNativeIntegration, removeNativeIntegration } from "../packages/cli/src/native-integration.mjs";
+import { sociumPaths } from "../packages/cli/src/paths.mjs";
 import { releaseTarget } from "../packages/cli/src/platform.mjs";
+import { uninstall } from "../packages/cli/src/uninstall.mjs";
 
 const projectRoot = process.cwd();
 const target = process.env.SOCIUM_RELEASE_TARGET || releaseTarget();
@@ -31,6 +35,14 @@ await writeFile(
   "utf8",
 );
 process.env.SOCIUM_HOME = path.join(testRoot, "home");
+const paths = sociumPaths();
+const nativeHome = path.join(testRoot, "native-home");
+const nativeEnvironment = {
+  ...process.env,
+  APPDATA: path.join(nativeHome, "AppData", "Roaming"),
+  OneDrive: path.join(nativeHome, "OneDrive"),
+  XDG_CONFIG_HOME: path.join(nativeHome, ".config"),
+};
 
 async function terminateProcessTree(child) {
   if (child.exitCode !== null) return;
@@ -57,6 +69,19 @@ try {
   if (installCode !== 0) throw new Error(`CLI install smoke returned ${installCode}.`);
   const doctorCode = await main(["doctor"]);
   if (doctorCode !== 0) throw new Error(`CLI doctor smoke returned ${doctorCode}.`);
+  const installation = await loadInstallation(paths);
+  await installNativeIntegration({
+    paths,
+    shortcuts: true,
+    autostart: true,
+    environment: nativeEnvironment,
+    homeDirectory: nativeHome,
+  });
+  if (!(await autostartStatus({ environment: nativeEnvironment, homeDirectory: nativeHome })).enabled) {
+    throw new Error("Native autostart was not enabled in the disposable profile.");
+  }
+  const durableFile = path.join(installation.dataDirectory, "release-smoke.json");
+  await writeFile(durableFile, JSON.stringify({ value: "before-update" }), "utf8");
 
   runtime = spawn(
     process.platform === "win32"
@@ -104,6 +129,47 @@ try {
   if (!health || health.service !== "socium-api") {
     throw new Error(`Installed CLI runtime did not become healthy:\n${stderr}`);
   }
+
+  const runtimeLock = JSON.parse(await readFile(path.join(installation.dataDirectory, ".socium-runtime.json"), "utf8"));
+  const statusResponse = await fetch(`http://127.0.0.1:${runtimeLock.controlPort}/status`, {
+    headers: { Authorization: `Bearer ${runtimeLock.controlToken}` },
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!statusResponse.ok || (await statusResponse.json()).version !== fragment.version) {
+    throw new Error("The native controller status check failed.");
+  }
+  const stopResponse = await fetch(`http://127.0.0.1:${runtimeLock.controlPort}/stop`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${runtimeLock.controlToken}` },
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!stopResponse.ok) throw new Error("The native controller did not accept a stop request.");
+  if (runtime.exitCode === null) {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("The native controller did not stop.")), 30_000);
+      runtime.once("exit", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+  }
+  runtime = undefined;
+
+  const updateCode = await main(["update", "--manifest", manifestPath, "--force"], { output: { isTTY: false }, log() {} });
+  if (updateCode !== 0 || !(await loadInstallation(paths)).previousRelease) {
+    throw new Error("The native update smoke did not retain a rollback runtime.");
+  }
+  await writeFile(durableFile, JSON.stringify({ value: "after-update" }), "utf8");
+  const rollbackCode = await main(["rollback"], { log() {} });
+  if (rollbackCode !== 0 || JSON.parse(await readFile(durableFile, "utf8")).value !== "before-update") {
+    throw new Error("Rollback did not restore the pre-update durable snapshot.");
+  }
+
+  await removeNativeIntegration({ environment: nativeEnvironment, homeDirectory: nativeHome });
+  const uninstallResult = await uninstall({ paths, confirmed: true });
+  if (!uninstallResult.preservedData || JSON.parse(await readFile(durableFile, "utf8")).value !== "before-update") {
+    throw new Error("Normal uninstall did not preserve durable data.");
+  }
   console.log(
     JSON.stringify(
       {
@@ -112,6 +178,10 @@ try {
         version: health.version,
         install: "checksummed",
         doctor: "passed",
+        autostart: "passed",
+        controller: "passed",
+        updateRollback: "passed",
+        uninstallDataPreservation: "passed",
         runtime: `http://127.0.0.1:${webPort}`,
       },
       null,
@@ -120,7 +190,8 @@ try {
   );
 } finally {
   if (runtime) await terminateProcessTree(runtime);
-  await main(["uninstall", "--yes", "--purge-data"], { log() {}, error() {} });
+  await removeNativeIntegration({ environment: nativeEnvironment, homeDirectory: nativeHome }).catch(() => undefined);
+  await uninstall({ paths, confirmed: true, purgeData: true }).catch(() => undefined);
   if (previousHome === undefined) delete process.env.SOCIUM_HOME;
   else process.env.SOCIUM_HOME = previousHome;
   await rm(testRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });

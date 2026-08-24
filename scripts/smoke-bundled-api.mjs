@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -93,7 +93,8 @@ try {
   await access(path.join(dataDirectory, "socium.db"));
   await access(path.join(dataDirectory, "master.key"));
 
-  if (health.version !== "1.0.5" || state.features?.edition !== "social-v1") {
+  const expectedVersion = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8")).version;
+  if (health.version !== expectedVersion || state.features?.edition !== "social-v1") {
     throw new Error("Bundled API returned the wrong release identity.");
   }
   console.log(

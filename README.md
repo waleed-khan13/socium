@@ -1,6 +1,6 @@
 # Socium
 
-Socium is an open-source, localhost-only control plane for AI-assisted social publishing. Version `1.0.5` runs a Next.js console and FastAPI service on the operator's own computer, stores application data in SQLite, and does not require a hosted Socium account or server.
+Socium is an open-source, localhost-only control plane for AI-assisted social publishing. Version `1.1.0` runs a Next.js console and FastAPI service on the operator's own computer, stores application data in SQLite, and does not require a hosted Socium account or server.
 
 ## Version 1.0 scope
 

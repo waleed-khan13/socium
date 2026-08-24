@@ -2,6 +2,8 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { supportedReleaseTargets } from "../src/platform.mjs";
+
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const projectRoot = path.resolve(packageRoot, "../..");
 const packageJson = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
@@ -12,6 +14,16 @@ const fragmentsRoot = requestedRoot
 const repository = process.env.GITHUB_REPOSITORY || "waleed-khan13/socium";
 const tag = process.env.RELEASE_TAG || `v${packageJson.version}`;
 const serverUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
+const changelog = await readFile(path.join(projectRoot, "CHANGELOG.md"), "utf8");
+
+function changelogNotes(version) {
+  const heading = new RegExp(`^## ${version.replaceAll(".", "\\.")} - .+$`, "m");
+  const match = heading.exec(changelog);
+  if (!match) return "";
+  const start = match.index + match[0].length;
+  const next = changelog.indexOf("\n## ", start);
+  return changelog.slice(start, next === -1 ? undefined : next).trim();
+}
 
 async function findFragments(directory) {
   const found = [];
@@ -38,13 +50,24 @@ for (const filePath of files) {
     sha256: fragment.sha256,
   };
 }
+const requiredTargets = supportedReleaseTargets();
+const missingTargets = requiredTargets.filter((target) => !assets[target]);
+const unexpectedTargets = Object.keys(assets).filter((target) => !requiredTargets.includes(target));
+if (missingTargets.length || unexpectedTargets.length) {
+  throw new Error(
+    `Release assets must match the supported platform matrix. Missing: ${missingTargets.join(", ") || "none"}; unexpected: ${unexpectedTargets.join(", ") || "none"}.`,
+  );
+}
+
+const releaseNotes = process.env.SOCIUM_RELEASE_NOTES?.trim() || changelogNotes(packageJson.version);
+if (!releaseNotes) throw new Error(`CHANGELOG.md has no release notes for ${packageJson.version}.`);
 
 const manifest = {
   schemaVersion: 1,
   product: "socium",
   version: packageJson.version,
   publishedAt: new Date().toISOString(),
-  releaseNotes: process.env.SOCIUM_RELEASE_NOTES?.trim() || "",
+  releaseNotes,
   releaseNotesUrl: `${serverUrl}/${repository}/releases/tag/${tag}`,
   assets,
 };

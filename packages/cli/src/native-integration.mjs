@@ -71,29 +71,40 @@ async function createWindowsShortcut(shortcutPath, scriptPath) {
   if (code !== 0) throw new Error("Windows could not create the Socium shortcut.");
 }
 
-function nativePaths(platform = process.platform) {
+export function nativePaths({
+  platform = process.platform,
+  environment = process.env,
+  homeDirectory = os.homedir(),
+} = {}) {
   if (platform === "win32") {
-    const programs = path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "Microsoft", "Windows", "Start Menu", "Programs");
+    const programs = path.join(environment.APPDATA || path.join(homeDirectory, "AppData", "Roaming"), "Microsoft", "Windows", "Start Menu", "Programs");
     return {
-      desktop: path.join(process.env.OneDrive || process.env.OneDriveCommercial || os.homedir(), "Desktop", "Socium.lnk"),
+      desktop: path.join(environment.OneDrive || environment.OneDriveCommercial || homeDirectory, "Desktop", "Socium.lnk"),
       menu: path.join(programs, "Socium.lnk"),
       autostart: path.join(programs, "Startup", "Socium.lnk"),
     };
   }
-  if (platform === "darwin") return { autostart: path.join(os.homedir(), "Library", "LaunchAgents", "com.socium.app.plist") };
-  return { autostart: path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "autostart", "socium.desktop") };
+  if (platform === "darwin") return { autostart: path.join(homeDirectory, "Library", "LaunchAgents", "com.socium.app.plist") };
+  return { autostart: path.join(environment.XDG_CONFIG_HOME || path.join(homeDirectory, ".config"), "autostart", "socium.desktop") };
 }
 
-export async function installNativeIntegration({ paths = sociumPaths(), shortcuts = true, autostart = false, platform = process.platform } = {}) {
+export async function installNativeIntegration({
+  paths = sociumPaths(),
+  shortcuts = true,
+  autostart = false,
+  platform = process.platform,
+  environment = process.env,
+  homeDirectory = os.homedir(),
+} = {}) {
   const installation = await loadInstallation(paths);
   if (!installation) throw new Error("Socium is not installed.");
   const portable = await writePortableLauncher(paths, installation, platform);
   if (platform !== "win32") {
-    const result = await setAutostart({ paths, enabled: autostart, platform, portable });
+    const result = await setAutostart({ paths, enabled: autostart, platform, portable, environment, homeDirectory });
     return { ...result, launcher: portable.script, shortcuts: false };
   }
   const launcher = await writeWindowsLauncher(paths, portable);
-  const targets = nativePaths(platform);
+  const targets = nativePaths({ platform, environment, homeDirectory });
   if (shortcuts) {
     await createWindowsShortcut(targets.desktop, launcher);
     await createWindowsShortcut(targets.menu, launcher);
@@ -102,8 +113,15 @@ export async function installNativeIntegration({ paths = sociumPaths(), shortcut
   return { launcher, shortcuts, autostart };
 }
 
-export async function setAutostart({ paths = sociumPaths(), enabled, platform = process.platform, portable: suppliedPortable } = {}) {
-  const targets = nativePaths(platform);
+export async function setAutostart({
+  paths = sociumPaths(),
+  enabled,
+  platform = process.platform,
+  portable: suppliedPortable,
+  environment = process.env,
+  homeDirectory = os.homedir(),
+} = {}) {
+  const targets = nativePaths({ platform, environment, homeDirectory });
   if (!enabled) {
     await rm(targets.autostart, { force: true });
     return { enabled: false, path: targets.autostart };
@@ -124,12 +142,12 @@ export async function setAutostart({ paths = sociumPaths(), enabled, platform = 
   return { enabled: true, path: targets.autostart };
 }
 
-export async function autostartStatus({ platform = process.platform } = {}) {
-  const target = nativePaths(platform).autostart;
+export async function autostartStatus({ platform = process.platform, environment = process.env, homeDirectory = os.homedir() } = {}) {
+  const target = nativePaths({ platform, environment, homeDirectory }).autostart;
   return { enabled: await exists(target), path: target };
 }
 
-export async function removeNativeIntegration({ platform = process.platform } = {}) {
-  const targets = nativePaths(platform);
+export async function removeNativeIntegration({ platform = process.platform, environment = process.env, homeDirectory = os.homedir() } = {}) {
+  const targets = nativePaths({ platform, environment, homeDirectory });
   for (const target of Object.values(targets)) await rm(target, { force: true });
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import platform
@@ -38,6 +39,23 @@ def test_online_backup_is_consistent_and_listed(client, tmp_path: Path) -> None:
     assert client.get("/api/lifecycle").json()["backups"][0]["checksum"] == backup["checksum"]
 
 
+def test_full_data_drive_leaves_no_incomplete_backup(client, monkeypatch) -> None:
+    from app.config import get_settings
+
+    backup_dir = get_settings().data_dir / "backups"
+    before = set(backup_dir.glob("socium-backup-*"))
+
+    def fail_archive(*_args, **_kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr("app.backup_service.tarfile.open", fail_archive)
+    response = client.post("/api/lifecycle/backup")
+    assert response.status_code == 507
+    assert "data drive is full" in response.json()["error"]
+    assert set(backup_dir.glob("socium-backup-*")) == before
+    assert not list(backup_dir.glob("*.partial"))
+
+
 def test_manual_update_check_uses_minimal_platform_metadata(client, monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -69,6 +87,7 @@ def test_manual_update_check_uses_minimal_platform_metadata(client, monkeypatch)
         return Response()
 
     monkeypatch.setenv("SOCIUM_RELEASE_MANIFEST", "https://updates.example/socium-manifest.json")
+    monkeypatch.setenv("SOCIUM_APP_VERSION", "1.0.5")
     monkeypatch.setattr("app.lifecycle_service.urllib.request.urlopen", fake_urlopen)
     response = client.post("/api/lifecycle/check")
     assert response.status_code == 200
@@ -78,7 +97,7 @@ def test_manual_update_check_uses_minimal_platform_metadata(client, monkeypatch)
     assert captured["url"] == "https://updates.example/socium-manifest.json"
     assert captured["headers"] == {
         "accept": "application/json",
-        "user-agent": f"Socium/1.0.5 ({platform.system()}; {platform.machine()})",
+        "user-agent": f"Socium/1.1.0 ({platform.system()}; {platform.machine()})",
     }
     assert captured["timeout"] == 15
 
@@ -134,6 +153,7 @@ def test_update_prepare_stream_reports_every_percentage_and_verifies_checksum(cl
 
     settings = get_settings()
     monkeypatch.setenv("SOCIUM_RELEASE_MANIFEST", "https://updates.example/manifest.json")
+    monkeypatch.setenv("SOCIUM_APP_VERSION", "1.0.5")
     monkeypatch.setenv("SOCIUM_RELEASE_TARGET", "win32-x64")
     monkeypatch.setenv("SOCIUM_RUNTIME_DIR", str(settings.data_dir.parent / "runtimes" / "1.0.5" / "win32-x64"))
     monkeypatch.setattr("app.lifecycle_service.urllib.request.urlopen", fake_urlopen)

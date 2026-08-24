@@ -4,6 +4,30 @@ All notable user-facing changes are documented here.
 
 ## Unreleased
 
+## 1.1.0 - 2026-08-24
+
+### Added
+
+- Added a resumable first-run wizard for storage, local or hosted AI, and a confirmed brand profile without requiring a Socium account.
+- Added guided local Ollama setup plus OpenRouter, NVIDIA NIM, OpenAI, Gemini, Anthropic, and safely detected custom provider connections.
+- Added brand-aware content kits with reviewed copy, hashtags, calls to action, image briefs, exclusions, alt text, and exact profile-revision provenance.
+- Added revision-bound Approve, Regenerate, Edit, and Skip actions across the dashboard, Telegram, and Slack.
+- Added a bounded, restart-safe scheduler supervisor with explicit overdue Run now, Reschedule, and Skip recovery.
+- Added the System screen, daily idle-only update checks, checksum-backed backups, migration health checks, one-click rollback, stable native launchers, optional autostart, and Windows tray controls.
+
+### Changed
+
+- Separated immutable runtimes, durable SQLite data, and local model storage so operators can select suitable drives and safely relocate storage.
+- Made Local AI the recommended path and kept hosted APIs optional, with clear disclosure when business data leaves the computer.
+- Moved Lead intelligence and Local SEO behind the disabled-by-default Labs boundary and narrowed remote approval to Telegram and Slack.
+- Replaced persistent heavy execution with deadline-based wakeups, one bounded worker, hibernating approval listeners, and an Ollama idle-unload window.
+
+### Security and privacy
+
+- Retired the WhatsApp product surface and delete only its legacy encrypted connector record during migration.
+- Added atomic backup cleanup for full drives, checksum verification before activation, rollback after failed migrations, loopback-only random-token runtime controls, and release dependency audits.
+- Added deterministic acceptance coverage for stale approvals, interrupted updates, migration failure, missing drives, crash loops, bounded memory, Labs isolation, and data-preserving uninstall.
+
 ## 1.0.5 - 2026-08-22
 
 ### Changed
