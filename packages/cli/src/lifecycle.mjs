@@ -60,11 +60,15 @@ async function reservePort() {
   return port;
 }
 
+function childHasExited(child) {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
 export async function terminateMigrationCheck(
   child,
   { platform = process.platform, gracefulTimeoutMs = 15_000, forceTimeoutMs = 5_000 } = {},
 ) {
-  if (child.exitCode !== null) return;
+  if (childHasExited(child)) return;
   if (platform === "win32") {
     await new Promise((resolve) => {
       const terminator = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
@@ -78,16 +82,16 @@ export async function terminateMigrationCheck(
     child.kill("SIGTERM");
   }
   let deadline = Date.now() + gracefulTimeoutMs;
-  while (child.exitCode === null && Date.now() < deadline) {
+  while (!childHasExited(child) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  if (child.exitCode !== null) return;
+  if (childHasExited(child)) return;
   child.kill("SIGKILL");
   deadline = Date.now() + forceTimeoutMs;
-  while (child.exitCode === null && Date.now() < deadline) {
+  while (!childHasExited(child) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  if (child.exitCode === null) throw new Error("The migration-check process did not release the durable data directory.");
+  if (!childHasExited(child)) throw new Error("The migration-check process did not release the durable data directory.");
 }
 
 async function verifyMigration(installation, timeoutMs = 90_000) {

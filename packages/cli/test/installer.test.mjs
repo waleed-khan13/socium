@@ -82,14 +82,30 @@ test("force-stops a migration check that ignores graceful termination", async ()
   const signals = [];
   const child = {
     exitCode: null,
+    signalCode: null,
     kill(signal) {
       signals.push(signal);
-      if (signal === "SIGKILL") this.exitCode = 137;
+      if (signal === "SIGKILL") this.signalCode = signal;
       return true;
     },
   };
   await terminateMigrationCheck(child, { platform: "linux", gracefulTimeoutMs: 0, forceTimeoutMs: 100 });
   assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+});
+
+test("recognizes a migration check that exits from a graceful Unix signal", async () => {
+  const signals = [];
+  const child = {
+    exitCode: null,
+    signalCode: null,
+    kill(signal) {
+      signals.push(signal);
+      this.signalCode = signal;
+      return true;
+    },
+  };
+  await terminateMigrationCheck(child, { platform: "darwin", gracefulTimeoutMs: 100 });
+  assert.deepEqual(signals, ["SIGTERM"]);
 });
 
 test("rejects application and durable storage roots that are unsafe to purge", async (context) => {

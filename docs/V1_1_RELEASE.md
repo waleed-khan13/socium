@@ -126,7 +126,7 @@ A new operator can install Socium, choose where durable data and local models li
 - The migration-check process is terminated and awaited before activation completes, with a bounded forced-stop fallback for frozen macOS/Linux binaries; this prevents runtime locks from racing a later rollback. Normal uninstall continues to remove replaceable launchers/runtimes while preserving durable data and backups.
 - The native smoke now proves checksum install, doctor, optional autostart, stable launcher/controller status and stop, in-place update, rollback, and data-preserving uninstall. The release workflow runs that contract for Windows x64/ARM64, macOS Intel/Apple silicon, and Linux x64/ARM64 before publication.
 - Manifest assembly requires all six supported target fragments and includes the matching changelog notes. npm publication remains provenance-backed trusted publishing after the GitHub Release succeeds.
-- Production JavaScript, portable runtime, and synchronized Python dependencies pass the high-severity audit gate with no known vulnerabilities. The complete local acceptance suite covers CLI 23 of 23, backend 72 of 72, real Chromium workflows, WCAG A/AA checks, and the optimized production build.
+- Production JavaScript, portable runtime, and synchronized Python dependencies pass the high-severity audit gate with no known vulnerabilities. The complete local acceptance suite covers CLI 24 of 24, backend 72 of 72, real Chromium workflows, WCAG A/AA checks, and the optimized production build.
 
 ## Storage contract
 
