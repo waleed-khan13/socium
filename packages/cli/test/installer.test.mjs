@@ -15,7 +15,7 @@ import { createBackup, listBackups, restoreBackup } from "../src/backup.mjs";
 import { createDownloadReporter, formatDownloadProgress } from "../src/download-progress.mjs";
 import { diagnose } from "../src/doctor.mjs";
 import { installRelease, loadInstallation } from "../src/installation.mjs";
-import { applyUpdate, compareVersions } from "../src/lifecycle.mjs";
+import { applyUpdate, compareVersions, terminateMigrationCheck } from "../src/lifecycle.mjs";
 import { resolveAssetSource, validateManifest } from "../src/manifest.mjs";
 import { autostartStatus, setAutostart, writePortableLauncher } from "../src/native-integration.mjs";
 import { sociumPaths, sociumRoot } from "../src/paths.mjs";
@@ -76,6 +76,20 @@ test("maps application data to native OS locations", () => {
     sociumRoot({ platform: "linux", homeDirectory: "/home/ada", environment: {} }),
     path.resolve("/home/ada/.local/share/socium"),
   );
+});
+
+test("force-stops a migration check that ignores graceful termination", async () => {
+  const signals = [];
+  const child = {
+    exitCode: null,
+    kill(signal) {
+      signals.push(signal);
+      if (signal === "SIGKILL") this.exitCode = 137;
+      return true;
+    },
+  };
+  await terminateMigrationCheck(child, { platform: "linux", gracefulTimeoutMs: 0, forceTimeoutMs: 100 });
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
 });
 
 test("rejects application and durable storage roots that are unsafe to purge", async (context) => {
