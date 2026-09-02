@@ -37,6 +37,7 @@
     "test:e2e:install": "playwright install chromium",
     "release:bundle": "pnpm --filter socium bundle",
     "release:bundle:smoke": "node scripts/smoke-cli-bundle.mjs",
+    "release:notes": "node scripts/write-release-notes.mjs",
     "release:verify": "node scripts/verify-release-version.mjs",
     "security:audit": "node scripts/security-audit.mjs",
     "runtime:sync": "npm ci --omit=dev --ignore-scripts --prefix packaging/web-runtime",

@@ -55,13 +55,13 @@ git tag -a v1.2.0 -m "Socium 1.2.0"
 git push origin v1.2.0
 ```
 
-The tag-triggered workflow repeats all native builds rather than trusting dry-run artifacts. It then creates the GitHub Release, uploads every archive and `.sha256` file plus `socium-manifest.json`, and publishes the CLI to npm. Never move or reuse a published version tag. If publication fails after npm accepts the version, fix the issue and release a new patch version.
+The tag-triggered workflow repeats all native builds rather than trusting dry-run artifacts. It then creates a three-choice Windows/macOS/Linux release page, uploads the six architecture-specific archives plus `socium-manifest.json`, and publishes the CLI to npm. SHA-256 values remain inside the manifest used by the installer, while sidecar files stay in internal workflow artifacts instead of cluttering the public download list. Never move or reuse a published version tag. If publication fails after npm accepts the version, fix the issue and release a new patch version.
 
 For the first-ever `socium` publication, the npm job is expected to remain unauthenticated until the interactive bootstrap above is completed. After the package is published and its trusted publisher is configured, re-run the failed workflow job; it will detect the existing version and finish without republishing it.
 
 ## 4. Verify the public release
 
-Check that the workflow is green and that the GitHub Release contains six archives, six checksum files, and one manifest. Then use a clean temporary application home on a supported machine:
+Check that the workflow is green and that the GitHub Release contains six archives and one manifest beneath the three recommended download choices. Then use a clean temporary application home on a supported machine:
 
 ```bash
 npx -y socium@1.2.0 onboard

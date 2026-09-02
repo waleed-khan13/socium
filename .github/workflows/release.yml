@@ -189,14 +189,18 @@ jobs:
       - name: Assemble the checksummed release manifest
         run: pnpm --filter socium manifest release
 
+      - name: Write the simple three-platform release page
+        run: pnpm release:notes > release/socium-release-notes.md
+
       - name: Create or refresh the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" release/socium-*.tar.gz release/socium-*.sha256 release/socium-manifest.json --clobber
+            gh release upload "$RELEASE_TAG" release/socium-*.tar.gz release/socium-manifest.json --clobber
+            gh release edit "$RELEASE_TAG" --notes-file release/socium-release-notes.md --title "Socium ${RELEASE_TAG#v}"
           else
-            gh release create "$RELEASE_TAG" release/socium-*.tar.gz release/socium-*.sha256 release/socium-manifest.json --verify-tag --generate-notes --title "Socium ${RELEASE_TAG#v}"
+            gh release create "$RELEASE_TAG" release/socium-*.tar.gz release/socium-manifest.json --verify-tag --notes-file release/socium-release-notes.md --title "Socium ${RELEASE_TAG#v}"
           fi
 
   npm-publish:

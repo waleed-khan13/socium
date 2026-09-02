@@ -4,6 +4,10 @@ All notable user-facing changes are documented here.
 
 ## Unreleased
 
+### Changed
+
+- Simplified GitHub Releases to three prominent Windows, macOS, and Linux download choices while retaining automatic architecture selection in the one-command installer and SHA-256 verification through the release manifest.
+
 ## 1.2.0 - 2026-09-02
 
 ### Added
