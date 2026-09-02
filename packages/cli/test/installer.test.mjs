@@ -12,6 +12,7 @@ import * as tar from "tar";
 
 import { main } from "../src/cli.mjs";
 import { createBackup, listBackups, restoreBackup } from "../src/backup.mjs";
+import { CLI_VERSION } from "../src/constants.mjs";
 import { createDownloadReporter, formatDownloadProgress } from "../src/download-progress.mjs";
 import { diagnose } from "../src/doctor.mjs";
 import { installRelease, loadInstallation } from "../src/installation.mjs";
@@ -165,7 +166,7 @@ test("supports conventional version commands", async () => {
   for (const argument of ["version", "--version", "-v"]) {
     const output = [];
     assert.equal(await main([argument], { log: (value) => output.push(value) }), 0);
-    assert.deepEqual(output, ["1.1.0"]);
+    assert.deepEqual(output, [CLI_VERSION]);
   }
 });
 

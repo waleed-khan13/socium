@@ -1,6 +1,6 @@
 {
   "name": "socium",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Cross-platform installer and local runtime manager for Socium.",
   "license": "MIT",
   "repository": {

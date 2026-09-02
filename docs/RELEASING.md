@@ -51,8 +51,8 @@ Do not continue until all six matrix jobs are green.
 Create one annotated tag after the candidate commit and version are final:
 
 ```bash
-git tag -a v1.1.0 -m "Socium 1.1.0"
-git push origin v1.1.0
+git tag -a v1.2.0 -m "Socium 1.2.0"
+git push origin v1.2.0
 ```
 
 The tag-triggered workflow repeats all native builds rather than trusting dry-run artifacts. It then creates the GitHub Release, uploads every archive and `.sha256` file plus `socium-manifest.json`, and publishes the CLI to npm. Never move or reuse a published version tag. If publication fails after npm accepts the version, fix the issue and release a new patch version.
@@ -64,8 +64,8 @@ For the first-ever `socium` publication, the npm job is expected to remain unaut
 Check that the workflow is green and that the GitHub Release contains six archives, six checksum files, and one manifest. Then use a clean temporary application home on a supported machine:
 
 ```bash
-npx -y socium@1.1.0 onboard
-npx -y socium@1.1.0 doctor
+npx -y socium@1.2.0 onboard
+npx -y socium@1.2.0 doctor
 ```
 
-Confirm that the browser opens on loopback, `/api/health` reports version `1.1.0` and edition `social-v1`, and normal uninstall preserves the data directory. Announce the release only after this public-download verification passes.
+Confirm that the browser opens on loopback, `/api/health` reports version `1.2.0` and edition `social-v1`, and normal uninstall preserves the data directory. Announce the release only after this public-download verification passes.

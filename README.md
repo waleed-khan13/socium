@@ -1,12 +1,12 @@
 # Socium
 
-Socium is an open-source, localhost-only control plane for AI-assisted social publishing. Version `1.1.0` runs a Next.js console and FastAPI service on the operator's own computer, stores application data in SQLite, and does not require a hosted Socium account or server.
+Socium is an open-source, localhost-only control plane for AI-assisted social publishing. Version `1.2.0` runs a Next.js console and FastAPI service on the operator's own computer, stores application data in SQLite, and does not require a hosted Socium account or server.
 
 ## Version 1.0 scope
 
 The default v1.0 product surface focuses on one complete workflow: connect an AI model, create channel-aware drafts, obtain human approval, and publish or schedule the exact approved revision. Lead intelligence and Local SEO remain in the repository as opt-in previews so they can mature through later updates without weakening the first stable release. Set `SOCIUM_ENABLE_LABS=1` before launch to show those preview workspaces.
 
-See [docs/V1_RELEASE.md](docs/V1_RELEASE.md) for the current stable contract, [docs/V1_1_RELEASE.md](docs/V1_1_RELEASE.md) for the local-first consumer plan, and [docs/RELEASING.md](docs/RELEASING.md) for the maintainer dry-run, tagging, and publication procedure.
+See [docs/V1_RELEASE.md](docs/V1_RELEASE.md) for the original stable contract, [docs/V1_1_RELEASE.md](docs/V1_1_RELEASE.md) for the local-first foundation, [docs/V1_2_RELEASE.md](docs/V1_2_RELEASE.md) for this guided-automation release, and [docs/RELEASING.md](docs/RELEASING.md) for the maintainer dry-run, tagging, and publication procedure.
 
 ## What works today
 

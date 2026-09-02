@@ -8,6 +8,8 @@ import sqlite3
 import tarfile
 from pathlib import Path
 
+from app import __version__
+
 
 def test_online_backup_is_consistent_and_listed(client, tmp_path: Path) -> None:
     from app.config import get_settings
@@ -97,7 +99,7 @@ def test_manual_update_check_uses_minimal_platform_metadata(client, monkeypatch)
     assert captured["url"] == "https://updates.example/socium-manifest.json"
     assert captured["headers"] == {
         "accept": "application/json",
-        "user-agent": f"Socium/1.1.0 ({platform.system()}; {platform.machine()})",
+        "user-agent": f"Socium/{__version__} ({platform.system()}; {platform.machine()})",
     }
     assert captured["timeout"] == 15
 

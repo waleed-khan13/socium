@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 
+import packageMetadata from "../package.json";
 import type { PublicAppState } from "../src/lib/app-types";
 
 const mockBaseUrl = `http://127.0.0.1:${process.env.SOCIUM_E2E_MOCK_PORT ?? "4100"}`;
@@ -197,7 +198,8 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await onboarding.getByRole("button", { name: "Finish setup" }).click();
   await expect(onboarding).toHaveCount(0);
   await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
-  await expect(page.getByText(/SOCIUM LOCAL.*v1\.1\.0/)).toBeVisible();
+  const versionPattern = packageMetadata.version.replaceAll(".", "\\.");
+  await expect(page.getByText(new RegExp(`SOCIUM LOCAL.*v${versionPattern}`))).toBeVisible();
   const primaryNavigation = page.getByRole("navigation", { name: "Primary" });
   await expect(primaryNavigation.getByRole("button", { name: "Lead intelligence" })).toHaveCount(0);
   await expect(primaryNavigation.getByRole("button", { name: "Local SEO lab" })).toHaveCount(0);
@@ -211,7 +213,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   expect(releaseStateResponse.ok()).toBeTruthy();
   const releaseState = (await releaseStateResponse.json()) as PublicAppState;
   expect(releaseState.features).toEqual({ edition: "social-v1", labsEnabled: false, previewModules: [] });
-  expect(releaseState.runtime.version).toBe("1.1.0");
+  expect(releaseState.runtime.version).toBe(packageMetadata.version);
   expect(releaseState.onboarding.status).toBe("completed");
   expect(releaseState.onboarding.ready).toBe(true);
 

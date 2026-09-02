@@ -4,6 +4,29 @@ All notable user-facing changes are documented here.
 
 ## Unreleased
 
+## 1.2.0 - 2026-09-02
+
+### Added
+
+- Added guided website analysis that drafts editable business facts, voice, colors, typography, and header/footer logo candidates for the brand profile.
+- Added one-click Slack and LinkedIn OAuth handoff, automatic Telegram chat discovery, connector health feedback, and direct setup links where provider action is still required.
+- Added recurring automation creation, editing, pausing, duplication, deletion, exact weekday schedules, per-rule approval routes, and missed-run recovery controls.
+- Added a centralized generation pipeline that uses the primary AI connection for post copy, hashtags, calls to action, alt text, image prompts, and generated campaign media.
+- Added a native Windows helper for folder selection and tray lifecycle controls, plus dynamic loopback port selection when the preferred port is occupied.
+
+### Changed
+
+- Unified generated images with the local media library and attached the exact revision and visual to Slack and Telegram approval requests.
+- Made approval decisions idempotent across the dashboard, Slack, and Telegram so simultaneous approvals cannot create duplicate publish jobs.
+- Reduced approval and regeneration latency with bounded work, explicit timeouts, status feedback, and idle listeners that wake only when work is pending.
+- Improved readability, scheduling controls, connector guidance, and empty-state feedback across the local console.
+
+### Security and privacy
+
+- Kept OAuth credentials and provider secrets in the encrypted local vault while the public handoff broker stores only short-lived, single-use exchanges.
+- Restricted website brand imports to safe public crawls and limited logo selection to header, footer, metadata, and structured brand candidates.
+- Added signature verification, revision-bound action tokens, duplicate-action rejection, and cross-origin protection to approval and local control flows.
+
 ## 1.1.0 - 2026-08-24
 
 ### Added
