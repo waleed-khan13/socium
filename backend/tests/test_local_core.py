@@ -1674,7 +1674,8 @@ def test_connector_vault_redacts_secrets_and_validates_slack(client, monkeypatch
     )
     assert reconnect is False
     assert socket.sent == ['{"envelope_id": "env-1"}']
-    assert "already used" in feedback[-1]
+    assert "already approved" in feedback[-1]
+    assert "No duplicate publish job" in feedback[-1]
     assert any(event["action"] == "post.approved.slack" for event in client.get("/api/state").json()["audit"])
 
     removed = client.delete(f"/api/connectors/{account_id}")
