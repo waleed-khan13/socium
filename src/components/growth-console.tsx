@@ -38,6 +38,7 @@ import {
   Sparkles,
   SquareArrowOutUpRight,
   UsersRound,
+  Zap,
   RadioTower,
   X,
 } from "lucide-react";
@@ -46,6 +47,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { toast } from "sonner";
 
 import { LeadsWorkspace } from "@/components/leads-workspace";
+import { AutomationsWorkspace } from "@/components/automations-workspace";
 import { BrandProfileCard } from "@/components/brand-profile-card";
 import { MediaLibrary } from "@/components/media-library";
 import { OnboardingWizard } from "@/components/onboarding-wizard";
@@ -56,7 +58,6 @@ import {
 } from "@/components/instagram-connector-card";
 import {
   LinkedInConnectorCard,
-  type LinkedInConnectorForm,
 } from "@/components/linkedin-connector-card";
 import {
   LinkedInOrganizationConnectorCard,
@@ -135,7 +136,7 @@ import {
   type WordPressConnectorForm,
 } from "@/components/wordpress-connector-card";
 
-type ViewId = "command" | "guide" | "create" | "queue" | "media" | "leads" | "seo" | "scheduler" | "integrations" | "system" | "activity";
+type ViewId = "command" | "guide" | "create" | "queue" | "media" | "leads" | "seo" | "automations" | "scheduler" | "integrations" | "system" | "activity";
 type QueueFilter = "all" | PostStatus;
 
 type StateResponse = {
@@ -158,6 +159,7 @@ const navigation: NavItem[] = [
   { id: "media", label: "Media library", icon: Images },
   { id: "leads", label: "Lead intelligence", icon: UsersRound, preview: true },
   { id: "seo", label: "Local SEO lab", icon: SearchCheck, preview: true },
+  { id: "automations", label: "Automations", icon: Zap },
   { id: "scheduler", label: "Scheduler", icon: Clock3 },
   { id: "integrations", label: "Integrations", icon: PlugZap },
   { id: "system", label: "System", icon: Settings2 },
@@ -200,6 +202,11 @@ const pageMeta: Record<ViewId, { eyebrow: string; title: string; description: st
     title: "Local SEO lab",
     description: "Audit public pages, inspect weighted findings, and keep restart-safe local snapshots.",
   },
+  automations: {
+    eyebrow: "Recurring social workflow",
+    title: "Automations",
+    description: "Choose posting days, approval routes, and safe automatic publishing behavior.",
+  },
   scheduler: {
     eyebrow: "Durable local jobs",
     title: "Scheduler",
@@ -240,6 +247,16 @@ function publisherDisplayName(channel: ContentChannel) {
   if (channel === "instagram") return "Instagram";
   if (channel === "telegram") return "Telegram";
   return channelLabels[channel];
+}
+
+function browserHandoffCaption(post: GeneratedPost) {
+  const hashtags = post.hashtags
+    .map((tag) => `#${tag.replace(/^#/, "").trim()}`)
+    .filter((tag) => tag.length > 1)
+    .join(" ");
+  return [post.body.trim(), post.callToAction.trim(), hashtags]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 const statusStyles: Record<PostStatus, string> = {
@@ -507,14 +524,18 @@ function Field({
 function MediaPreview({ url, label = "Instagram image preview" }: { url: string; label?: string }) {
   if (!url.trim()) return null;
   let safeUrl: string;
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:" || !parsed.hostname || parsed.username || parsed.password || parsed.hash) {
+  if (/^\/api\/media\/[0-9a-f-]+\/preview$/i.test(url)) {
+    safeUrl = url;
+  } else {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "https:" || !parsed.hostname || parsed.username || parsed.password || parsed.hash) {
+        return null;
+      }
+      safeUrl = parsed.toString();
+    } catch {
       return null;
     }
-    safeUrl = parsed.toString();
-  } catch {
-    return null;
   }
   return (
     <div className="overflow-hidden rounded-md border border-fuchsia-500/20 bg-black">
@@ -623,6 +644,7 @@ export function GrowthConsole() {
   const [recoveryAt, setRecoveryAt] = useState(defaultScheduleAt);
   const [providerVerified, setProviderVerified] = useState(false);
   const [telegramVerified, setTelegramVerified] = useState(false);
+  const [telegramConnectMessage, setTelegramConnectMessage] = useState("");
   const [providerModels, setProviderModels] = useState<string[]>([]);
   const [aiSetupMode, setAiSetupMode] = useState<"local" | "cloud">("local");
   const [localAi, setLocalAi] = useState<LocalAiStatus | null>(null);
@@ -652,14 +674,12 @@ export function GrowthConsole() {
       && !providerNeedsKey
       && (!["openai-compatible", "anthropic-compatible"].includes(providerForm.kind) || providerForm.model.trim()),
   );
-  const [telegramForm, setTelegramForm] = useState({ botToken: "", chatId: "" });
-  const [slackForm, setSlackForm] = useState({
-    name: "Slack approvals",
-    approvalChannelId: "",
+  const [telegramForm, setTelegramForm] = useState({
     botToken: "",
-    appToken: "",
-    enabled: true,
+    proxyUrl: "",
+    useProxy: false,
   });
+  const [telegramProxyMessage, setTelegramProxyMessage] = useState("");
   const [wordpressForm, setWordpressForm] = useState<WordPressConnectorForm>({
     name: "Company blog",
     siteUrl: "",
@@ -678,13 +698,6 @@ export function GrowthConsole() {
     name: "Company Instagram",
     userId: "",
     apiVersion: "v25.0",
-    accessToken: "",
-    enabled: true,
-  });
-  const [linkedinForm, setLinkedinForm] = useState<LinkedInConnectorForm>({
-    name: "My LinkedIn profile",
-    personId: "",
-    apiVersion: "202607",
     accessToken: "",
     enabled: true,
   });
@@ -799,22 +812,16 @@ export function GrowthConsole() {
           apiKey: "",
         });
         setAiSetupMode(next.provider.kind === "ollama" ? "local" : "cloud");
-        setTelegramForm({ chatId: next.telegram.chatId, botToken: "" });
+        setTelegramForm({
+          botToken: "",
+          proxyUrl: "",
+          useProxy: next.telegram.hasProxy,
+        });
         setGenerateForm((current) => ({
           ...current,
           tone: current.tone === "Clear and confident" ? next.workspace.tone || current.tone : current.tone,
           notifyTelegram: next.telegram.configured,
         }));
-        const slack = next.connectors.accounts.find((account) => account.adapterId === "slack");
-        if (slack) {
-          setSlackForm({
-            name: slack.name,
-            approvalChannelId: String(slack.config.approval_channel_id ?? ""),
-            botToken: "",
-            appToken: "",
-            enabled: slack.enabled,
-          });
-        }
         const wordpress = next.connectors.accounts.find((account) => account.adapterId === "wordpress");
         if (wordpress) {
           setWordpressForm({
@@ -843,16 +850,6 @@ export function GrowthConsole() {
             apiVersion: String(instagram.config.api_version ?? "v25.0"),
             accessToken: "",
             enabled: instagram.enabled,
-          });
-        }
-        const linkedin = next.connectors.accounts.find((account) => account.adapterId === "linkedin");
-        if (linkedin) {
-          setLinkedinForm({
-            name: linkedin.name,
-            personId: String(linkedin.config.person_id ?? ""),
-            apiVersion: String(linkedin.config.api_version ?? "202607"),
-            accessToken: "",
-            enabled: linkedin.enabled,
           });
         }
         const linkedinOrganization = next.connectors.accounts.find((account) => account.adapterId === "linkedin-organization");
@@ -887,7 +884,7 @@ export function GrowthConsole() {
   const slackShouldRefresh = Boolean(
     appState?.connectors.accounts.some(
       (account) => account.adapterId === "slack" && account.enabled && account.status === "verified",
-    ),
+    ) && appState?.posts.some((post) => post.status === "pending"),
   );
 
   useEffect(() => {
@@ -973,6 +970,19 @@ export function GrowthConsole() {
       void refreshLocalAi(providerForm.baseUrl);
     }
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function openStorageManager() {
+    try {
+      const response = await requestJson<StateResponse>("/api/onboarding", {
+        method: "PUT",
+        body: JSON.stringify({ action: "set-step", step: "storage" }),
+      });
+      setAppState(response.state);
+      setOnboardingOpen(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not open storage settings.");
+    }
   }
 
   async function connectProvider(nextForm = providerForm) {
@@ -1110,38 +1120,81 @@ export function GrowthConsole() {
     }
   }
 
-  async function saveTelegram(event?: FormEvent) {
-    event?.preventDefault();
-    setBusy("telegram-save");
+  async function connectTelegram(event: FormEvent) {
+    event.preventDefault();
+    setBusy("telegram-connect");
+    setTelegramConnectMessage("Verifying the bot securely…");
+    type TelegramConnectResponse = {
+      ok: boolean;
+      connected: boolean;
+      message: string;
+      botUrl: string;
+      state: PublicAppState;
+      chat?: { label: string; type: string };
+    };
     try {
-      const response = await requestJson<StateResponse>("/api/settings/telegram", {
-        method: "PUT",
-        body: JSON.stringify(telegramForm),
+      let result = await requestJson<TelegramConnectResponse>("/api/integrations/telegram/connect", {
+        method: "POST",
+        body: JSON.stringify({
+          botToken: telegramForm.botToken.trim(),
+          proxyUrl: telegramForm.useProxy ? telegramForm.proxyUrl.trim() : "",
+          clearProxy: !telegramForm.useProxy,
+        }),
       });
-      setAppState(response.state);
+      acceptAppState(result.state);
       setTelegramForm((current) => ({ ...current, botToken: "" }));
-      setTelegramVerified(false);
-      toast.success("Telegram settings saved");
-      return true;
+      if (!result.connected) {
+        setTelegramConnectMessage(result.message);
+        const opened = window.open(result.botUrl, "_blank", "noopener,noreferrer");
+        if (!opened) {
+          toast.info("Open the Telegram bot and press Start", {
+            description: result.botUrl,
+          });
+        }
+        for (let attempt = 0; attempt < 20 && !result.connected; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+          result = await requestJson<TelegramConnectResponse>("/api/integrations/telegram/connect", {
+            method: "POST",
+            body: JSON.stringify({ botToken: "" }),
+          });
+          acceptAppState(result.state);
+          setTelegramConnectMessage(result.message);
+        }
+      }
+      if (!result.connected) {
+        throw new Error("Socium did not receive /start yet. Open the bot, press Start, then try Connect again.");
+      }
+      setTelegramVerified(true);
+      setTelegramConnectMessage(result.message);
+      toast.success("Telegram connected", {
+        description: "The approval chat was detected and the local listener started automatically.",
+      });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save Telegram.");
-      return false;
+      setTelegramVerified(false);
+      setTelegramConnectMessage(error instanceof Error ? error.message : "Telegram connection failed.");
+      toast.error(error instanceof Error ? error.message : "Telegram connection failed.");
     } finally {
       setBusy(null);
     }
   }
 
-  async function testTelegramConnection() {
-    const saved = await saveTelegram();
-    if (!saved) return;
-    setBusy("telegram-test");
+  async function testTelegramProxy() {
+    setBusy("telegram-proxy-test");
+    setTelegramProxyMessage("Testing the proxy route to Telegram…");
     try {
-      const result = await requestJson<{ ok: boolean; message: string }>("/api/integrations/telegram/test", { method: "POST" });
-      setTelegramVerified(true);
-      toast.success(result.message);
+      const result = await requestJson<{ ok: boolean; message: string }>(
+        "/api/integrations/telegram/proxy/test",
+        {
+          method: "POST",
+          body: JSON.stringify({ proxyUrl: telegramForm.proxyUrl.trim() }),
+        },
+      );
+      setTelegramProxyMessage(result.message);
+      toast.success("Telegram proxy works", { description: result.message });
     } catch (error) {
-      setTelegramVerified(false);
-      toast.error(error instanceof Error ? error.message : "Telegram test failed.");
+      const message = error instanceof Error ? error.message : "Could not reach Telegram through this proxy.";
+      setTelegramProxyMessage(message);
+      toast.error("Telegram proxy failed", { description: message });
     } finally {
       setBusy(null);
     }
@@ -1526,51 +1579,95 @@ export function GrowthConsole() {
     }
   }
 
-  async function saveSlackConnector(event?: FormEvent, quiet = false) {
-    event?.preventDefault();
-    setBusy("slack-save");
+  async function openBrowserHandoff(post: GeneratedPost) {
+    const targetUrl = post.channel === "linkedin-company"
+      ? "https://www.linkedin.com/feed/?shareActive=true"
+      : "https://www.linkedin.com/feed/?shareActive=true";
+    const target = window.open("about:blank", "_blank");
+    if (target) {
+      target.opener = null;
+      target.location.replace(targetUrl);
+    }
     try {
-      const secrets: Record<string, string> = {};
-      if (slackForm.botToken.trim()) secrets.bot_token = slackForm.botToken.trim();
-      if (slackForm.appToken.trim()) secrets.app_token = slackForm.appToken.trim();
-      const response = await requestJson<StateResponse & { account: ConnectorAccount }>(
-        slackAccount ? `/api/connectors/${slackAccount.id}` : "/api/connectors",
-        {
-          method: slackAccount ? "PUT" : "POST",
-          body: JSON.stringify({
-            adapterId: "slack",
-            name: slackForm.name,
-            config: { approval_channel_id: slackForm.approvalChannelId },
-            secrets,
-            scopes: ["chat:write", "connections:write"],
-            enabled: slackForm.enabled,
-          }),
-        },
+      await navigator.clipboard.writeText(browserHandoffCaption(post));
+      if (post.mediaAssetId) {
+        const download = document.createElement("a");
+        download.href = `/api/media/${post.mediaAssetId}/content`;
+        download.download = `socium-${post.id.slice(0, 8)}-r${post.revision}`;
+        download.hidden = true;
+        document.body.appendChild(download);
+        download.click();
+        download.remove();
+      }
+      toast.success("LinkedIn handoff is ready", {
+        description: post.mediaAssetId
+          ? "Caption copied and the approved image downloaded. Paste, attach, review, then press Post."
+          : "Caption copied. Paste it in the opened composer, review, then press Post.",
+      });
+      if (!target) {
+        toast.warning("Your browser blocked the LinkedIn tab", {
+          description: "Allow pop-ups for this localhost page, then try Browser handoff again.",
+        });
+      }
+    } catch (error) {
+      target?.close();
+      toast.error("Could not prepare the browser handoff", {
+        description: error instanceof Error ? error.message : "Clipboard access was blocked.",
+      });
+    }
+  }
+
+  async function regeneratePostImage(post: GeneratedPost) {
+    setBusy(`regenerate-image-${post.id}`);
+    try {
+      const response = await requestJson<StateResponse & { post: GeneratedPost; message: string }>(
+        `/api/posts/${post.id}/regenerate-image`,
+        { method: "POST", body: JSON.stringify({ revision: post.revision }) },
       );
       setAppState(response.state);
-      setSlackForm((current) => ({ ...current, botToken: "", appToken: "" }));
-      if (!quiet) toast.success("Slack connector saved in the encrypted local vault");
-      return response.account.id;
+      toast.success("Fresh image generated", { description: response.message });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save the Slack connector.");
-      return null;
+      toast.error(error instanceof Error ? error.message : "Could not regenerate this image.");
+      await loadState();
     } finally {
       setBusy(null);
     }
   }
 
-  async function testSlackConnection() {
-    const accountId = await saveSlackConnector(undefined, true);
-    if (!accountId) return;
-    setBusy("slack-test");
+  async function connectOAuth(provider: "slack" | "linkedin") {
+    const popup = window.open("about:blank", `socium-${provider}-oauth`, "popup,width=720,height=820");
+    if (!popup) {
+      toast.error("Allow pop-ups for localhost so Socium can open the provider consent screen.");
+      return;
+    }
+    popup.document.title = `Connecting ${provider}`;
+    popup.document.body.innerHTML = "<p style='font:16px system-ui;padding:24px'>Preparing secure connection…</p>";
+    setBusy(`oauth-${provider}`);
     try {
-      const response = await requestJson<StateResponse & { message: string }>(`/api/connectors/${accountId}/test`, {
-        method: "POST",
-      });
-      setAppState(response.state);
-      toast.success(response.message);
+      const started = await requestJson<{
+        ok: boolean;
+        connection: { id: string; authorizationUrl: string };
+      }>(`/api/connectors/oauth/${provider}/start`, { method: "POST" });
+      popup.location.assign(started.connection.authorizationUrl);
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+        const result = await requestJson<StateResponse & {
+          connection: { status: string; message: string };
+        }>(`/api/connectors/oauth/sessions/${started.connection.id}`);
+        if (result.connection.status === "connected") {
+          setAppState(result.state);
+          popup.close();
+          toast.success(result.connection.message);
+          return;
+        }
+        if (result.connection.status === "error") {
+          throw new Error(result.connection.message);
+        }
+      }
+      throw new Error("Connection approval timed out. Start it again.");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Slack connection test failed.");
+      popup.close();
+      toast.error(error instanceof Error ? error.message : `Could not connect ${provider}.`);
       await loadState();
     } finally {
       setBusy(null);
@@ -1734,58 +1831,6 @@ export function GrowthConsole() {
     }
   }
 
-  async function saveLinkedInConnector(event?: FormEvent, quiet = false) {
-    event?.preventDefault();
-    setBusy("linkedin-save");
-    try {
-      const secrets: Record<string, string> = {};
-      if (linkedinForm.accessToken.trim()) {
-        secrets.access_token = linkedinForm.accessToken.trim();
-      }
-      const response = await requestJson<StateResponse & { account: ConnectorAccount }>(
-        linkedinAccount ? `/api/connectors/${linkedinAccount.id}` : "/api/connectors",
-        {
-          method: linkedinAccount ? "PUT" : "POST",
-          body: JSON.stringify({
-            adapterId: "linkedin",
-            name: linkedinForm.name,
-            config: { person_id: linkedinForm.personId, api_version: linkedinForm.apiVersion },
-            secrets,
-            scopes: ["openid", "profile", "w_member_social"],
-            enabled: linkedinForm.enabled,
-          }),
-        },
-      );
-      setAppState(response.state);
-      setLinkedinForm((current) => ({ ...current, accessToken: "" }));
-      if (!quiet) toast.success("LinkedIn connector saved in the encrypted local vault");
-      return response.account.id;
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save the LinkedIn connector.");
-      return null;
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function testLinkedInConnection() {
-    const accountId = await saveLinkedInConnector(undefined, true);
-    if (!accountId) return;
-    setBusy("linkedin-test");
-    try {
-      const response = await requestJson<StateResponse & { message: string }>(`/api/connectors/${accountId}/test`, {
-        method: "POST",
-      });
-      setAppState(response.state);
-      toast.success(response.message);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "LinkedIn connection test failed.");
-      await loadState();
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function saveLinkedInOrganizationConnector(event?: FormEvent, quiet = false) {
     event?.preventDefault();
     setBusy("linkedin-organization-save");
@@ -1852,15 +1897,7 @@ export function GrowthConsole() {
       const response = await requestJson<StateResponse>(`/api/connectors/${deleteConnector.id}`, { method: "DELETE" });
       setAppState(response.state);
       setDeleteConnector(null);
-      if (adapterId === "slack") {
-        setSlackForm({
-          name: "Slack approvals",
-          approvalChannelId: "",
-          botToken: "",
-          appToken: "",
-          enabled: true,
-        });
-      } else if (adapterId === "wordpress") {
+      if (adapterId === "wordpress") {
         setWordpressForm({
           name: "Company blog",
           siteUrl: "",
@@ -1881,14 +1918,6 @@ export function GrowthConsole() {
           name: "Company Instagram",
           userId: "",
           apiVersion: "v25.0",
-          accessToken: "",
-          enabled: true,
-        });
-      } else if (adapterId === "linkedin") {
-        setLinkedinForm({
-          name: "My LinkedIn profile",
-          personId: "",
-          apiVersion: "202607",
           accessToken: "",
           enabled: true,
         });
@@ -2292,7 +2321,7 @@ export function GrowthConsole() {
                         <div className="flex-1">
                           <h2 className="text-base font-semibold leading-6 text-zinc-100">{post.title}</h2>
                           <p className="mt-3 max-w-[75ch] whitespace-pre-wrap text-sm leading-6 text-zinc-400">{post.body}</p>
-                          {post.mediaUrl ? <div className="mt-4 max-w-64"><MediaPreview label={`Media preview for ${post.title}`} url={post.mediaUrl} /></div> : null}
+                          {post.mediaPreviewUrl || post.mediaUrl ? <div className="mt-4 max-w-96"><MediaPreview label={`Media preview for ${post.title}`} url={post.mediaPreviewUrl || post.mediaUrl || ""} /></div> : null}
                           {post.hashtags.length > 0 ? (
                             <div className="mt-4 flex flex-wrap gap-1.5">
                               {post.hashtags.map((tag) => <span className="rounded bg-zinc-900 px-1.5 py-1 text-[11px] text-zinc-500" key={tag}>#{tag.replace(/^#/, "")}</span>)}
@@ -2306,7 +2335,7 @@ export function GrowthConsole() {
                                 {post.imagePrompt ? <div><p className="font-mono text-[9px] tracking-[0.12em] text-zinc-600 uppercase">Image prompt</p><p className="mt-1 leading-5 text-zinc-400">{post.imagePrompt}</p></div> : null}
                                 {post.imageNegativePrompt ? <div><p className="font-mono text-[9px] tracking-[0.12em] text-zinc-600 uppercase">Visual exclusions</p><p className="mt-1 leading-5 text-zinc-500">{post.imageNegativePrompt}</p></div> : null}
                                 {post.imageAltText ? <div><p className="font-mono text-[9px] tracking-[0.12em] text-zinc-600 uppercase">Planned alt text</p><p className="mt-1 leading-5 text-zinc-400">{post.imageAltText}</p></div> : null}
-                                {post.imagePrompt ? <Button onClick={() => { setMediaGenerationBrief({ id: `${post.id}:${post.revision}`, prompt: post.imagePrompt, negativePrompt: post.imageNegativePrompt, altText: post.imageAltText }); navigate("media"); toast.success("Brand image brief opened in Media Studio"); }} size="sm" variant="outline"><Images />Create image from this brief</Button> : null}
+                                {post.imagePrompt && !post.mediaAssetId ? <Button onClick={() => { setMediaGenerationBrief({ id: `${post.id}:${post.revision}`, prompt: post.imagePrompt, negativePrompt: post.imageNegativePrompt, altText: post.imageAltText }); navigate("media"); toast.success("Brand image brief opened in Media Studio"); }} size="sm" variant="outline"><Images />Create image from this brief</Button> : null}
                               </div>
                             </details>
                           ) : null}
@@ -2340,7 +2369,8 @@ export function GrowthConsole() {
                                 {slackAccount?.status === "verified" && slackAccount.enabled ? (
                                   <Button disabled={busy === `slack-approval-${post.id}`} onClick={() => void sendSlackApproval(post)} size="sm" variant="outline">{busy === `slack-approval-${post.id}` ? <Loader2 className="animate-spin" /> : <MessageCircle />} Send to Slack</Button>
                                 ) : null}
-                                <Button disabled={busy === `regenerate-${post.id}`} onClick={() => void regeneratePost(post)} size="sm" variant="outline">{busy === `regenerate-${post.id}` ? <Loader2 className="animate-spin" /> : <RefreshCw />} Regenerate</Button>
+                                <Button disabled={busy === `regenerate-${post.id}`} onClick={() => void regeneratePost(post)} size="sm" variant="outline">{busy === `regenerate-${post.id}` ? <Loader2 className="animate-spin" /> : <RefreshCw />} Regenerate post</Button>
+                                {post.mediaAssetId ? <Button disabled={busy === `regenerate-image-${post.id}`} onClick={() => void regeneratePostImage(post)} size="sm" variant="outline">{busy === `regenerate-image-${post.id}` ? <Loader2 className="animate-spin" /> : <Images />} Regenerate image</Button> : null}
                                 <Button disabled={busy === `skip-${post.id}`} onClick={() => void decidePost(post, "skip")} size="sm" variant="ghost">{busy === `skip-${post.id}` ? <Loader2 className="animate-spin" /> : <X />} Skip</Button>
                                 <Button disabled={busy === `approve-${post.id}`} onClick={() => void decidePost(post, "approve")} size="sm">{busy === `approve-${post.id}` ? <Loader2 className="animate-spin" /> : <Check />} Approve</Button>
                               </>
@@ -2350,6 +2380,11 @@ export function GrowthConsole() {
                                 <Button disabled={Boolean(scheduledJob)} onClick={() => openSchedule(post)} size="sm" variant="outline"><Clock3 /> {scheduledJob ? "Scheduled" : "Schedule"}</Button>
                                 <Button disabled={busy === `publish-${post.id}` || Boolean(scheduledJob)} onClick={() => void publishPost(post)} size="sm">{busy === `publish-${post.id}` ? <Loader2 className="animate-spin" /> : <Send />} {post.channel === "blog" ? "Publish to WordPress" : post.channel === "facebook" ? "Publish to Facebook" : post.channel === "instagram" ? "Publish to Instagram" : post.channel === "linkedin" ? "Publish to LinkedIn" : post.channel === "linkedin-company" ? "Publish to Company Page" : "Publish now"}</Button>
                               </>
+                            ) : null}
+                            {post.status === "approved" && ["linkedin", "linkedin-company"].includes(post.channel) ? (
+                              <Button onClick={() => void openBrowserHandoff(post)} size="sm" variant="outline">
+                                <SquareArrowOutUpRight /> Browser handoff
+                              </Button>
                             ) : null}
                             {post.status === "approved" && post.channel === "blog" && !publisherReady ? (
                               <Button onClick={() => navigate("integrations")} size="sm" variant="outline"><PlugZap /> Connect WordPress</Button>
@@ -2364,10 +2399,10 @@ export function GrowthConsole() {
                               <Button onClick={() => navigate("integrations")} size="sm" variant="outline"><PlugZap /> Connect Instagram</Button>
                             ) : null}
                             {post.status === "approved" && post.channel === "linkedin" && !publisherReady ? (
-                              <Button onClick={() => navigate("integrations")} size="sm" variant="outline"><PlugZap /> Connect LinkedIn</Button>
+                              <Button onClick={() => navigate("integrations")} size="sm" variant="ghost"><PlugZap /> Connect for full auto</Button>
                             ) : null}
                             {post.status === "approved" && post.channel === "linkedin-company" && !publisherReady ? (
-                              <Button onClick={() => navigate("integrations")} size="sm" variant="outline"><PlugZap /> Connect Company Page</Button>
+                              <Button onClick={() => navigate("integrations")} size="sm" variant="ghost"><PlugZap /> Connect Page for full auto</Button>
                             ) : null}
                             {post.status === "approved" && !["telegram", "blog", "facebook", "instagram", "linkedin", "linkedin-company"].includes(post.channel) ? (
                               <span className="rounded-md border border-zinc-800 px-2.5 py-1.5 text-[11px] text-zinc-600">Publisher not installed</span>
@@ -2417,6 +2452,14 @@ export function GrowthConsole() {
 
           {!loading && appState && activeView === "seo" ? (
             <SeoWorkspace schedulerPaused={appState.scheduler.paused} />
+          ) : null}
+
+          {!loading && appState && activeView === "automations" ? (
+            <AutomationsWorkspace
+              onOpenIntegrations={() => navigate("integrations")}
+              onStateChange={setAppState}
+              state={appState}
+            />
           ) : null}
 
           {!loading && appState && activeView === "scheduler" ? (
@@ -2566,9 +2609,9 @@ export function GrowthConsole() {
                       {appState.storage.warnings.map((warning) => <p className="flex items-start gap-2 text-xs text-amber-200" key={warning}><AlertTriangle className="mt-0.5 size-3 shrink-0" />{warning}</p>)}
                     </div>
                   ) : null}
-                  <div className="flex flex-col gap-2 rounded-md border border-zinc-900 bg-[#050505] p-3 text-xs text-zinc-500 lg:flex-row lg:items-center lg:justify-between">
-                    <div><p className="text-zinc-300">Move storage safely from the terminal</p><p className="mt-1">Socium verifies the copy and keeps the old location until you confirm the new one works.</p></div>
-                    <code className="overflow-x-auto rounded bg-black px-3 py-2 text-[10px] text-amber-300">{appState.storage.moveCommand}</code>
+                  <div className="flex flex-col gap-3 rounded-md border border-zinc-900 bg-[#050505] p-3 text-xs text-zinc-500 lg:flex-row lg:items-center lg:justify-between">
+                    <div><p className="text-zinc-300">Change storage locations</p><p className="mt-1">Choose folders in your computer&apos;s native folder window. Socium verifies the copy, preserves the old folders, and restarts automatically.</p></div>
+                    <Button className="shrink-0" onClick={() => void openStorageManager()} variant="outline"><HardDriveDownload />Choose folders</Button>
                   </div>
                 </CardContent>
               </Card>
@@ -2804,36 +2847,47 @@ export function GrowthConsole() {
                       <IntegrationIcon><MessageCircle className="size-4" /></IntegrationIcon>
                       <div><CardTitle>Telegram</CardTitle><CardDescription>Approval notifications and real publishing.</CardDescription></div>
                     </div>
-                    <CardAction><ConnectionStatus configured={appState.telegram.configured} verified={telegramVerified} /></CardAction>
+                    <CardAction><ConnectionStatus configured={appState.telegram.configured} verified={telegramVerified || appState.telegram.pollingActive} /></CardAction>
                   </CardHeader>
                   <CardContent>
-                    <form className="space-y-4" onSubmit={(event) => void saveTelegram(event)}>
+                    <form className="space-y-4" onSubmit={(event) => void connectTelegram(event)}>
+                      <div className="grid gap-3 rounded-lg border border-zinc-700 bg-[#111214] p-4 sm:grid-cols-3">
+                        <div><p className="text-sm font-semibold text-zinc-100">1. Create a bot</p><p className="mt-1 text-sm leading-5 text-zinc-400">Telegram requires this one BotFather step.</p></div>
+                        <div><p className="text-sm font-semibold text-zinc-100">2. Paste token</p><p className="mt-1 text-sm leading-5 text-zinc-400">Socium verifies and encrypts it locally.</p></div>
+                        <div><p className="text-sm font-semibold text-zinc-100">3. Press Start once</p><p className="mt-1 text-sm leading-5 text-zinc-400">Chat ID and the approval listener are then automatic.</p></div>
+                      </div>
                       <Field htmlFor="bot-token" label="Bot token" hint={appState.telegram.hasBotToken ? "Stored — blank keeps current token" : "From @BotFather"}>
                         <Input autoComplete="off" id="bot-token" onChange={(event) => setTelegramForm((current) => ({ ...current, botToken: event.target.value }))} placeholder={appState.telegram.hasBotToken ? "••••••••••••" : "123456:ABC…"} type="password" value={telegramForm.botToken} />
                         <CredentialHelp
-                          description="Open @BotFather, send /newbot, finish the prompts, then paste this bot token above. Message the new bot once before testing."
+                          description="Paste the token once. Socium verifies the bot, opens its Telegram chat, detects your approval chat after Start, and starts the local listener automatically."
                           primary={{ href: "https://t.me/BotFather", label: "Get bot token" }}
                           secondary={{ href: "https://core.telegram.org/bots/tutorial", label: "Official guide" }}
                         />
                       </Field>
-                      <Field htmlFor="chat-id" label="Approval chat ID" hint="User, group, or channel"><Input id="chat-id" maxLength={160} onChange={(event) => setTelegramForm((current) => ({ ...current, chatId: event.target.value }))} placeholder="-1001234567890" required value={telegramForm.chatId} /></Field>
                       <div className="space-y-3 rounded-md border border-zinc-800 bg-black p-3">
+                        <div className="flex items-center justify-between gap-4">
+                          <div><Label className="text-xs text-zinc-200" htmlFor="telegram-proxy">Use your own Telegram-only proxy</Label><p className="mt-1 text-[11px] leading-4 text-zinc-600">Routes only Socium Bot API traffic. It does not configure Telegram Desktop or Web.</p></div>
+                          <Switch checked={telegramForm.useProxy} id="telegram-proxy" onCheckedChange={(useProxy) => setTelegramForm((current) => ({ ...current, useProxy }))} />
+                        </div>
+                        {telegramForm.useProxy ? <Field htmlFor="telegram-proxy-url" label="HTTP or SOCKS5 proxy" hint={appState.telegram.hasProxy ? "Stored encrypted — blank keeps it" : "Socium does not supply a proxy address"}><Input autoComplete="new-password" id="telegram-proxy-url" onChange={(event) => { setTelegramForm((current) => ({ ...current, proxyUrl: event.target.value })); setTelegramProxyMessage(""); }} placeholder={appState.telegram.hasProxy ? "••••••••••••" : "socks5://user:password@proxy-host:1080"} type="password" value={telegramForm.proxyUrl} /><p className="text-xs leading-5 text-zinc-400">Enter a working proxy obtained from your proxy provider. Supported: http://, https://, socks5:// and socks5h://. Credentials stay encrypted locally.</p><div className="flex flex-wrap items-center gap-3"><Button disabled={busy === "telegram-proxy-test" || (!telegramForm.proxyUrl.trim() && !appState.telegram.hasProxy)} onClick={() => void testTelegramProxy()} size="sm" type="button" variant="outline">{busy === "telegram-proxy-test" ? <Loader2 className="animate-spin" /> : <RadioTower />} Test proxy</Button>{telegramProxyMessage ? <p aria-live="polite" className="text-xs leading-5 text-zinc-300">{telegramProxyMessage}</p> : null}</div></Field> : null}
+                      </div>
+                      <div className="space-y-3 rounded-md border border-emerald-500/15 bg-emerald-500/[0.03] p-3">
                         <div className="flex items-start gap-3">
                           <RadioTower className={cn("mt-0.5 size-4 shrink-0", appState.telegram.pollingActive ? "text-emerald-400" : "text-zinc-500")} />
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
-                              <p className="text-xs font-medium text-zinc-300">Local approval listener</p>
+                              <p className="text-xs font-medium text-zinc-300">Automatic local approvals</p>
                               {appState.telegram.pollingActive ? <Badge className="border-emerald-500/25 bg-emerald-500/8 text-emerald-300" variant="outline">Listening</Badge> : appState.telegram.pollingEnabled ? <Badge className="border-amber-500/25 bg-amber-500/8 text-amber-300" variant="outline">{appState.telegram.pollingStatus}</Badge> : null}
                             </div>
-                            <p className="mt-1 text-[11px] leading-4 text-zinc-600">Receives Telegram button decisions through outbound long polling. No domain, tunnel, or public webhook required.</p>
+                            <p className="mt-1 text-[11px] leading-4 text-zinc-500">No Chat ID, webhook, domain, or separate listener setup. You only press Start in Telegram when Socium opens the bot.</p>
+                            {telegramConnectMessage ? <p className="mt-2 text-[11px] leading-4 text-zinc-300" aria-live="polite">{telegramConnectMessage}</p> : null}
                             {appState.telegram.lastError ? <p className="mt-2 text-[11px] leading-4 text-red-400">{appState.telegram.lastError}</p> : null}
                           </div>
                         </div>
-                        <Button className="w-full" disabled={!appState.telegram.configured || busy === "telegram-polling"} onClick={() => void configureTelegramPolling(!appState.telegram.pollingEnabled)} type="button" variant="outline">{busy === "telegram-polling" ? <Loader2 className="animate-spin" /> : <RadioTower />} {appState.telegram.pollingEnabled ? "Stop local approvals" : "Start local approvals"}</Button>
                       </div>
-                      <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-900 pt-4">
-                        <Button disabled={busy === "telegram-save"} type="submit" variant="outline">{busy === "telegram-save" ? <Loader2 className="animate-spin" /> : <Check />} Save</Button>
-                        <Button disabled={busy === "telegram-test" || busy === "telegram-save"} onClick={() => void testTelegramConnection()} type="button">{busy === "telegram-test" ? <Loader2 className="animate-spin" /> : <PlugZap />} Save & test</Button>
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-900 pt-4">
+                        <div>{appState.telegram.pollingEnabled ? <Button disabled={busy === "telegram-polling"} onClick={() => void configureTelegramPolling(false)} type="button" variant="ghost"><RadioTower /> Pause approvals</Button> : null}</div>
+                        <Button disabled={busy?.startsWith("telegram-") || (!telegramForm.botToken.trim() && !appState.telegram.hasBotToken) || (telegramForm.useProxy && !telegramForm.proxyUrl.trim() && !appState.telegram.hasProxy)} type="submit">{busy === "telegram-connect" ? <Loader2 className="animate-spin" /> : <PlugZap />} {busy === "telegram-connect" ? "Waiting for Telegram…" : appState.telegram.pollingActive ? "Reconnect Telegram" : "Connect Telegram"}</Button>
                       </div>
                     </form>
                   </CardContent>
@@ -2844,7 +2898,7 @@ export function GrowthConsole() {
                 <CardHeader className="border-b border-zinc-900">
                   <div className="flex items-center gap-3">
                     <IntegrationIcon><LockKeyhole className="size-4" /></IntegrationIcon>
-                    <div><CardTitle>Slack approval connector</CardTitle><CardDescription>Outbound approval buttons and local Socket Mode decisions.</CardDescription></div>
+                    <div><CardTitle>Slack approval connector</CardTitle><CardDescription>One-click private approvals with no token copying.</CardDescription></div>
                   </div>
                   <CardAction>
                     <Badge
@@ -2861,46 +2915,17 @@ export function GrowthConsole() {
                   </CardAction>
                 </CardHeader>
                 <CardContent className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-                  <form className="space-y-4" onSubmit={(event) => void saveSlackConnector(event)}>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <Field htmlFor="slack-name" label="Connection name"><Input id="slack-name" maxLength={80} onChange={(event) => setSlackForm((current) => ({ ...current, name: event.target.value }))} placeholder="Slack approvals" required value={slackForm.name} /></Field>
-                      <Field htmlFor="slack-channel" label="Approval channel ID" hint="Starts with C"><Input id="slack-channel" maxLength={120} onChange={(event) => setSlackForm((current) => ({ ...current, approvalChannelId: event.target.value }))} placeholder="C0123456789" required value={slackForm.approvalChannelId} /></Field>
-                      <Field htmlFor="slack-bot-token" label="Bot token" hint={slackAccount?.secretStatus.bot_token ? "Stored securely — blank keeps it" : "Slack OAuth bot token"}>
-                        <Input autoComplete="new-password" id="slack-bot-token" onChange={(event) => setSlackForm((current) => ({ ...current, botToken: event.target.value }))} placeholder={slackAccount?.secretStatus.bot_token ? "••••••••••••" : "xoxb-…"} required={!slackAccount?.secretStatus.bot_token} type="password" value={slackForm.botToken} />
-                        <CredentialHelp
-                          description="Open your Slack app, add the bot scopes, then install/reinstall it to the workspace and copy the xoxb token from OAuth & Permissions."
-                          primary={{ href: "https://api.slack.com/apps", label: "Get bot token" }}
-                          secondary={{ href: "https://api.slack.com/tutorials/tracks/getting-a-token", label: "Exact steps" }}
-                        />
-                      </Field>
-                      <Field htmlFor="slack-app-token" label="App token" hint={slackAccount?.secretStatus.app_token ? "Stored securely — blank keeps it" : "Socket Mode app token"}>
-                        <Input autoComplete="new-password" id="slack-app-token" onChange={(event) => setSlackForm((current) => ({ ...current, appToken: event.target.value }))} placeholder={slackAccount?.secretStatus.app_token ? "••••••••••••" : "xapp-…"} required={!slackAccount?.secretStatus.app_token} type="password" value={slackForm.appToken} />
-                        <CredentialHelp
-                          description="Open the same Slack app, enable Socket Mode, create an app-level token with connections:write, and paste its xapp token above."
-                          primary={{ href: "https://api.slack.com/apps", label: "Get app token" }}
-                          secondary={{ href: "https://api.slack.com/apis/events-api/using-socket-mode", label: "Socket Mode steps" }}
-                        />
-                      </Field>
+                  <div className="space-y-5">
+                    <div className="rounded-md border border-emerald-500/15 bg-emerald-500/[0.03] p-4">
+                      <div className="flex items-start gap-3"><PlugZap className="mt-0.5 size-4 shrink-0 text-emerald-300" /><div><p className="text-sm font-medium text-zinc-100">No Slack tokens or channel IDs</p><p className="mt-1 text-xs leading-5 text-zinc-500">Select Connect, choose a workspace, then Allow. Socium opens a private approval conversation and configures the encrypted local connector automatically.</p></div></div>
                     </div>
-
-                    <div className="flex items-center justify-between gap-4 rounded-md border border-zinc-800 bg-black p-3">
-                      <div>
-                        <Label className="text-xs text-zinc-200" htmlFor="slack-enabled">Connector enabled</Label>
-                        <p className="mt-1 text-[11px] leading-4 text-zinc-600">Disable without deleting locally stored settings.</p>
-                      </div>
-                      <Switch checked={slackForm.enabled} id="slack-enabled" onCheckedChange={(enabled) => setSlackForm((current) => ({ ...current, enabled }))} />
-                    </div>
-
                     {slackAccount?.lastError ? <div className="flex gap-2 rounded-md border border-red-500/20 bg-red-500/5 p-3 text-xs leading-5 text-red-300"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" /><span>{slackAccount.lastError}</span></div> : null}
-
+                    {!appState.connectors.oneClickConfigured ? <p className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-xs leading-5 text-amber-200">One-click service is not active in this development build yet. No manual token form is shown.</p> : null}
                     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-900 pt-4">
                       <div>{slackAccount ? <Button disabled={busy === "slack-delete"} onClick={() => setDeleteConnector(slackAccount)} type="button" variant="ghost"><X /> Remove</Button> : null}</div>
-                      <div className="flex flex-wrap gap-2">
-                        <Button disabled={busy === "slack-save" || busy === "slack-test"} type="submit" variant="outline">{busy === "slack-save" ? <Loader2 className="animate-spin" /> : <Check />} Save</Button>
-                        <Button disabled={busy === "slack-save" || busy === "slack-test"} onClick={() => void testSlackConnection()} type="button">{busy === "slack-test" ? <Loader2 className="animate-spin" /> : <PlugZap />} Save & test</Button>
-                      </div>
+                      <Button disabled={busy === "oauth-slack" || !appState.connectors.oneClickConfigured} onClick={() => void connectOAuth("slack")} type="button">{busy === "oauth-slack" ? <Loader2 className="animate-spin" /> : <PlugZap />}{busy === "oauth-slack" ? "Waiting for Slack…" : slackAccount ? "Reconnect Slack" : "Connect Slack"}</Button>
                     </div>
-                  </form>
+                  </div>
 
                   <div className="space-y-4 rounded-md border border-zinc-800 bg-black p-4">
                     <div className="flex items-start gap-3">
@@ -2910,16 +2935,13 @@ export function GrowthConsole() {
                     <Separator className="bg-zinc-900" />
                     <div className="flex items-start gap-3 rounded-md border border-zinc-900 p-3">
                       <RadioTower className={cn("mt-0.5 size-4 shrink-0", slackAccount?.listener.active ? "text-emerald-400" : slackAccount?.listener.status === "retrying" ? "text-amber-400" : "text-zinc-600")} />
-                      <div className="min-w-0"><p className="text-xs font-medium text-zinc-300">Socket Mode listener · <span className="font-normal capitalize text-zinc-500">{slackAccount?.listener.status ?? "stopped"}</span></p><p className="mt-1 text-[11px] leading-5 text-zinc-600">Runs outbound-only while this verified connector is enabled.</p>{slackAccount?.listener.lastError ? <p className="mt-2 text-[11px] leading-5 text-amber-300">{slackAccount.listener.lastError}</p> : null}</div>
+                      <div className="min-w-0"><p className="text-xs font-medium text-zinc-300">Approval relay · <span className="font-normal capitalize text-zinc-500">{slackAccount?.listener.status ?? "stopped"}</span></p><p className="mt-1 text-[11px] leading-5 text-zinc-600">Wakes only while an approval is pending, then returns to idle.</p>{slackAccount?.listener.lastError ? <p className="mt-2 text-[11px] leading-5 text-amber-300">{slackAccount.listener.lastError}</p> : null}</div>
                     </div>
                     <div>
                       <p className="text-[10px] font-semibold tracking-[0.16em] text-zinc-600 uppercase">Required scopes</p>
-                      <div className="mt-2 flex flex-wrap gap-2"><Badge variant="outline">chat:write</Badge><Badge variant="outline">connections:write</Badge></div>
+                      <div className="mt-2 flex flex-wrap gap-2"><Badge variant="outline">chat:write</Badge><Badge variant="outline">im:write</Badge></div>
                     </div>
-                    <div className="grid grid-cols-2 gap-3 text-xs">
-                      <div className="rounded-md border border-zinc-900 p-3"><p className="text-zinc-600">Bot token</p><p className={cn("mt-1", slackAccount?.secretStatus.bot_token ? "text-emerald-300" : "text-zinc-500")}>{slackAccount?.secretStatus.bot_token ? "Stored" : "Missing"}</p></div>
-                      <div className="rounded-md border border-zinc-900 p-3"><p className="text-zinc-600">App token</p><p className={cn("mt-1", slackAccount?.secretStatus.app_token ? "text-emerald-300" : "text-zinc-500")}>{slackAccount?.secretStatus.app_token ? "Stored" : "Missing"}</p></div>
-                    </div>
+                    <div className="rounded-md border border-zinc-900 p-3 text-xs"><p className="text-zinc-600">Managed OAuth credentials</p><p className={cn("mt-1", slackAccount?.status === "verified" ? "text-emerald-300" : "text-zinc-500")}>{slackAccount?.status === "verified" ? "Encrypted locally" : "Not connected"}</p></div>
                     {slackAccount?.lastVerifiedAt ? <p className="font-mono text-[10px] text-zinc-600">Last verified {formatDate(slackAccount.lastVerifiedAt)}</p> : null}
                     <p className="text-[11px] leading-5 text-zinc-700">Approve, Regenerate, Edit, and Skip are one-time actions bound to the exact draft revision. They expire after 72 hours; stale, repeated, or mismatched clicks fail closed.</p>
                   </div>
@@ -2959,11 +2981,9 @@ export function GrowthConsole() {
               <LinkedInConnectorCard
                 account={linkedinAccount}
                 busy={busy}
-                form={linkedinForm}
-                onChange={(patch) => setLinkedinForm((current) => ({ ...current, ...patch }))}
+                oneClickConfigured={appState.connectors.oneClickConfigured}
+                onConnect={() => void connectOAuth("linkedin")}
                 onRemove={() => linkedinAccount && setDeleteConnector(linkedinAccount)}
-                onSave={(event) => void saveLinkedInConnector(event)}
-                onTest={() => void testLinkedInConnection()}
               />
 
               <LinkedInOrganizationConnectorCard

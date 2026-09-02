@@ -7,9 +7,9 @@ from sqlalchemy import select
 
 from app.database import read_session, write_session
 from app.errors import AppError
-from app.models import ImageProviderSettings, LocalJob
+from app.models import LocalJob, ProviderSettings
 from app.schemas import ImageGenerateRequest
-from app.store import append_audit, utc_now
+from app.store import PRIMARY_IMAGE_MODELS, append_audit, utc_now
 
 
 def _job_dict(job: LocalJob) -> dict[str, Any]:
@@ -223,14 +223,15 @@ def retry_media_generation(job_id: str) -> dict[str, Any]:
             raise AppError("Image generation job not found.", 404)
         if job.status not in {"failed", "cancelled", "missed"}:
             raise AppError(f"This generation cannot be retried. Current status: {job.status}.")
-        provider = session.get(ImageProviderSettings, 1)
-        if provider is None or not provider.updated_at:
-            raise AppError("Save an image provider before retrying this generation.")
+        provider = session.get(ProviderSettings, 1)
+        image = PRIMARY_IMAGE_MODELS.get(provider.kind) if provider is not None else None
+        if provider is None or not provider.updated_at or not provider.api_key or image is None:
+            raise AppError("Connect an image-capable primary AI before retrying this generation.")
         now = utc_now()
         payload = dict(job.payload or {})
         payload["provider"] = {
-            "kind": provider.kind,
-            "model": provider.model,
+            "kind": image[0],
+            "model": image[1],
             "updated_at": provider.updated_at,
         }
         job.payload = payload

@@ -11,6 +11,7 @@ from app.services.telegram import (
     get_updates,
     send_approval_request,
     send_status_message,
+    update_approval_message,
 )
 from app.store import (
     create_approval_action,
@@ -81,6 +82,7 @@ class TelegramPoller:
                     await self._wait_for_work()
                     continue
                 token = str(runtime["bot_token"])
+                proxy_url = str(runtime.get("proxy_url") or "")
                 if not token or not runtime["chat_id"]:
                     self._active = False
                     self._status = "configuration_required"
@@ -101,6 +103,7 @@ class TelegramPoller:
                         token,
                         int(runtime["last_update_id"]) + 1,
                         self.poll_timeout,
+                        proxy_url,
                     )
                     action_error: str | None = None
                     for update in updates:
@@ -109,11 +112,16 @@ class TelegramPoller:
                             continue
                         callback_id = callback["callbackId"]
                         if callback.get("error"):
-                            await answer_callback(token, callback_id, callback["error"])
+                            await answer_callback(token, callback_id, callback["error"], proxy_url)
                             continue
                         action = callback["action"]
-                        if action == "regenerate":
-                            await answer_callback(token, callback_id, "Regenerating this revision locally…")
+                        if action in {"regenerate", "regenerate_post", "regenerate_image"}:
+                            await answer_callback(
+                                token,
+                                callback_id,
+                                "Regenerating this revision locally…",
+                                proxy_url,
+                            )
                         try:
                             result = await apply_remote_approval_action(
                                 callback["actionId"], action, "telegram"  # type: ignore[arg-type]
@@ -128,6 +136,7 @@ class TelegramPoller:
                                         str(runtime["chat_id"]),
                                         result.post,
                                         approval["id"],
+                                        proxy_url,
                                     )
                                     record_approval_sent(approval["id"], message_id)
                                 except ExternalServiceError as error:
@@ -136,24 +145,46 @@ class TelegramPoller:
                                         "Draft regenerated, but its new Telegram approval could not be sent."
                                     )
                             else:
-                                await answer_callback(token, callback_id, result.message)
+                                await answer_callback(token, callback_id, result.message, proxy_url)
+                            if callback.get("chatId") and callback.get("messageId"):
+                                try:
+                                    await update_approval_message(
+                                        token,
+                                        callback["chatId"],
+                                        callback["messageId"],
+                                        callback.get("messageText", ""),
+                                        action_error or result.message,
+                                        proxy_url,
+                                        bool(callback.get("hasPhoto")),
+                                    )
+                                except ExternalServiceError:
+                                    try:
+                                        await send_status_message(
+                                            token,
+                                            str(runtime["chat_id"]),
+                                            action_error or result.message,
+                                            proxy_url,
+                                        )
+                                    except ExternalServiceError:
+                                        pass
                         except AppError as error:
-                            if action != "regenerate":
-                                await answer_callback(token, callback_id, error.message)
+                            if action not in {"regenerate", "regenerate_post", "regenerate_image"}:
+                                await answer_callback(token, callback_id, error.message, proxy_url)
                             else:
                                 try:
                                     await send_status_message(
                                         token,
                                         str(runtime["chat_id"]),
                                         f"Socium could not regenerate this draft: {error.message}",
+                                        proxy_url,
                                     )
                                 except ExternalServiceError:
                                     pass
                             action_error = error.message
                         except Exception as error:  # noqa: BLE001 - return safe action feedback.
                             message = error.message if hasattr(error, "message") else "Approval action failed."
-                            if action != "regenerate":
-                                await answer_callback(token, callback_id, str(message))
+                            if action not in {"regenerate", "regenerate_post", "regenerate_image"}:
+                                await answer_callback(token, callback_id, str(message), proxy_url)
                             action_error = str(message)
                     self._last_error = action_error
                     backoff = 2

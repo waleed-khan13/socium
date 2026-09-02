@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.config import get_settings
 from app.connector_store import (
     connector_runtime,
     primary_connector_runtime,
@@ -40,10 +41,15 @@ async def send_saved_slack_approval(
     approval_action_id: str,
 ) -> dict[str, str]:
     runtime = primary_connector_runtime("slack", verified_only=True)
+    broker_relay = str(runtime["config"].get("transport") or "") == "broker-relay"
     message_ts = await send_approval_message(
         str(runtime["secrets"].get("bot_token") or ""),
         str(runtime["config"].get("approval_channel_id") or ""),
         post,
         approval_action_id,
+        broker_url=get_settings().connect_broker_url if broker_relay else "",
+        relay_token=(
+            str(runtime["secrets"].get("relay_token") or "") if broker_relay else ""
+        ),
     )
     return {"accountId": str(runtime["id"]), "messageTs": message_ts}

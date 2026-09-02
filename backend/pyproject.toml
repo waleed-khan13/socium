@@ -7,11 +7,12 @@ dependencies = [
   "alembic>=1.18,<2",
   "cryptography>=50,<51",
   "fastapi>=0.139,<1",
-  "httpx>=0.28,<1",
+  "httpx[socks]>=0.28,<1",
   "pillow>=11.3,<13",
   "pydantic-settings>=2.10,<3",
   "python-multipart>=0.0.20,<1",
   "sqlalchemy>=2.0,<3",
+  "tzdata>=2025.2",
   "uvicorn[standard]>=0.34,<1",
   "websockets>=15,<18",
 ]

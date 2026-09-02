@@ -9,7 +9,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     <TooltipProvider delay={250}>
       {children}
       <Toaster
-        closeButton
+        duration={3500}
         position="bottom-right"
         theme="dark"
         toastOptions={{
@@ -17,6 +17,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
             background: "#0c0c0c",
             border: "1px solid #2b2b2b",
             color: "#fafafa",
+            pointerEvents: "none",
           },
         }}
       />

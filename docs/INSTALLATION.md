@@ -28,6 +28,8 @@ When Socium opens with a fresh database, the browser starts a guided first-run w
 
 The CLI detects the operating system and CPU, downloads the matching GitHub Release archive over HTTPS, verifies its published SHA-256 checksum, installs it, starts FastAPI and Next.js on loopback, and opens `http://127.0.0.1:3000`. The first start creates SQLite, applies migrations, and generates the local encryption key.
 
+On Windows, desktop integration is handled by Socium's small native Rust helper. It provides the tray menu, folder selection dialog, desktop/Start-menu shortcuts, and start-after-login entry without starting PowerShell in the background. The dashboard still opens in the user's normal browser and all application services remain bound to localhost.
+
 Supported release targets are Windows x64/ARM64, macOS Intel/Apple silicon, and Linux x64/ARM64. A release is published only after its native runner completes the installed-bundle health smoke test.
 
 ## Lifecycle commands
@@ -106,6 +108,8 @@ That command removes installed runtimes, downloads, the SQLite database, `master
 
 The root contains `runtimes/<version>/<target>` for replaceable program files, `launcher` for the stable native entry, `backups` for offline/update archives, and the installation record. Durable data and local models use the paths chosen during onboarding; their defaults are `data` and `models` under the application root. Set `SOCIUM_HOME` before every CLI command only when an advanced or portable location is required.
 
+On Windows, **Change storage locations** opens the native folder picker. Socium copies SQLite and durable assets first, verifies file sizes and SHA-256 checksums, switches the saved paths only after validation, and preserves the previous folders for manual recovery.
+
 Open **Connections → Local storage** in the dashboard to see the runtime, data, and model paths, per-category data use, drive free space, and reliability warnings. Prefer a fixed local drive. SQLite on removable, network, or cloud-synced storage can be disconnected or synchronized at unsafe times.
 
 ## Ports and Labs
@@ -115,6 +119,12 @@ The console and internal API default to `127.0.0.1:3000` and `127.0.0.1:8000`. B
 ```bash
 npx socium start --port 3100 --api-port 8100
 ```
+
+Ports `3000` (dashboard) and `8000` (private FastAPI service) are preferred defaults, not hard requirements. If either port is already occupied, Socium automatically selects the next available localhost port, passes the selected API address to the dashboard, and opens the browser on the selected dashboard URL. `--port` and `--api-port` set preferred starting ports and receive the same safe fallback behavior.
+
+## LinkedIn without an API connection
+
+After approving a LinkedIn revision, choose **Browser handoff** in the approval queue. Socium opens LinkedIn in a new tab, copies the exact approved caption and hashtags, and downloads the approved local image when one is attached. Paste the caption, attach the downloaded image, review the result, and press **Post** yourself. This mode needs no LinkedIn token and never reads the signed-in browser session; fully automatic LinkedIn publishing continues to use the official OAuth/API connector.
 
 Lead intelligence and Local SEO remain preview workspaces in v1. Start them explicitly with `npx socium start --labs`.
 

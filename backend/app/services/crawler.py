@@ -21,6 +21,14 @@ MAX_PAGE_BYTES = 1_000_000
 MAX_PAGES = 4
 CRAWL_LOCK = asyncio.Lock()
 CONTACT_HINTS = ("contact", "about", "team", "company", "reach", "connect")
+BRAND_HINTS = ("about", "services", "products", "solutions", "work", "company")
+HEX_COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{6}\b")
+FONT_FAMILY_PATTERN = re.compile(r"font-family\s*:\s*([^;}]+)", re.IGNORECASE)
+TAILWIND_SANS_PATTERN = re.compile(
+    r"(?:sans|heading|body|display)\s*:\s*\[\s*['\"]+\"?"
+    r"([A-Za-z][A-Za-z0-9 ]{1,48})\"?['\"]+",
+    re.IGNORECASE,
+)
 EMAIL_PATTERN = re.compile(
     r"(?<![\w.+-])([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})(?![\w.-])",
     re.IGNORECASE,
@@ -77,6 +85,25 @@ def _json_ld_objects(value: object) -> list[dict[str, Any]]:
 
 
 class PageExtractor(HTMLParser):
+    _VOID_TAGS = frozenset(
+        {
+            "area",
+            "base",
+            "br",
+            "col",
+            "embed",
+            "hr",
+            "img",
+            "input",
+            "link",
+            "meta",
+            "param",
+            "source",
+            "track",
+            "wbr",
+        }
+    )
+
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.title = ""
@@ -88,14 +115,43 @@ class PageExtractor(HTMLParser):
         self.phones: list[str] = []
         self.business_names: list[str] = []
         self.locations: list[str] = []
+        self.logo_candidates: list[str] = []
+        self.colors: list[str] = []
+        self.fonts: list[str] = []
+        self.social_links: list[str] = []
         self._capture: str | None = None
         self._buffer: list[str] = []
         self._json_ld = False
         self._visible_text: list[str] = []
+        self._element_stack: list[tuple[str, bool]] = []
+        self._brand_region_depth = 0
+        self._hidden_content_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = {key.casefold(): value or "" for key, value in attrs}
         lowered = tag.casefold()
+        region_identity = " ".join(
+            (
+                attributes.get("class", ""),
+                attributes.get("id", ""),
+                attributes.get("role", ""),
+            )
+        ).casefold()
+        starts_brand_region = (
+            lowered in {"header", "footer"}
+            or attributes.get("role", "").casefold() in {"banner", "contentinfo"}
+            or any(
+                hint in region_identity
+                for hint in ("site-header", "page-header", "site-footer", "page-footer")
+            )
+        )
+        if lowered not in self._VOID_TAGS:
+            self._element_stack.append((lowered, starts_brand_region))
+            if starts_brand_region:
+                self._brand_region_depth += 1
+        if lowered in {"script", "style", "noscript", "svg", "template"}:
+            self._hidden_content_depth += 1
+
         if lowered in {"title", "h1"}:
             self._capture = lowered
             self._buffer = []
@@ -110,6 +166,8 @@ class PageExtractor(HTMLParser):
                 self.description = content
             if name == "og:site_name" and content:
                 self.site_name = content
+            if name == "theme-color" and HEX_COLOR_PATTERN.fullmatch(content):
+                self.colors.append(content)
         elif lowered == "a":
             href = attributes.get("href", "").strip()
             if href:
@@ -119,6 +177,37 @@ class PageExtractor(HTMLParser):
                     self.emails.append(href.split(":", 1)[1].split("?", 1)[0])
                 elif scheme == "tel":
                     self.phones.append(href.split(":", 1)[1].split("?", 1)[0])
+                if any(
+                    domain in href.casefold()
+                    for domain in (
+                        "linkedin.com",
+                        "instagram.com",
+                        "facebook.com",
+                        "x.com",
+                        "twitter.com",
+                        "youtube.com",
+                    )
+                ):
+                    self.social_links.append(href)
+        elif lowered == "img":
+            identity = " ".join(
+                (
+                    attributes.get("alt", ""),
+                    attributes.get("aria-label", ""),
+                    attributes.get("class", ""),
+                    attributes.get("id", ""),
+                    attributes.get("src", ""),
+                    attributes.get("data-src", ""),
+                )
+            ).casefold()
+            source = (attributes.get("src") or attributes.get("data-src") or "").strip()
+            if source and self._brand_region_depth > 0 and ("logo" in identity or "brand" in identity):
+                self.logo_candidates.append(source)
+
+        style = attributes.get("style", "")
+        if style:
+            self.colors.extend(HEX_COLOR_PATTERN.findall(style))
+            self.fonts.extend(_font_names(style))
 
     def handle_endtag(self, tag: str) -> None:
         lowered = tag.casefold()
@@ -138,26 +227,43 @@ class PageExtractor(HTMLParser):
             try:
                 payload = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
-                return
-            for item in _json_ld_objects(payload):
-                kind = item.get("@type")
-                kinds = {str(value) for value in kind} if isinstance(kind, list) else {str(kind)}
-                if kinds & {"Organization", "LocalBusiness", "ProfessionalService", "Corporation"}:
-                    if item.get("name"):
-                        self.business_names.append(str(item["name"]))
-                    if item.get("email"):
-                        self.emails.append(str(item["email"]).removeprefix("mailto:"))
-                    if item.get("telephone"):
-                        self.phones.append(str(item["telephone"]))
-                    address = _address_text(item.get("address"))
-                    if address:
-                        self.locations.append(address)
+                payload = None
+            if payload is not None:
+                for item in _json_ld_objects(payload):
+                    kind = item.get("@type")
+                    kinds = {str(value) for value in kind} if isinstance(kind, list) else {str(kind)}
+                    if kinds & {"Organization", "LocalBusiness", "ProfessionalService", "Corporation"}:
+                        if item.get("name"):
+                            self.business_names.append(str(item["name"]))
+                        if item.get("email"):
+                            self.emails.append(str(item["email"]).removeprefix("mailto:"))
+                        if item.get("telephone"):
+                            self.phones.append(str(item["telephone"]))
+                        address = _address_text(item.get("address"))
+                        if address:
+                            self.locations.append(address)
+        if lowered in {"script", "style", "noscript", "svg", "template"}:
+            self._hidden_content_depth = max(0, self._hidden_content_depth - 1)
+        for index in range(len(self._element_stack) - 1, -1, -1):
+            if self._element_stack[index][0] != lowered:
+                continue
+            removed = self._element_stack[index:]
+            del self._element_stack[index:]
+            self._brand_region_depth = max(
+                0,
+                self._brand_region_depth - sum(1 for _, starts_region in removed if starts_region),
+            )
+            break
 
     def handle_data(self, data: str) -> None:
         if self._capture:
             self._buffer.append(data)
-        elif _clean_text(data):
+        elif self._hidden_content_depth == 0 and _clean_text(data):
             self._visible_text.append(data)
+        if self._capture != "json-ld":
+            self.colors.extend(HEX_COLOR_PATTERN.findall(data))
+            self.fonts.extend(_font_names(data))
+            self.fonts.extend(TAILWIND_SANS_PATTERN.findall(data))
 
     def result(self) -> dict[str, object]:
         visible = _clean_text(" ".join(self._visible_text))[:200_000]
@@ -173,7 +279,29 @@ class PageExtractor(HTMLParser):
             "phones": _unique(phones),
             "businessNames": _unique(self.business_names),
             "locations": _unique(self.locations),
+            "visibleText": visible[:12_000],
+            "logoCandidates": _unique(self.logo_candidates, 10),
+            "colors": _unique([value.lower() for value in self.colors], 12),
+            "fonts": _unique(self.fonts, 8),
+            "socialLinks": _unique(self.social_links, 12),
         }
+
+
+def _font_names(value: str) -> list[str]:
+    output: list[str] = []
+    for match in FONT_FAMILY_PATTERN.finditer(value):
+        for raw in match.group(1).split(","):
+            name = raw.strip().strip("'\"")
+            if name and name.casefold() not in {
+                "inherit",
+                "initial",
+                "sans-serif",
+                "serif",
+                "monospace",
+                "system-ui",
+            }:
+                output.append(name[:160])
+    return output
 
 
 def normalize_website_url(value: str) -> str:
@@ -326,6 +454,23 @@ def _contact_urls(page_url: str, links: list[str]) -> list[str]:
     return [url for _rank, url in sorted(ranked)[: MAX_PAGES - 1]]
 
 
+def _brand_urls(page_url: str, links: list[str]) -> list[str]:
+    ranked: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for raw in links:
+        candidate = urljoin(page_url, raw)
+        parsed = urlsplit(candidate)
+        if parsed.scheme not in {"http", "https"} or not _same_site(page_url, candidate):
+            continue
+        clean = urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", parsed.query, ""))
+        lowered = f"{parsed.path} {parsed.query}".casefold()
+        matches = [index for index, hint in enumerate(BRAND_HINTS) if hint in lowered]
+        if clean not in seen and matches:
+            seen.add(clean)
+            ranked.append((min(matches), clean))
+    return [url for _rank, url in sorted(ranked)[: MAX_PAGES - 1]]
+
+
 def _fallback_business_name(page: dict[str, object], hostname: str) -> str:
     for key in ("businessNames", "siteName"):
         value = page.get(key)
@@ -408,3 +553,86 @@ async def _crawl_website(value: str) -> dict[str, object]:
         "robotsRespected": True,
         "userAgent": USER_AGENT,
     }
+
+
+async def crawl_brand_website(value: str) -> dict[str, object]:
+    """Return bounded, public brand evidence without persisting website content."""
+    async with CRAWL_LOCK:
+        start_url = await validate_public_url(value)
+        timeout = httpx.Timeout(15, connect=8)
+        pages: list[dict[str, object]] = []
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            robots, delay = await _robots(client, start_url)
+            queue = [start_url]
+            visited: set[str] = set()
+            while queue and len(pages) < MAX_PAGES:
+                url = queue.pop(0)
+                if url in visited:
+                    continue
+                visited.add(url)
+                if not robots.can_fetch(ROBOTS_USER_AGENT, url):
+                    if not pages:
+                        raise AppError("Website robots.txt does not allow this page to be crawled.", 403)
+                    continue
+                if pages:
+                    await asyncio.sleep(delay)
+                final_url, status, _content_type, content = await _read_response(
+                    client,
+                    url,
+                    accepted_types=("text/html", "application/xhtml+xml"),
+                    max_bytes=MAX_PAGE_BYTES,
+                )
+                if status >= 400:
+                    if not pages:
+                        raise ExternalServiceError(f"Website returned HTTP {status}.")
+                    continue
+                extractor = PageExtractor()
+                extractor.feed(content.decode("utf-8", errors="replace"))
+                result = extractor.result()
+                result["url"] = final_url
+                result["logoCandidates"] = [
+                    urljoin(final_url, str(candidate))
+                    for candidate in result["logoCandidates"]
+                    if urlsplit(urljoin(final_url, str(candidate))).scheme in {"http", "https"}
+                ]
+                pages.append(result)
+                if len(pages) == 1:
+                    queue.extend(_brand_urls(final_url, [str(item) for item in result["links"]]))
+
+        if not pages:
+            raise ExternalServiceError("Website did not return a crawlable HTML page.")
+        canonical_url = str(pages[0]["url"])
+        hostname = urlsplit(canonical_url).hostname or ""
+        return {
+            "businessName": _fallback_business_name(pages[0], hostname),
+            "website": canonical_url,
+            "location": next((str(item) for page in pages for item in page["locations"]), ""),
+            "description": next((str(page["description"]) for page in pages if page.get("description")), ""),
+            "colors": _unique([str(item) for page in pages for item in page["colors"]], 12),
+            "fonts": _unique([str(item) for page in pages for item in page["fonts"]], 8),
+            "logoCandidates": _unique([str(item) for page in pages for item in page["logoCandidates"]], 10),
+            "socialLinks": _unique([str(item) for page in pages for item in page["socialLinks"]], 12),
+            "pages": [
+                {
+                    "url": str(page["url"]),
+                    "title": str(page.get("title") or page.get("h1") or ""),
+                    "description": str(page.get("description") or "")[:1_000],
+                    "text": str(page.get("visibleText") or "")[:6_000],
+                }
+                for page in pages
+            ],
+            "robotsRespected": True,
+            "userAgent": USER_AGENT,
+        }
+
+
+async def download_public_brand_image(value: str) -> CrawlResponse:
+    """Download one explicitly discovered public raster image within the media safety limit."""
+    timeout = httpx.Timeout(15, connect=8)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        return await read_public_page(
+            client,
+            value,
+            accepted_types=("image/jpeg", "image/png", "image/webp"),
+            max_bytes=10 * 1024 * 1024,
+        )

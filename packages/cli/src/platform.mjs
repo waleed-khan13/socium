@@ -22,6 +22,10 @@ export function backendFileName(platform = process.platform) {
   return platform === "win32" ? "socium-api.exe" : "socium-api";
 }
 
+export function nativeHelperFileName(platform = process.platform) {
+  return platform === "win32" ? "socium-windows-helper.exe" : null;
+}
+
 export function supportedReleaseTargets() {
   return [...supportedTargets];
 }

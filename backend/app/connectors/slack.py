@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.config import get_settings
 from app.connectors.base import ConnectorField, ConnectorManifest, ConnectorTestResult
 from app.errors import ExternalServiceError
 from app.services.slack import open_socket_url, slack_request
@@ -15,6 +16,13 @@ class SlackAdapter:
         availability="available",
         capabilities=("approval", "notification"),
         config_fields=(
+            ConnectorField(
+                key="transport",
+                label="Approval transport",
+                required=False,
+                placeholder="broker-relay",
+                help_text="Managed automatically by Socium one-click setup.",
+            ),
             ConnectorField(
                 key="approval_channel_id",
                 label="Approval channel ID",
@@ -34,13 +42,20 @@ class SlackAdapter:
             ConnectorField(
                 key="app_token",
                 label="App-level token",
-                required=True,
+                required=False,
                 placeholder="xapp-…",
                 help_text="Socket Mode app token with connections:write.",
             ),
+            ConnectorField(
+                key="relay_token",
+                label="Managed relay token",
+                required=False,
+                placeholder="Stored by one-click setup",
+                help_text="One-time OAuth relay credential stored only in the local encrypted vault.",
+            ),
         ),
-        allowed_scopes=("chat:write", "connections:write"),
-        required_scopes=("chat:write", "connections:write"),
+        allowed_scopes=("chat:write", "im:write", "connections:write", "files:write"),
+        required_scopes=("chat:write", "files:write"),
         docs_url="https://docs.slack.dev/tools/python-slack-sdk/socket-mode/",
     )
 
@@ -51,15 +66,29 @@ class SlackAdapter:
     ) -> ConnectorTestResult:
         bot_token = secrets.get("bot_token", "")
         app_token = secrets.get("app_token", "")
+        relay_token = secrets.get("relay_token", "")
+        transport = str(config.get("transport") or "socket-mode")
         if not bot_token.startswith("xoxb-"):
             raise ExternalServiceError("Slack bot token must start with xoxb-.")
-        if not app_token.startswith("xapp-"):
+        if transport == "broker-relay":
+            if len(relay_token) < 32:
+                raise ExternalServiceError("Slack one-click relay credential is missing.")
+            if not get_settings().connect_broker_url:
+                raise ExternalServiceError("Socium's one-click connection service is not configured.")
+        elif not app_token.startswith("xapp-"):
             raise ExternalServiceError("Slack app-level token must start with xapp-.")
         if not str(config.get("approval_channel_id") or "").strip():
             raise ExternalServiceError("Slack approval channel ID is required.")
 
-        auth_payload = await slack_request(bot_token, "auth.test", timeout=12)
-        await open_socket_url(app_token)
+        auth_payload = await slack_request(
+            bot_token,
+            "auth.test",
+            timeout=12,
+            broker_url=get_settings().connect_broker_url if transport == "broker-relay" else "",
+            relay_token=relay_token if transport == "broker-relay" else "",
+        )
+        if transport != "broker-relay":
+            await open_socket_url(app_token)
 
         team_id = str(auth_payload.get("team_id") or "")
         return ConnectorTestResult(
@@ -69,6 +98,6 @@ class SlackAdapter:
             details={
                 "team": str(auth_payload.get("team") or ""),
                 "botUserId": str(auth_payload.get("user_id") or ""),
-                "socketMode": "ready",
+                "transport": transport,
             },
         )

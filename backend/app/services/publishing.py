@@ -5,6 +5,7 @@ from typing import Any
 
 from app.connector_store import primary_connector_runtime
 from app.errors import AppError
+from app.media_store import media_asset_delivery
 from app.services.instagram import publish_instagram_image
 from app.services.linkedin import (
     publish_linkedin_member_post,
@@ -54,11 +55,14 @@ def resolve_publish_target(channel: str) -> PublishTarget:
 
 
 async def publish_to_target(target: PublishTarget, post: dict[str, Any]) -> PublishResult:
+    media_asset_id = str(post.get("mediaAssetId") or "")
+    media = media_asset_delivery(media_asset_id) if media_asset_id else None
     if target.channel == "telegram":
         remote_id = await publish_telegram_post(
             str(target.runtime["bot_token"]),
             str(target.runtime["chat_id"]),
             post,
+            str(target.runtime.get("proxy_url") or ""),
         )
         return PublishResult(remote_id=remote_id)
     if target.channel == "blog":
@@ -91,6 +95,7 @@ async def publish_to_target(target: PublishTarget, post: dict[str, Any]) -> Publ
             str(target.runtime["config"].get("api_version") or "202607"),
             str(target.runtime["secrets"].get("access_token") or ""),
             post,
+            media,
         )
         return PublishResult(remote_id=result.remote_id, remote_url=result.remote_url)
     if target.channel == "linkedin-company":
@@ -99,6 +104,7 @@ async def publish_to_target(target: PublishTarget, post: dict[str, Any]) -> Publ
             str(target.runtime["config"].get("api_version") or "202607"),
             str(target.runtime["secrets"].get("access_token") or ""),
             post,
+            media,
         )
         return PublishResult(remote_id=result.remote_id, remote_url=result.remote_url)
     raise AppError(f"{target.channel} publisher is not installed yet.")

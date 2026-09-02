@@ -10,7 +10,7 @@ import * as tar from "tar";
 
 import { INSTALLATION_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION } from "./constants.mjs";
 import { assertSafeHttpUrl, readJsonSource, resolveAssetSource, validateManifest } from "./manifest.mjs";
-import { backendFileName, releaseTarget } from "./platform.mjs";
+import { backendFileName, nativeHelperFileName, releaseTarget } from "./platform.mjs";
 import { assertSafeManagedDirectory, isPathInside, sociumPaths } from "./paths.mjs";
 import { loadInstallation, writeJsonAtomically } from "./state.mjs";
 
@@ -143,7 +143,7 @@ async function validateBundle(runtimePath, version, target) {
   const metadataPath = path.join(runtimePath, "bundle.json");
   const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
   if (
-    ![1, 2].includes(metadata.schemaVersion) ||
+    ![1, 2, 3].includes(metadata.schemaVersion) ||
     metadata.product !== "socium" ||
     metadata.version !== version ||
     metadata.target !== target
@@ -160,6 +160,9 @@ async function validateBundle(runtimePath, version, target) {
       path.join(runtimePath, "controller", "controller.mjs"),
       path.join(runtimePath, "controller", "managed-cli.mjs"),
     );
+  }
+  if (metadata.schemaVersion >= 3 && target.startsWith("win32-")) {
+    required.push(path.join(runtimePath, "native", nativeHelperFileName("win32")));
   }
   for (const filePath of required) {
     if (!(await pathExists(filePath))) throw new Error(`Downloaded bundle is missing ${path.relative(runtimePath, filePath)}.`);

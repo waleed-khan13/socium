@@ -83,6 +83,9 @@ async function proxyRequest(request: Request, context: RouteContext) {
     headers.delete(header);
   }
   headers.set("x-socium-proxy", "nextjs");
+  const routePath = path.join("/");
+  const isAiGeneration = routePath === "posts/generate"
+    || /^posts\/[^/]+\/regenerate$/u.test(routePath);
 
   try {
     const baseUrl = localApiBase(configuredBase);
@@ -90,7 +93,13 @@ async function proxyRequest(request: Request, context: RouteContext) {
       `/api/${path.map(encodeURIComponent).join("/")}${sourceUrl.search}`,
       baseUrl,
     );
-    const isLocalModelPull = path.join("/") === "providers/local/pull";
+    const timeoutMs = routePath === "providers/local/pull"
+      ? 6 * 60 * 60_000
+      : routePath === "storage/pick-directory" || routePath === "settings/brand-profile/discover"
+        ? 10 * 60_000
+        : isAiGeneration
+          ? 200_000
+          : 45_000;
     const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer();
     const upstream = await fetch(targetUrl, {
       method: request.method,
@@ -98,7 +107,7 @@ async function proxyRequest(request: Request, context: RouteContext) {
       body,
       cache: "no-store",
       redirect: "manual",
-      signal: AbortSignal.timeout(isLocalModelPull ? 6 * 60 * 60_000 : 130_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const responseHeaders = new Headers(upstream.headers);
     for (const header of ["content-encoding", "content-length", "transfer-encoding"]) {
@@ -110,13 +119,19 @@ async function proxyRequest(request: Request, context: RouteContext) {
       statusText: upstream.statusText,
       headers: responseHeaders,
     });
-  } catch {
+  } catch (error) {
+    const timedOut = error instanceof Error
+      && ["AbortError", "TimeoutError"].includes(error.name);
     return NextResponse.json(
       {
         ok: false,
-        error: "The local FastAPI service is unavailable. Restart Socium and try again.",
+        error: timedOut
+          ? isAiGeneration
+            ? "The AI model took too long to respond. Try a faster model or retry the draft."
+            : "The local operation took too long. Cancel any open folder window or try the request again."
+          : "The local FastAPI service is unavailable. Restart Socium and try again.",
       },
-      { status: 503 },
+      { status: timedOut ? 504 : 503 },
     );
   }
 }

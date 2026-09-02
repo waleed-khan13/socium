@@ -1,4 +1,4 @@
-import { access, mkdir, writeFile, rm } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 
 import { DEFAULT_API_PORT, DEFAULT_WEB_PORT } from "./constants.mjs";
@@ -33,9 +33,17 @@ export async function diagnose({
 
   if (installation) {
     const layout = runtimeLayout(installation);
+    let bundleSchemaVersion = 1;
+    try {
+      const bundle = JSON.parse(await readFile(path.join(installation.runtimePath, "bundle.json"), "utf8"));
+      if (Number.isInteger(bundle.schemaVersion)) bundleSchemaVersion = bundle.schemaVersion;
+    } catch {
+      // The core runtime checks below still report a damaged or incomplete installation.
+    }
     for (const [name, filePath] of [
       ["FastAPI runtime", layout.apiExecutable],
       ["Next.js runtime", layout.webServer],
+      ...(layout.nativeHelper && bundleSchemaVersion >= 3 ? [["Windows native helper", layout.nativeHelper]] : []),
     ]) {
       try {
         await access(filePath);

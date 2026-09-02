@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+import asyncio
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
 from app import __version__
-from app.approval_actions import regenerate_post_revision
+from app.approval_actions import regenerate_image_revision, regenerate_post_revision
 from app.backup_service import create_backup, list_backups
 from app.config import get_settings
 from app.connector_store import (
+    connector_runtime,
     create_connector,
     delete_connector,
     primary_connector_runtime,
@@ -43,6 +47,8 @@ from app.lifecycle_service import (
     lifecycle_state,
     prepare_update_stream,
     request_controller_action,
+    request_storage_move,
+    runtime_controller_available,
 )
 from app.media_job_store import (
     cancel_media_generation,
@@ -54,12 +60,16 @@ from app.media_store import (
     MAX_MEDIA_BYTES,
     create_generated_media_asset,
     create_media_asset,
+    create_website_media_asset,
     delete_media_asset,
     list_media_assets,
     media_asset_path,
+    purge_previous_brand_media,
     transform_media_asset,
     update_media_asset,
 )
+from app.native_storage import pick_storage_directory, validate_storage_destination
+from app.oauth_broker import callback_html, oauth_broker
 from app.outreach_store import (
     create_outreach_draft,
     decide_outreach_draft,
@@ -71,9 +81,13 @@ from app.outreach_store import (
     outreach_generation_context,
 )
 from app.poller import TelegramPoller
+from app.runtime_signals import register_scheduler_wake
 from app.scheduler import LocalScheduler
 from app.schemas import (
     ApprovalRequest,
+    AutomationRuleUpsert,
+    BrandDiscoveryDraft,
+    BrandDiscoveryRequest,
     BrandProfileUpdate,
     ConnectorAccountUpsert,
     DecisionRequest,
@@ -99,6 +113,7 @@ from app.schemas import (
     OutreachExportRequest,
     OutreachGenerateRequest,
     PollingUpdate,
+    PreviousBrandCleanupRequest,
     ProviderDiscoveryRequest,
     ProviderUpdate,
     PublishRequest,
@@ -107,6 +122,10 @@ from app.schemas import (
     SchedulerUpdate,
     SeoAuditRequest,
     SeoAuditScheduleRequest,
+    StorageDirectoryPickerRequest,
+    StorageMoveRequest,
+    TelegramConnectRequest,
+    TelegramProxyTestRequest,
     TelegramUpdate,
     WebsiteCrawlRequest,
     WorkspaceUpdate,
@@ -122,7 +141,8 @@ from app.seo_store import (
 from app.seo_store import (
     get_seo_audit as load_seo_audit,
 )
-from app.services.crawler import crawl_website
+from app.services.content_package import generate_post_package
+from app.services.crawler import crawl_brand_website, crawl_website, download_public_brand_image
 from app.services.google_places import search_google_places
 from app.services.image_generation import (
     generate_image,
@@ -131,8 +151,8 @@ from app.services.image_generation import (
 )
 from app.services.local_ai import local_ai_status, stream_ollama_pull
 from app.services.provider import (
+    discover_brand_profile,
     discover_provider,
-    generate_content,
     generate_outreach,
     test_provider,
     validate_provider_base_url,
@@ -141,18 +161,28 @@ from app.services.publishing import publish_to_target, resolve_publish_target
 from app.services.seo_audit import audit_website
 from app.services.telegram import (
     delete_webhook,
+    discover_recent_chat,
+    resolve_chat,
     send_approval_request,
     test_connection,
+    test_proxy_connection,
+    validate_proxy_url,
 )
 from app.slack_listener import SlackSocketListener
 from app.storage_health import storage_state
 from app.store import (
     acknowledge_remote_edit,
     cancel_job,
+    complete_telegram_connection,
     create_approval_action,
+    create_automation,
     create_post,
     decide_post,
+    delete_automation,
+    delete_previous_brand_data,
+    duplicate_automation,
     edit_post,
+    ensure_automation_jobs,
     fail_approval_delivery,
     fail_publish,
     fail_publish_uncertain,
@@ -161,6 +191,8 @@ from app.store import (
     initialize_storage,
     onboarding_state,
     post_for_approval,
+    previous_brand_data_summary,
+    primary_image_runtime,
     provider_runtime,
     public_state,
     record_approval_sent,
@@ -168,22 +200,25 @@ from app.store import (
     recover_missed_job,
     reserve_publish,
     retry_job,
+    save_telegram_token,
     schedule_post,
     set_scheduler_paused,
     set_telegram_polling,
     telegram_runtime,
+    update_automation,
     update_brand_profile,
     update_image_provider,
     update_onboarding,
     update_provider,
     update_telegram,
+    update_telegram_proxy,
     update_workspace,
     workspace_runtime,
 )
 
 settings = get_settings()
 telegram_poller = TelegramPoller(settings.telegram_poll_timeout)
-slack_listener = SlackSocketListener(settings.slack_socket_enabled)
+slack_listener = SlackSocketListener(settings.slack_socket_enabled, settings.connect_broker_url)
 local_scheduler = LocalScheduler(
     settings.scheduler_interval,
     settings.scheduler_catch_up_hours,
@@ -191,7 +226,9 @@ local_scheduler = LocalScheduler(
     lease_seconds=settings.scheduler_lease_seconds,
     worker_timeout_seconds=settings.scheduler_worker_timeout_seconds,
     crash_limit=settings.scheduler_crash_limit,
+    approval_wake=lambda: (telegram_poller.wake(), slack_listener.wake()),
 )
+register_scheduler_wake(local_scheduler.wake)
 update_monitor = UpdateMonitor(lambda: not bool(local_scheduler.status().get("workersActive")))
 
 
@@ -201,6 +238,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if settings.migration_check:
         yield
         return
+    ensure_automation_jobs()
     telegram_poller.start()
     slack_listener.start()
     local_scheduler.start()
@@ -245,6 +283,7 @@ def state_response() -> dict[str, Any]:
         "previewModules": ["lead-intelligence", "local-seo"] if settings.labs_enabled else [],
     }
     state["connectors"] = public_connector_state(slack_listener.statuses())
+    state["connectors"]["oneClickConfigured"] = oauth_broker.configured()
     state["leadSummary"] = lead_summary()
     state["icpProfile"] = icp_profile_state()
     state["storage"] = storage_state()
@@ -252,6 +291,140 @@ def state_response() -> dict[str, Any]:
     state["lifecycle"] = lifecycle_state()
     state["backups"] = list_backups()
     return state
+
+
+def _brand_page_text(evidence: dict[str, object]) -> str:
+    pages = evidence.get("pages")
+    if not isinstance(pages, list):
+        return ""
+    sections: list[str] = []
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        for key in ("title", "description", "text"):
+            value = page.get(key)
+            if isinstance(value, str) and value.strip():
+                sections.append(value.strip())
+    return " ".join(sections)[:24_000]
+
+
+def _brand_title_descriptor(evidence: dict[str, object], business_name: str) -> str:
+    pages = evidence.get("pages")
+    if not isinstance(pages, list):
+        return ""
+    ignored = {"home", "official site", "official website", business_name.casefold()}
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        title = str(page.get("title") or "")
+        parts = re.split(r"\s*(?:\||—|–)\s*|\s+-\s+", title)
+        for part in parts:
+            clean = " ".join(part.split()).strip(" .:-")
+            if len(clean) >= 5 and clean.casefold() not in ignored:
+                return clean[:160]
+    return ""
+
+
+def _brand_description(evidence: dict[str, object], business_name: str, descriptor: str) -> str:
+    supplied = str(evidence.get("description") or "").strip()
+    if supplied:
+        return supplied[:2_000]
+    text = _brand_page_text(evidence)
+    if business_name:
+        statement = re.search(
+            rf"\b{re.escape(business_name)}\b\s+"
+            r"(?:is|provides|offers|helps|builds|delivers)\s+[^.!?]{20,700}[.!?]",
+            text,
+            re.IGNORECASE,
+        )
+        if statement:
+            return " ".join(statement.group(0).split())[:2_000]
+    if descriptor:
+        return f"{business_name or 'This business'} provides {descriptor.lower()}."[:2_000]
+    return ""
+
+
+def _brand_industry(evidence_text: str, descriptor: str) -> str:
+    haystack = f"{descriptor} {evidence_text}".casefold()
+    mappings = (
+        (("workforce", "analytics"), "Workforce analytics software"),
+        (("human resources",), "Human resources technology"),
+        (("marketing",), "Marketing and advertising"),
+        (("ecommerce",), "E-commerce"),
+        (("real estate",), "Real estate"),
+        (("healthcare",), "Healthcare"),
+        (("financial",), "Financial services"),
+        (("software",), "Software / SaaS"),
+        (("saas",), "Software / SaaS"),
+        (("restaurant",), "Food and hospitality"),
+        (("education",), "Education"),
+    )
+    for needles, label in mappings:
+        if all(needle in haystack for needle in needles):
+            return label
+    return descriptor[:160]
+
+
+def _brand_target_audience(industry: str, descriptor: str) -> str:
+    identity = f"{industry} {descriptor}".casefold()
+    if "workforce" in identity or "human resources" in identity:
+        return "Enterprise HR, people operations, and workforce leaders."
+    if "marketing" in identity:
+        return "Businesses and marketing teams seeking practical growth support."
+    if "e-commerce" in identity:
+        return "Online retailers and commerce teams."
+    if "software" in identity or "saas" in identity:
+        return "Organizations evaluating software to improve their operations."
+    if descriptor:
+        return f"Organizations looking for {descriptor.lower()}."[:3_000]
+    return "Potential customers researching the business and its services."
+
+
+def _brand_hashtag(business_name: str) -> str:
+    hashtag = re.sub(r"[^A-Za-z0-9_]", "", business_name)
+    return f"#{hashtag[:60]}" if hashtag else ""
+
+
+def _brand_draft_from_website_evidence(evidence: dict[str, object]) -> BrandDiscoveryDraft:
+    colors = [str(item) for item in evidence.get("colors", []) if isinstance(item, str)]
+    fonts = [str(item) for item in evidence.get("fonts", []) if isinstance(item, str)]
+    business_name = str(evidence.get("businessName") or "")[:120]
+    evidence_text = _brand_page_text(evidence)
+    descriptor = _brand_title_descriptor(evidence, business_name)
+    description = _brand_description(evidence, business_name, descriptor)
+    industry = _brand_industry(evidence_text, descriptor)
+    target_audience = _brand_target_audience(industry, descriptor)
+    product_label = descriptor or industry or description
+    products_services = (
+        f"{product_label.rstrip('.')} platform and related services." if product_label else description
+    )[:4_000]
+    hashtag = _brand_hashtag(business_name)
+    visual_style = "Use the website-derived brand palette with clean, professional layouts" + (
+        f" and {fonts[0]} typography." if fonts else "."
+    )
+    return BrandDiscoveryDraft(
+        business_name=business_name,
+        website=str(evidence.get("website") or "")[:2_048],
+        description=description,
+        industry=industry,
+        products_services=products_services,
+        target_audience=target_audience,
+        location=str(evidence.get("location") or "")[:240],
+        goals=[
+            "Build consistent brand awareness",
+            "Educate potential customers",
+            "Generate qualified conversations",
+        ],
+        call_to_action=f"Explore {business_name or 'the business'} and learn more.",
+        content_pillars=[value for value in (industry, descriptor, "Customer education") if value],
+        branded_hashtags=[hashtag] if hashtag else [],
+        primary_color=colors[0] if colors else "#f59e0b",
+        secondary_color=colors[1] if len(colors) > 1 else "#18181b",
+        accent_color=colors[2] if len(colors) > 2 else "#10b981",
+        heading_font=fonts[0] if fonts else "",
+        body_font=fonts[1] if len(fonts) > 1 else (fonts[0] if fonts else ""),
+        visual_style=visual_style[:2_000],
+    )
 
 
 @app.get("/api/health")
@@ -273,6 +446,26 @@ def get_state() -> JSONResponse:
 @app.get("/api/storage")
 def get_storage() -> JSONResponse:
     return JSONResponse(storage_state(refresh=True), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/storage/pick-directory")
+async def pick_storage(payload: StorageDirectoryPickerRequest) -> dict[str, Any]:
+    selected = await asyncio.to_thread(pick_storage_directory, payload.purpose)
+    return {"ok": True, "cancelled": selected is None, "path": selected}
+
+
+@app.post("/api/storage/move")
+def move_storage(payload: StorageMoveRequest) -> dict[str, Any]:
+    data_directory = validate_storage_destination(payload.data_dir, "data")
+    models_directory = validate_storage_destination(payload.models_dir, "models")
+    if (
+        data_directory == models_directory
+        or data_directory in models_directory.parents
+        or models_directory in data_directory.parents
+    ):
+        raise AppError("Data and local AI models must use separate folders.")
+    result = request_storage_move(str(data_directory), str(models_directory))
+    return {"ok": True, **result}
 
 
 @app.get("/api/lifecycle")
@@ -305,7 +498,11 @@ def prepare_update() -> StreamingResponse:
 
 @app.post("/api/lifecycle/{action}")
 def lifecycle_action(action: str) -> dict[str, Any]:
-    if action in {"update", "rollback"} and local_scheduler.status().get("workersActive"):
+    if (
+        action in {"update", "rollback"}
+        and runtime_controller_available()
+        and local_scheduler.status().get("workersActive")
+    ):
         raise AppError(
             "Socium is finishing an active job. Try the update again when the scheduler is idle.",
             status_code=409,
@@ -337,7 +534,7 @@ async def upload_media_asset(file: Annotated[UploadFile, File()]) -> dict[str, A
 
 @app.post("/api/media/generate")
 async def generate_media_asset(payload: ImageGenerateRequest) -> dict[str, Any]:
-    generated = await generate_image(image_provider_runtime(), payload)
+    generated = await generate_image(primary_image_runtime(), payload)
     result = create_generated_media_asset(
         generated.data,
         prompt=payload.prompt,
@@ -359,7 +556,7 @@ def get_media_generation_jobs(limit: int = 30) -> JSONResponse:
 
 @app.post("/api/media/generations")
 def queue_media_generation(payload: ImageGenerateRequest) -> dict[str, Any]:
-    job = schedule_media_generation(payload, image_provider_runtime())
+    job = schedule_media_generation(payload, primary_image_runtime())
     local_scheduler.wake()
     return {"ok": True, "job": job}
 
@@ -617,6 +814,101 @@ def save_brand_profile(payload: BrandProfileUpdate) -> dict[str, Any]:
     return {"ok": True, "state": state_response()}
 
 
+@app.get("/api/settings/brand-profile/history")
+def get_previous_brand_history() -> dict[str, Any]:
+    return {"ok": True, "summary": previous_brand_data_summary()}
+
+
+@app.delete("/api/settings/brand-profile/history")
+def remove_previous_brand_history(payload: PreviousBrandCleanupRequest) -> dict[str, Any]:
+    summary = delete_previous_brand_data(payload.current_business_name)
+    deleted_media = purge_previous_brand_media(summary.pop("_mediaIds", []))
+    public_summary = {key: value for key, value in summary.items() if not key.startswith("_")}
+    public_summary["mediaAssets"] = deleted_media
+    return {"ok": True, "deleted": public_summary, "state": state_response()}
+
+
+@app.post("/api/settings/brand-profile/discover")
+async def discover_brand(payload: BrandDiscoveryRequest) -> JSONResponse:
+    evidence = await crawl_brand_website(payload.url)
+    runtime = provider_runtime()
+    warnings: list[str] = []
+    ai_enhanced = True
+    try:
+        draft = await discover_brand_profile(runtime, evidence)
+    except ExternalServiceError:
+        ai_enhanced = False
+        draft = _brand_draft_from_website_evidence(evidence)
+        warnings.append(
+            "AI enhancement is temporarily unavailable. Socium filled website facts and editable "
+            "fallback suggestions; review the draft or select Analyze & fill again later."
+        )
+    logo_asset: dict[str, Any] | None = None
+    logo_candidates = [str(item) for item in evidence.get("logoCandidates", []) if isinstance(item, str)]
+    for candidate in logo_candidates[:3]:
+        try:
+            downloaded = await download_public_brand_image(candidate)
+            if downloaded.status_code >= 400 or not downloaded.content:
+                continue
+            filename = (urlsplit(downloaded.final_url).path.rsplit("/", 1)[-1] or "website-logo")[:255]
+            logo_asset = create_website_media_asset(downloaded.content, filename, downloaded.final_url)[
+                "asset"
+            ]
+            break
+        except (AppError, ExternalServiceError):
+            continue
+    if logo_candidates and logo_asset is None:
+        warnings.append("A logo was detected but could not be imported as a safe PNG, JPEG, or WebP file.")
+    pages = evidence.get("pages", []) if isinstance(evidence.get("pages"), list) else []
+    website_fields = {
+        "businessName",
+        "website",
+        "description",
+        "location",
+        "primaryColor",
+        "secondaryColor",
+        "accentColor",
+        "headingFont",
+        "bodyFont",
+    }
+    draft_data = draft.model_dump(by_alias=True)
+    origins = {}
+    for key, value in draft_data.items():
+        if key in website_fields and value:
+            origins[key] = "website"
+        elif value:
+            origins[key] = "ai-suggestion" if ai_enhanced else "website-suggestion"
+        else:
+            origins[key] = "not-found"
+    return JSONResponse(
+        {
+            "ok": True,
+            "draft": draft_data,
+            "fieldOrigins": origins,
+            "sources": [
+                {"url": page.get("url", ""), "title": page.get("title", "")}
+                for page in pages
+                if isinstance(page, dict)
+            ],
+            "signals": {
+                "colors": evidence.get("colors", []),
+                "fonts": evidence.get("fonts", []),
+                "logoCandidates": logo_candidates,
+                "socialLinks": evidence.get("socialLinks", []),
+            },
+            "logoAsset": logo_asset,
+            "provider": {
+                "kind": runtime["kind"],
+                "model": runtime["model"],
+                "local": runtime["kind"] == "ollama",
+            },
+            "warnings": warnings,
+            "storagePolicy": "editable-draft",
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.put("/api/settings/provider")
 def save_provider(payload: ProviderUpdate) -> dict[str, Any]:
     try:
@@ -701,8 +993,104 @@ async def telegram_health() -> dict[str, Any]:
     runtime = telegram_runtime()
     if not runtime["bot_token"]:
         raise AppError("Save a Telegram bot token first.")
-    bot = await test_connection(str(runtime["bot_token"]))
+    bot = await test_connection(
+        str(runtime["bot_token"]),
+        str(runtime.get("proxy_url") or ""),
+    )
     return {"ok": True, "message": f"Connected to {bot['name']}.", "bot": bot}
+
+
+@app.post("/api/integrations/telegram/proxy/test")
+async def telegram_proxy_health(payload: TelegramProxyTestRequest) -> dict[str, Any]:
+    runtime = telegram_runtime()
+    proxy_url = payload.proxy_url.strip() or str(runtime.get("proxy_url") or "")
+    if not proxy_url:
+        raise AppError("Enter your HTTP or SOCKS5 proxy URL first.")
+    try:
+        await test_proxy_connection(proxy_url)
+    except ExternalServiceError as error:
+        raise AppError(error.message, 502) from error
+    return {
+        "ok": True,
+        "message": "Proxy reached the Telegram Bot API successfully.",
+    }
+
+
+@app.post("/api/integrations/telegram/connect")
+async def connect_telegram(payload: TelegramConnectRequest) -> dict[str, Any]:
+    runtime = telegram_runtime()
+    token = payload.bot_token.strip() or str(runtime["bot_token"] or "")
+    if not token:
+        raise AppError("Paste the Telegram bot token once to start automatic setup.")
+    try:
+        proxy_url = (
+            ""
+            if payload.clear_proxy
+            else validate_proxy_url(payload.proxy_url)
+            if payload.proxy_url.strip()
+            else str(runtime.get("proxy_url") or "")
+        )
+    except ExternalServiceError as error:
+        raise AppError(error.message) from error
+    bot = await test_connection(token, proxy_url)
+    if payload.bot_token.strip():
+        save_telegram_token(
+            token,
+            proxy_url=proxy_url,
+            clear_proxy=payload.clear_proxy,
+        )
+    elif payload.clear_proxy or payload.proxy_url.strip():
+        update_telegram_proxy(proxy_url, clear=payload.clear_proxy)
+    await delete_webhook(token, proxy_url)
+    bot_name = str(bot["name"])
+    bot_username = bot_name.removeprefix("@")
+    bot_url = f"https://t.me/{bot_username}" if bot_username else "https://t.me/BotFather"
+    if not payload.bot_token.strip() and runtime["chat_id"]:
+        existing_chat = await resolve_chat(token, str(runtime["chat_id"]), proxy_url)
+        complete_telegram_connection(
+            str(existing_chat["chatId"]),
+            int(runtime["last_update_id"]),
+        )
+        await telegram_poller.refresh()
+        return {
+            "ok": True,
+            "connected": True,
+            "message": f"Telegram approvals connected to {existing_chat['chatLabel']}.",
+            "bot": bot,
+            "botUrl": bot_url,
+            "chat": {
+                "label": existing_chat["chatLabel"],
+                "type": existing_chat["chatType"],
+            },
+            "state": state_response(),
+        }
+    discovered = await discover_recent_chat(token, proxy_url)
+    if discovered is None:
+        return {
+            "ok": True,
+            "connected": False,
+            "message": f"{bot_name} is verified. Press Start in Telegram; Socium is waiting.",
+            "bot": bot,
+            "botUrl": bot_url,
+            "state": state_response(),
+        }
+    complete_telegram_connection(
+        str(discovered["chatId"]),
+        int(discovered["updateId"]),
+    )
+    await telegram_poller.refresh()
+    return {
+        "ok": True,
+        "connected": True,
+        "message": f"Telegram approvals connected to {discovered['chatLabel']}.",
+        "bot": bot,
+        "botUrl": bot_url,
+        "chat": {
+            "label": discovered["chatLabel"],
+            "type": discovered["chatType"],
+        },
+        "state": state_response(),
+    }
 
 
 @app.put("/api/integrations/telegram/polling")
@@ -711,8 +1099,9 @@ async def configure_polling(payload: PollingUpdate) -> dict[str, Any]:
     if payload.enabled:
         if not runtime["bot_token"] or not runtime["chat_id"]:
             raise AppError("Save and test Telegram before starting local approvals.")
-        await test_connection(str(runtime["bot_token"]))
-        await delete_webhook(str(runtime["bot_token"]))
+        proxy_url = str(runtime.get("proxy_url") or "")
+        await test_connection(str(runtime["bot_token"]), proxy_url)
+        await delete_webhook(str(runtime["bot_token"]), proxy_url)
     set_telegram_polling(payload.enabled)
     await telegram_poller.refresh()
     return {
@@ -731,10 +1120,11 @@ async def generate_post(payload: GeneratePostRequest) -> dict[str, Any]:
         raise AppError("Connect an AI provider and select a model first.")
     request_data = payload.model_dump()
     workspace = workspace_runtime()
-    generated = await generate_content(provider, request_data, workspace)
+    generated = await generate_post_package(provider, request_data, workspace)
+    request_data["media_asset_id"] = generated.media_asset_id
     post = create_post(
         request=request_data,
-        content=generated.model_dump(),
+        content=generated.content.model_dump(),
         provider=provider,
         brand_profile_version=int(workspace.get("profile_version") or 0),
     )
@@ -753,6 +1143,7 @@ async def generate_post(payload: GeneratePostRequest) -> dict[str, Any]:
                     str(telegram["chat_id"]),
                     post,
                     approval["id"],
+                    str(telegram.get("proxy_url") or ""),
                 )
                 record_approval_sent(approval["id"], message_id)
                 telegram_poller.wake()
@@ -798,6 +1189,7 @@ def update_post(post_id: str, payload: EditPostRequest) -> dict[str, Any]:
 @app.post("/api/posts/{post_id}/decision")
 def post_decision(post_id: str, payload: DecisionRequest) -> dict[str, Any]:
     decide_post(post_id, payload.revision, payload.decision)
+    local_scheduler.wake()
     telegram_poller.wake()
     slack_listener.wake()
     return {"ok": True, "state": state_response()}
@@ -812,6 +1204,19 @@ async def regenerate_post(post_id: str, payload: RevisionRequest) -> dict[str, A
         "ok": True,
         "post": post,
         "message": f"Revision {payload.revision} regenerated as revision {post['revision']}.",
+        "state": state_response(),
+    }
+
+
+@app.post("/api/posts/{post_id}/regenerate-image")
+async def regenerate_post_image(post_id: str, payload: RevisionRequest) -> dict[str, Any]:
+    post = await regenerate_image_revision(post_id, payload.revision)
+    telegram_poller.wake()
+    slack_listener.wake()
+    return {
+        "ok": True,
+        "post": post,
+        "message": f"Image regenerated as revision {post['revision']}.",
         "state": state_response(),
     }
 
@@ -909,9 +1314,65 @@ async def scheduler_update(payload: SchedulerUpdate) -> dict[str, Any]:
     }
 
 
+@app.post("/api/automations")
+async def automation_create(payload: AutomationRuleUpsert) -> dict[str, Any]:
+    automation = create_automation(payload)
+    local_scheduler.wake()
+    return {"ok": True, "automation": automation, "state": state_response()}
+
+
+@app.put("/api/automations/{automation_id}")
+async def automation_update(automation_id: str, payload: AutomationRuleUpsert) -> dict[str, Any]:
+    automation = update_automation(automation_id, payload)
+    local_scheduler.wake()
+    return {"ok": True, "automation": automation, "state": state_response()}
+
+
+@app.post("/api/automations/{automation_id}/duplicate")
+async def automation_duplicate(automation_id: str) -> dict[str, Any]:
+    automation = duplicate_automation(automation_id)
+    local_scheduler.wake()
+    return {"ok": True, "automation": automation, "state": state_response()}
+
+
+@app.delete("/api/automations/{automation_id}")
+async def automation_delete(automation_id: str) -> dict[str, Any]:
+    delete_automation(automation_id)
+    local_scheduler.wake()
+    return {"ok": True, "state": state_response()}
+
+
 @app.get("/api/connectors")
 def get_connectors() -> dict[str, Any]:
-    return public_connector_state(slack_listener.statuses())
+    state = public_connector_state(slack_listener.statuses())
+    state["oneClickConfigured"] = oauth_broker.configured()
+    return state
+
+
+@app.post("/api/connectors/oauth/{provider}/start")
+async def start_oauth_connector(provider: str) -> dict[str, Any]:
+    if provider not in {"slack", "linkedin"}:
+        raise AppError("This connector does not support one-click OAuth.", 404)
+    connection = await oauth_broker.start(provider)  # type: ignore[arg-type]
+    return {"ok": True, "connection": connection}
+
+
+@app.get("/api/connectors/oauth/sessions/{session_id}")
+async def oauth_connector_status(session_id: str) -> dict[str, Any]:
+    return {"ok": True, "connection": await oauth_broker.status(session_id), "state": state_response()}
+
+
+@app.get("/oauth/callback", response_class=HTMLResponse)
+async def oauth_callback(request: Request) -> HTMLResponse:
+    query = request.query_params
+    session = await oauth_broker.complete(
+        str(query.get("provider") or ""),
+        str(query.get("state") or ""),
+        str(query.get("code") or ""),
+        str(query.get("error") or ""),
+    )
+    slack_listener.wake()
+    return HTMLResponse(callback_html(session), headers={"cache-control": "no-store"})
 
 
 @app.post("/api/connectors")
@@ -936,7 +1397,10 @@ async def connector_health(account_id: str) -> dict[str, Any]:
 
 
 @app.delete("/api/connectors/{account_id}")
-def remove_connector(account_id: str) -> dict[str, Any]:
+async def remove_connector(account_id: str) -> dict[str, Any]:
+    runtime = connector_runtime(account_id)
+    if runtime["adapter_id"] == "slack" and runtime["config"].get("transport") == "broker-relay":
+        await oauth_broker.disconnect_slack(str(runtime["secrets"].get("relay_token") or ""))
     delete_connector(account_id)
     slack_listener.wake()
     return {"ok": True, "state": state_response()}

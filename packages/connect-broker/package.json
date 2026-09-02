@@ -1,0 +1,17 @@
+{
+  "name": "@socium/connect-broker",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Short-lived OAuth handoff and Slack interaction relay for Socium.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "node --test",
+    "deploy": "wrangler deploy --secrets-file .production.secrets.json && wrangler d1 migrations apply DB --remote && wrangler deploy --secrets-file .production.secrets.json",
+    "migrate:local": "wrangler d1 migrations apply DB --local",
+    "migrate:remote": "wrangler d1 migrations apply DB --remote"
+  },
+  "devDependencies": {
+    "wrangler": "4.125.0"
+  }
+}

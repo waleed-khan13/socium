@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -22,6 +23,16 @@ OPENAI_SIZES = {
     "square": "1024x1024",
     "portrait": "1024x1536",
     "landscape": "1536x1024",
+}
+GEMINI_ASPECT_RATIOS = {
+    "square": "1:1",
+    "portrait": "4:5",
+    "landscape": "16:9",
+}
+GEMINI_ASPECT_RATIO_ENUMS = {
+    "square": "ASPECT_RATIO_ONE_BY_ONE",
+    "portrait": "ASPECT_RATIO_FOUR_BY_FIVE",
+    "landscape": "ASPECT_RATIO_SIXTEEN_BY_NINE",
 }
 A1111_SIZES = {
     "square": (1024, 1024),
@@ -63,12 +74,36 @@ def validate_image_base_url(value: str) -> str:
 def _headers(api_key: str, provider_kind: str) -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
     if api_key:
-        if provider_kind == "automatic1111" and ":" in api_key:
+        if provider_kind == "gemini-images":
+            headers["x-goog-api-key"] = api_key
+        elif provider_kind == "automatic1111" and ":" in api_key:
             encoded = base64.b64encode(api_key.encode("utf-8")).decode("ascii")
             headers["Authorization"] = f"Basic {encoded}"
         else:
             headers["Authorization"] = f"Bearer {api_key}"
     return headers
+
+
+def _gemini_image_endpoint(base_url: str, model: str) -> str:
+    parsed = urlsplit(validate_base_url(base_url))
+    clean_model = model.removeprefix("models/")
+    return f"{parsed.scheme}://{parsed.netloc}/v1/models/{quote(clean_model, safe='.-_')}:generateContent"
+
+
+def _gemini_image_data(payload: dict[str, Any]) -> bytes:
+    candidates = payload.get("candidates")
+    first = candidates[0] if isinstance(candidates, list) and candidates else {}
+    content = first.get("content") if isinstance(first, dict) else {}
+    parts = content.get("parts") if isinstance(content, dict) else []
+    for part in parts if isinstance(parts, list) else []:
+        if not isinstance(part, dict):
+            continue
+        inline = part.get("inlineData") or part.get("inline_data")
+        if isinstance(inline, dict) and inline.get("data"):
+            return _decode_image(inline["data"])
+    feedback = payload.get("promptFeedback") or payload.get("prompt_feedback")
+    suffix = f" Provider feedback: {str(feedback)[:300]}" if feedback else ""
+    raise ExternalServiceError(f"Gemini did not return generated image data.{suffix}")
 
 
 def _progress(callback: ProgressCallback | None, percent: int, message: str) -> None:
@@ -215,7 +250,21 @@ async def test_image_provider(settings: dict[str, str]) -> ProviderConnectionRes
     started = time.monotonic()
     try:
         headers = _headers(settings["api_key"], settings["kind"])
-        if settings["kind"] == "comfyui":
+        if settings["kind"] == "gemini-images":
+            parsed = urlsplit(validate_image_base_url(settings["base_url"]))
+            version = "v1beta" if "/v1beta" in parsed.path else "v1"
+            payload = await _request_json(
+                f"{parsed.scheme}://{parsed.netloc}/{version}/models",
+                headers=headers,
+            )
+            available = payload.get("models") if isinstance(payload.get("models"), list) else []
+            models = [str(item.get("name") or "").removeprefix("models/") for item in available if isinstance(item, dict)]
+            if settings["model"] not in models:
+                raise ExternalServiceError(
+                    f"The connected Gemini account does not currently expose {settings['model']}."
+                )
+            message = "Gemini image generation is available through the main AI connection."
+        elif settings["kind"] == "comfyui":
             payload = await _request_json(
                 f"{validate_image_base_url(settings['base_url'])}/system_stats",
                 headers=headers,
@@ -266,6 +315,44 @@ async def generate_image(
     headers = _headers(settings["api_key"], settings["kind"])
     if _is_cancelled(cancel_check):
         raise GenerationCancelled
+    if settings["kind"] == "gemini-images":
+        _progress(progress, 15, "Creating the campaign image with the connected Gemini account.")
+        prompt = request.prompt
+        if request.negative_prompt:
+            prompt = f"{prompt}\n\nAvoid: {request.negative_prompt}"
+        payload = await _await_cancellable(
+            _request_json(
+                _gemini_image_endpoint(settings["base_url"], settings["model"]),
+                method="POST",
+                headers=headers,
+                json_body={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "responseModalities": ["IMAGE"],
+                        "responseFormat": {
+                            "image": {
+                                "aspectRatio": GEMINI_ASPECT_RATIO_ENUMS[request.preset],
+                                "imageSize": "IMAGE_SIZE_ONE_K",
+                            }
+                        },
+                    },
+                },
+                timeout=300,
+                max_attempts=1,
+            ),
+            cancel_check,
+        )
+        _progress(progress, 85, "Validating the Gemini image.")
+        return GeneratedImage(
+            data=_gemini_image_data(payload),
+            provider_kind="gemini-images",
+            model=settings["model"],
+            parameters={
+                "preset": request.preset,
+                "aspectRatio": GEMINI_ASPECT_RATIOS[request.preset],
+                "imageSize": "1K",
+            },
+        )
     if settings["kind"] == "comfyui":
         base_url = validate_image_base_url(settings["base_url"])
         workflow = _render_comfy_workflow(settings, request)
@@ -402,6 +489,7 @@ async def generate_image(
                 headers=headers,
                 json_body=body,
                 timeout=300,
+                max_attempts=1,
             ),
             cancel_check,
         )
@@ -435,6 +523,7 @@ async def generate_image(
                 headers=headers,
                 json_body=body,
                 timeout=300,
+                max_attempts=1,
             ),
             cancel_check,
         )

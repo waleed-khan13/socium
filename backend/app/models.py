@@ -42,6 +42,8 @@ class Workspace(Base):
     primary_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#f59e0b")
     secondary_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#18181b")
     accent_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#10b981")
+    heading_font: Mapped[str] = mapped_column(String(160), nullable=False, default="")
+    body_font: Mapped[str] = mapped_column(String(160), nullable=False, default="")
     visual_style: Mapped[str] = mapped_column(Text, nullable=False, default="")
     profile_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     confirmed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -77,6 +79,7 @@ class TelegramSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     chat_id: Mapped[str] = mapped_column(String(160), nullable=False, default="")
     bot_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    proxy_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     polling_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     last_update_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -118,6 +121,9 @@ class Post(Base):
     image_negative_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     image_alt_text: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     brand_profile_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    media_asset_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("media_assets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     media_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     rationale: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="pending", index=True)
@@ -130,6 +136,10 @@ class Post(Base):
     remote_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     remote_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    automation_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("automation_rules.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    automation_publish_at: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
 
 
 class ApprovalAction(Base):
@@ -224,6 +234,30 @@ class LocalJob(Base):
     cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     remote_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     result_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class AutomationRule(Base):
+    __tablename__ = "automation_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    channel: Mapped[str] = mapped_column(String(40), nullable=False)
+    topic: Mapped[str] = mapped_column(Text, nullable=False)
+    tone: Mapped[str] = mapped_column(String(160), nullable=False)
+    objective: Mapped[str] = mapped_column(String(500), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(80), nullable=False)
+    days_of_week: Mapped[list[int]] = mapped_column(JSON, nullable=False, default=list)
+    publish_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    approval_channels: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    generate_ahead_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    publish_after_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    next_run_at: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    next_publish_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    last_run_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
     updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
 

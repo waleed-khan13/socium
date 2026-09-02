@@ -2,14 +2,26 @@ import { spawn } from "node:child_process";
 import { access, cp, mkdir } from "node:fs/promises";
 import path from "node:path";
 
+import { findAvailablePort } from "../packages/cli/src/ports.mjs";
+
 const projectRoot = process.cwd();
 const standaloneRoot = path.join(projectRoot, ".next", "standalone");
 const standaloneNextRoot = path.join(standaloneRoot, ".next");
-const apiPort = process.env.SOCIUM_API_PORT || "8000";
-const webPort = process.env.PORT || "3000";
+const preferredApiPort = Number(process.env.SOCIUM_API_PORT || "8000");
+const preferredWebPort = Number(process.env.PORT || "3000");
+const apiPort = await findAvailablePort(preferredApiPort);
+const webPort = await findAvailablePort(preferredWebPort, { exclude: [apiPort] });
 const dataDirectory = process.env.SOCIUM_DATA_DIR || path.join(projectRoot, "data");
 const children = new Set();
 let stopping = false;
+
+if (apiPort !== preferredApiPort) {
+  console.log(`Internal API port ${preferredApiPort} is busy; Socium selected ${apiPort}.`);
+}
+if (webPort !== preferredWebPort) {
+  console.log(`Web port ${preferredWebPort} is busy; Socium selected ${webPort}.`);
+}
+console.log(`Socium will be available at http://127.0.0.1:${webPort}`);
 
 async function exists(target) {
   try {
@@ -82,10 +94,10 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 
 const api = launch(
   "uv",
-  ["run", "--project", "backend", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", apiPort],
+  ["run", "--project", "backend", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(apiPort)],
   {
     SOCIUM_API_HOST: "127.0.0.1",
-    SOCIUM_API_PORT: apiPort,
+    SOCIUM_API_PORT: String(apiPort),
     SOCIUM_DATA_DIR: dataDirectory,
   },
 );
@@ -99,6 +111,6 @@ try {
 
 launch(process.execPath, [path.join(standaloneRoot, "server.js")], {
   HOSTNAME: "127.0.0.1",
-  PORT: webPort,
+  PORT: String(webPort),
   SOCIUM_API_URL: `http://127.0.0.1:${apiPort}`,
 });

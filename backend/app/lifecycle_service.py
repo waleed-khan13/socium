@@ -242,6 +242,12 @@ def prepare_update_stream():
         yield json.dumps({"status": "error", "error": f"Could not prepare update: {error}"}) + "\n"
 
 
+def runtime_controller_available() -> bool:
+    base_url = os.getenv("SOCIUM_CONTROL_URL", "").strip()
+    token = os.getenv("SOCIUM_CONTROL_TOKEN", "").strip()
+    return bool(base_url and token and base_url.startswith("http://127.0.0.1:"))
+
+
 def request_controller_action(action: str) -> dict[str, Any]:
     if action not in {"stop", "restart", "update", "rollback"}:
         raise AppError("Unsupported runtime action.")
@@ -262,6 +268,36 @@ def request_controller_action(action: str) -> dict[str, Any]:
             return json.loads(response.read().decode("utf-8"))
     except (OSError, urllib.error.URLError, ValueError) as error:
         raise AppError(f"The local runtime controller did not accept the request: {error}", status_code=503) from error
+
+
+def request_storage_move(data_directory: str, models_directory: str) -> dict[str, Any]:
+    base_url = os.getenv("SOCIUM_CONTROL_URL", "").strip()
+    token = os.getenv("SOCIUM_CONTROL_TOKEN", "").strip()
+    if not base_url or not token:
+        raise AppError(
+            "Automatic storage moving is available in the installed Socium app. "
+            "Restart the installed app, then choose the folders again.",
+            status_code=409,
+        )
+    if not base_url.startswith("http://127.0.0.1:"):
+        raise AppError("The local runtime controller address is invalid.", status_code=503)
+    body = json.dumps(
+        {"dataDir": data_directory, "modelsDir": models_directory}
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{base_url}/storage-move",
+        data=body,
+        method="POST",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, ValueError) as error:
+        raise AppError(
+            f"The local runtime controller did not accept the storage move: {error}",
+            status_code=503,
+        ) from error
 
 
 class UpdateMonitor:

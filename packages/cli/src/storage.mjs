@@ -68,7 +68,15 @@ async function directoryManifest(root) {
 
 async function stageDirectory(source, destination) {
   if (path.resolve(source) === path.resolve(destination)) return null;
-  if (await exists(destination)) throw new Error(`Destination already exists. Choose a new empty path: ${destination}`);
+  let removeEmptyDestination = false;
+  if (await exists(destination)) {
+    const destinationStat = await stat(destination);
+    const destinationEntries = destinationStat.isDirectory() ? await readdir(destination) : ["not-a-directory"];
+    if (!destinationStat.isDirectory() || destinationEntries.length > 0) {
+      throw new Error(`Destination must be an empty folder: ${destination}`);
+    }
+    removeEmptyDestination = true;
+  }
   const staging = `${destination}.socium-staging-${process.pid}-${randomBytes(4).toString("hex")}`;
   await mkdir(path.dirname(destination), { recursive: true });
   await cp(source, staging, { recursive: true, force: false, filter: (item) => path.basename(item) !== ".socium-runtime.json" });
@@ -80,7 +88,7 @@ async function stageDirectory(source, destination) {
     await rm(staging, { recursive: true, force: true });
     throw new Error(`Verification failed while copying ${source}. The active location was not changed.`);
   }
-  return { destination, staging };
+  return { destination, staging, removeEmptyDestination };
 }
 
 export async function relocateStorage({ paths = sociumPaths(), dataDirectory, modelsDirectory } = {}) {
@@ -105,7 +113,10 @@ export async function relocateStorage({ paths = sociumPaths(), dataDirectory, mo
     if (dataStage) staged.push(dataStage);
     const modelStage = await stageDirectory(installation.modelsDirectory, nextModels);
     if (modelStage) staged.push(modelStage);
-    for (const item of staged) await rename(item.staging, item.destination);
+    for (const item of staged) {
+      if (item.removeEmptyDestination) await rm(item.destination, { recursive: true, force: false });
+      await rename(item.staging, item.destination);
+    }
     const updated = {
       ...installation,
       schemaVersion: 2,

@@ -56,7 +56,17 @@ def generated_content(monkeypatch):
             rationale="Exercises exact-revision approval behavior.",
         )
 
-    monkeypatch.setattr("app.main.generate_content", fake_generate)
+    async def fake_package(*args, **kwargs):
+        from app.services.content_package import GeneratedPostPackage
+
+        return GeneratedPostPackage(
+            content=await fake_generate(*args, **kwargs),
+            media_asset_id="",
+            image_provider_kind="test-images",
+            image_model="test-image-model",
+        )
+
+    monkeypatch.setattr("app.main.generate_post_package", fake_package)
     monkeypatch.setattr("app.approval_actions.generate_content", fake_generate)
     return fake_generate
 
@@ -119,9 +129,10 @@ def test_telegram_and_slack_render_all_revision_actions(monkeypatch) -> None:
     slack_payload: dict = {}
 
     async def fake_telegram(_token: str, method: str, body: dict, **_kwargs):
-        assert method == "sendMessage"
+        assert method in {"sendMessage", "editMessageText"}
+        telegram_payload.clear()
         telegram_payload.update(body)
-        return {"message_id": 42}
+        return {"message_id": 42} if method == "sendMessage" else {}
 
     async def fake_slack(_token: str, method: str, body: dict, **_kwargs):
         assert method == "chat.postMessage"
@@ -131,7 +142,7 @@ def test_telegram_and_slack_render_all_revision_actions(monkeypatch) -> None:
     monkeypatch.setattr("app.services.telegram.telegram_request", fake_telegram)
     monkeypatch.setattr("app.services.slack.slack_request", fake_slack)
     from app.services.slack import send_approval_message
-    from app.services.telegram import send_approval_request
+    from app.services.telegram import send_approval_request, update_approval_message
 
     post = {
         "id": "post-phase-eight",
@@ -154,22 +165,41 @@ def test_telegram_and_slack_render_all_revision_actions(monkeypatch) -> None:
     ]
     assert [button["text"] for button in telegram_buttons] == [
         "Approve",
-        "Regenerate",
+        "Regenerate post",
+        "Regenerate image",
         "Edit in Socium",
         "Skip",
     ]
     assert all(len(button["callback_data"].encode()) <= 64 for button in telegram_buttons)
     assert [button["callback_data"] for button in telegram_buttons] == [
         f"sa:a:{action_id}",
-        f"sa:r:{action_id}",
+        f"sa:p:{action_id}",
+        f"sa:i:{action_id}",
         f"sa:e:{action_id}",
         f"sa:s:{action_id}",
     ]
 
+    asyncio.run(
+        update_approval_message(
+            "token",
+            "12345",
+            "42",
+            "Approval requested",
+            "Revision 9 approved and locked.",
+        )
+    )
+    assert telegram_payload == {
+        "chat_id": "12345",
+        "message_id": 42,
+        "text": "Approval requested\n\nSOCIUM STATUS: Revision 9 approved and locked.",
+        "reply_markup": {"inline_keyboard": []},
+    }
+
     slack_buttons = slack_payload["blocks"][-1]["elements"]
     assert [button["action_id"] for button in slack_buttons] == [
         "socium_approve",
-        "socium_regenerate",
+        "socium_regenerate_post",
+        "socium_regenerate_image",
         "socium_edit",
         "socium_skip",
     ]
@@ -261,7 +291,11 @@ def test_remote_actions_are_durable_expiring_and_replay_protected(
             "callback_query": {
                 "id": "callback-phase-eight",
                 "data": f"sa:s:{telegram_skip['id']}",
-                "message": {"chat": {"id": 12345}},
+                "message": {
+                    "message_id": 91,
+                    "text": "Approval requested",
+                    "chat": {"id": 12345},
+                },
             },
         }
     )
@@ -269,6 +303,10 @@ def test_remote_actions_are_durable_expiring_and_replay_protected(
         "callbackId": "callback-phase-eight",
         "actionId": telegram_skip["id"],
         "action": "skip",
+        "chatId": "12345",
+        "messageId": "91",
+        "messageText": "Approval requested",
+        "hasPhoto": False,
     }
     skipped = asyncio.run(
         apply_remote_approval_action(parsed["actionId"], parsed["action"], "telegram")  # type: ignore[arg-type]
@@ -297,3 +335,46 @@ def test_remote_actions_are_durable_expiring_and_replay_protected(
     assert recovered is not None
     assert recovered[0] == "failed"
     assert "restarted" in recovered[1]
+
+
+def test_slack_and_telegram_approval_share_one_terminal_decision(
+    client,
+    generated_content,
+) -> None:
+    from app.approval_actions import apply_remote_approval_action
+    from app.config import get_settings
+    from app.store import create_approval_action, record_approval_sent
+
+    _configure_provider(client)
+    post = _generate(client, "One approval across two channels")
+    telegram = create_approval_action(post["id"], post["revision"], "telegram")
+    slack = create_approval_action(post["id"], post["revision"], "slack")
+    record_approval_sent(telegram["id"], "telegram-message")
+    record_approval_sent(slack["id"], "slack-message")
+
+    first = asyncio.run(
+        apply_remote_approval_action(telegram["id"], "approve", "telegram")
+    )
+    second = asyncio.run(apply_remote_approval_action(slack["id"], "approve", "slack"))
+
+    assert first.post["status"] == "approved"
+    assert second.post["status"] == "approved"
+    assert "already approved" in second.message
+    assert "No duplicate publish job" in second.message
+
+    with sqlite3.connect(get_settings().database_path) as connection:
+        decisions = connection.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE entity_id = ? AND action LIKE 'post.approved.%'",
+            (post["id"],),
+        ).fetchone()
+        actions = connection.execute(
+            "SELECT transport, status, selected_action FROM approval_actions "
+            "WHERE post_id = ? ORDER BY transport",
+            (post["id"],),
+        ).fetchall()
+
+    assert decisions == (1,)
+    assert actions == [
+        ("slack", "superseded", "approve"),
+        ("telegram", "consumed", "approve"),
+    ]

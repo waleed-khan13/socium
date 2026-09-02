@@ -95,6 +95,9 @@ def test_v1_1_migrations_preserve_data_and_add_brand_content_fields(tmp_path: Pa
             row[1] for row in connection.execute("PRAGMA table_info(workspace)").fetchall()
         }
         post_columns = {row[1] for row in connection.execute("PRAGMA table_info(posts)").fetchall()}
+        telegram_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(telegram_settings)").fetchall()
+        }
         approval_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(approval_actions)").fetchall()
         }
@@ -116,7 +119,9 @@ def test_v1_1_migrations_preserve_data_and_add_brand_content_fields(tmp_path: Pa
         ).fetchone()
 
     assert accounts == [("keep-slack", "slack", "encrypted-local-secret")]
-    assert revision == ("20260823_0017",)
+    assert revision == ("20260830_0021",)
+    assert "proxy_url" in telegram_columns
+    assert {"heading_font", "body_font"}.issubset(workspace_columns)
     assert {"target_audience", "logo_media_id", "reference_media_ids", "confirmed_at"} <= workspace_columns
     assert {
         "call_to_action",
@@ -124,6 +129,9 @@ def test_v1_1_migrations_preserve_data_and_add_brand_content_fields(tmp_path: Pa
         "image_negative_prompt",
         "image_alt_text",
         "brand_profile_version",
+        "automation_id",
+        "automation_publish_at",
+        "media_asset_id",
     } <= post_columns
     assert {
         "post_id",

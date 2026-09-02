@@ -1,5 +1,6 @@
 # dependencies
 **/node_modules/
+/native/windows-helper/target/
 /.pnp
 .pnp.*
 
@@ -15,6 +16,10 @@
 .env
 .env.local
 .env.*.local
+.dev.vars
+.dev.vars.*
+.production.secrets.json
+**/.wrangler/
 /data/
 /storage/
 

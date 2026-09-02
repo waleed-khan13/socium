@@ -31,6 +31,16 @@ class LinkedInPublishResult:
     remote_url: str | None = None
 
 
+def _is_loopback_hostname(hostname: str) -> bool:
+    normalized = hostname.lower()
+    if normalized == "localhost":
+        return True
+    try:
+        return ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 def validate_linkedin_api_base_url(value: str) -> str:
     parsed = urlsplit(value.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -41,11 +51,7 @@ def validate_linkedin_api_base_url(value: str) -> str:
         raise ExternalServiceError("LinkedIn API base URL must not contain a query or fragment.")
 
     hostname = parsed.hostname.lower()
-    is_loopback = hostname == "localhost"
-    try:
-        is_loopback = is_loopback or ip_address(hostname).is_loopback
-    except ValueError:
-        pass
+    is_loopback = _is_loopback_hostname(hostname)
     if parsed.scheme != "https" and not is_loopback:
         raise ExternalServiceError(
             "Use HTTPS for LinkedIn. HTTP is allowed only for a localhost test service."
@@ -224,30 +230,114 @@ def approved_linkedin_commentary(post: dict[str, Any]) -> str:
     return commentary
 
 
+async def upload_linkedin_image(
+    author: str,
+    api_version: str,
+    access_token: str,
+    media: dict[str, Any],
+) -> str:
+    initialized = await linkedin_api_request(
+        "rest/images?action=initializeUpload",
+        access_token,
+        method="POST",
+        api_version=api_version,
+        json_body={"initializeUploadRequest": {"owner": author}},
+        timeout=30,
+    )
+    value = initialized.payload.get("value")
+    if not isinstance(value, dict):
+        raise ExternalServiceError("LinkedIn did not initialize the image upload.")
+    upload_url = str(value.get("uploadUrl") or "")
+    image_urn = str(value.get("image") or "")
+    parsed = urlsplit(upload_url)
+    hostname = (parsed.hostname or "").lower()
+    api_base = urlsplit(_api_base_url())
+    local_test_upload = (
+        _is_loopback_hostname(api_base.hostname or "")
+        and hostname == (api_base.hostname or "").lower()
+        and parsed.port == api_base.port
+        and parsed.scheme in {"http", "https"}
+    )
+    if (
+        not (
+            parsed.scheme == "https"
+            and (hostname == "linkedin.com" or hostname.endswith(".linkedin.com"))
+        )
+        and not local_test_upload
+    ) or (
+        parsed.username
+        or parsed.password
+        or parsed.fragment
+        or not image_urn.startswith("urn:li:image:")
+    ):
+        raise ExternalServiceError("LinkedIn returned an invalid image upload destination.")
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=False,
+            timeout=httpx.Timeout(60, connect=10),
+        ) as client:
+            response = await client.put(
+                upload_url,
+                content=media["data"],
+                headers={
+                    "Authorization": f"Bearer {access_token.strip()}",
+                    "Content-Type": media["mimeType"],
+                },
+            )
+    except httpx.HTTPError as error:
+        raise ExternalServiceError("Could not upload the approved image to LinkedIn.") from error
+    if not response.is_success:
+        raise ExternalServiceError(f"LinkedIn image upload returned HTTP {response.status_code}.")
+    return image_urn
+
+
+async def _linkedin_post_body(
+    author: str,
+    api_version: str,
+    access_token: str,
+    post: dict[str, Any],
+    media: dict[str, Any] | None,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "author": author,
+        "commentary": approved_linkedin_commentary(post),
+        "visibility": "PUBLIC",
+        "distribution": {
+            "feedDistribution": "MAIN_FEED",
+            "targetEntities": [],
+            "thirdPartyDistributionChannels": [],
+        },
+        "lifecycleState": "PUBLISHED",
+        "isReshareDisabledByAuthor": False,
+    }
+    if media is not None:
+        image_urn = await upload_linkedin_image(
+            author, api_version, access_token, media
+        )
+        body["content"] = {
+            "media": {
+                "id": image_urn,
+                "altText": str(post.get("imageAltText") or media.get("altText") or "")[:4_086],
+            }
+        }
+    return body
+
+
 async def publish_linkedin_member_post(
     person_id: str,
     api_version: str,
     access_token: str,
     post: dict[str, Any],
+    media: dict[str, Any] | None = None,
 ) -> LinkedInPublishResult:
     author = f"urn:li:person:{validate_linkedin_person_id(person_id)}"
+    body = await _linkedin_post_body(author, api_version, access_token, post, media)
     response = await linkedin_api_request(
         "rest/posts",
         access_token,
         method="POST",
         api_version=api_version,
-        json_body={
-            "author": author,
-            "commentary": approved_linkedin_commentary(post),
-            "visibility": "PUBLIC",
-            "distribution": {
-                "feedDistribution": "MAIN_FEED",
-                "targetEntities": [],
-                "thirdPartyDistributionChannels": [],
-            },
-            "lifecycleState": "PUBLISHED",
-            "isReshareDisabledByAuthor": False,
-        },
+        json_body=body,
         timeout=45,
     )
     remote_id = str(
@@ -263,25 +353,16 @@ async def publish_linkedin_organization_post(
     api_version: str,
     access_token: str,
     post: dict[str, Any],
+    media: dict[str, Any] | None = None,
 ) -> LinkedInPublishResult:
     author = f"urn:li:organization:{validate_linkedin_organization_id(organization_id)}"
+    body = await _linkedin_post_body(author, api_version, access_token, post, media)
     response = await linkedin_api_request(
         "rest/posts",
         access_token,
         method="POST",
         api_version=api_version,
-        json_body={
-            "author": author,
-            "commentary": approved_linkedin_commentary(post),
-            "visibility": "PUBLIC",
-            "distribution": {
-                "feedDistribution": "MAIN_FEED",
-                "targetEntities": [],
-                "thirdPartyDistributionChannels": [],
-            },
-            "lifecycleState": "PUBLISHED",
-            "isReshareDisabledByAuthor": False,
-        },
+        json_body=body,
         timeout=45,
     )
     remote_id = str(

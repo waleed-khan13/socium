@@ -135,6 +135,12 @@ jobs:
           pnpm backend:bundle
           pnpm backend:bundle:smoke
 
+      - name: Build the native Windows helper
+        if: startsWith(matrix.target, 'win32-')
+        run: |
+          rustup toolchain install stable --profile minimal
+          pnpm native:build
+
       - name: Build and smoke-test the installed application
         env:
           SOCIUM_RELEASE_TARGET: ${{ matrix.target }}

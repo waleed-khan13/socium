@@ -1,12 +1,24 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 
+import { findAvailablePort } from "../packages/cli/src/ports.mjs";
+
 const projectRoot = process.cwd();
-const apiPort = process.env.SOCIUM_API_PORT || "8000";
-const webPort = process.env.PORT || "3000";
+const preferredApiPort = Number(process.env.SOCIUM_API_PORT || "8000");
+const preferredWebPort = Number(process.env.PORT || "3000");
+const apiPort = await findAvailablePort(preferredApiPort);
+const webPort = await findAvailablePort(preferredWebPort, { exclude: [apiPort] });
 const dataDirectory = process.env.SOCIUM_DATA_DIR || path.join(projectRoot, "data");
 const children = new Set();
 let stopping = false;
+
+if (apiPort !== preferredApiPort) {
+  console.log(`Internal API port ${preferredApiPort} is busy; Socium selected ${apiPort}.`);
+}
+if (webPort !== preferredWebPort) {
+  console.log(`Web port ${preferredWebPort} is busy; Socium selected ${webPort}.`);
+}
+console.log(`Socium will be available at http://127.0.0.1:${webPort}`);
 
 function launch(command, args, extraEnv = {}) {
   const child = spawn(command, args, {
@@ -45,14 +57,11 @@ launch(
     "--host",
     "127.0.0.1",
     "--port",
-    apiPort,
-    "--reload",
-    "--reload-dir",
-    "backend/app",
+    String(apiPort),
   ],
   {
     SOCIUM_API_HOST: "127.0.0.1",
-    SOCIUM_API_PORT: apiPort,
+    SOCIUM_API_PORT: String(apiPort),
     SOCIUM_DATA_DIR: dataDirectory,
   },
 );
@@ -64,7 +73,7 @@ launch(
     "-H",
     "127.0.0.1",
     "-p",
-    webPort,
+    String(webPort),
     "--webpack",
   ],
   {

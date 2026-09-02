@@ -25,6 +25,7 @@ const mockState = {
   instagramStatusChecks: 0,
   instagramPublishes: 0,
   linkedinAuthChecks: 0,
+  linkedinImageUploads: 0,
   linkedinPublishes: 0,
   linkedinOrganizationAuthChecks: 0,
   linkedinOrganizationPublishes: 0,
@@ -311,6 +312,53 @@ const mockServer = createServer(async (request, response) => {
         organization: "urn:li:organization:5515715",
         status: { "com.linkedin.organization.Approved": {} },
       });
+      return;
+    }
+
+    if (
+      request.method === "POST"
+      && url.pathname === "/linkedin/rest/images"
+      && url.searchParams.get("action") === "initializeUpload"
+    ) {
+      const companyUpload = request.headers.authorization === "Bearer e2e-linkedin-company-token";
+      const memberUpload = request.headers.authorization === "Bearer e2e-linkedin-access-token";
+      if (!companyUpload && !memberUpload) {
+        sendJson(response, 401, { status: 401, message: "Invalid OAuth access token." });
+        return;
+      }
+      const body = await readJson(request);
+      const owner = body?.initializeUploadRequest?.owner;
+      if (typeof owner !== "string" || !owner.startsWith("urn:li:")) {
+        sendJson(response, 400, { status: 400, message: "Missing image owner." });
+        return;
+      }
+      const uploadKind = companyUpload ? "company" : "member";
+      sendJson(response, 200, {
+        value: {
+          image: `urn:li:image:e2e-${uploadKind}-image`,
+          uploadUrl: `http://127.0.0.1:${mockPort}/linkedin/upload/${uploadKind}`,
+        },
+      });
+      return;
+    }
+
+    if (request.method === "PUT" && url.pathname.startsWith("/linkedin/upload/")) {
+      const expectedToken = url.pathname.endsWith("/company")
+        ? "Bearer e2e-linkedin-company-token"
+        : "Bearer e2e-linkedin-access-token";
+      if (request.headers.authorization !== expectedToken) {
+        sendJson(response, 401, { status: 401, message: "Invalid image upload token." });
+        return;
+      }
+      let uploadedBytes = 0;
+      for await (const chunk of request) uploadedBytes += chunk.length;
+      if (uploadedBytes === 0) {
+        sendJson(response, 400, { status: 400, message: "Image upload was empty." });
+        return;
+      }
+      mockState.linkedinImageUploads += 1;
+      response.writeHead(201, { "cache-control": "no-store" });
+      response.end();
       return;
     }
 

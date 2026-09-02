@@ -21,7 +21,10 @@ def test_system_profile_recommends_a_bounded_model_for_detected_memory(
 def test_local_status_lists_models_without_auto_selecting_an_unsafe_unknown_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_request(_url: str, **_kwargs):
+    request_options: dict[str, object] = {}
+
+    async def fake_request(_url: str, **kwargs):
+        request_options.update(kwargs)
         return {"models": [{"name": "already-installed:latest"}]}
 
     monkeypatch.setattr(local_ai, "_request_json", fake_request)
@@ -45,6 +48,7 @@ def test_local_status_lists_models_without_auto_selecting_an_unsafe_unknown_mode
     assert status["models"] == ["already-installed:latest"]
     assert status["selectedRecommendation"] == "qwen3.5:4b"
     assert status["recommendedModelInstalled"] is False
+    assert request_options == {"timeout": 2, "max_attempts": 1}
 
 
 def test_model_pull_stream_reports_every_percentage_and_verifies(

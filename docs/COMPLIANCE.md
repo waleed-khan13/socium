@@ -13,6 +13,8 @@ Socium does not scrape LinkedIn pages or automate engagement through browser ses
 
 The lead vault implements the user-owned export path. Each imported record keeps source evidence, deduplicates locally, and remains subject to the global suppression list; it does not fetch or automate LinkedIn pages. The LinkedIn publishers are separate outbound-only integrations: the Member adapter verifies the consenting member through OpenID Connect, while the Company Page adapter additionally verifies LinkedIn's `ORGANIC_SHARE_CREATE` authorization for the configured organization. Both accept operator-supplied OAuth tokens and send only exact approved text revisions through the official Posts API.
 
+For operators who do not connect LinkedIn's API, Socium offers a browser handoff rather than a LinkedIn automation extension. It opens LinkedIn, copies the exact approved caption, and downloads the locally stored approved image. The operator pastes, attaches, reviews, and presses **Post**. Socium does not inspect LinkedIn pages, extract browser cookies, fill LinkedIn's DOM, or click the final publishing control because LinkedIn explicitly prohibits third-party browser extensions and automated website activity.
+
 References:
 
 - https://www.linkedin.com/legal/user-agreement

@@ -7,10 +7,8 @@ import {
   FileImage,
   HardDrive,
   ImageIcon,
-  KeyRound,
   Loader2,
   Pencil,
-  PlugZap,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -26,7 +24,6 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
-import { CredentialHelp } from "@/components/credential-help";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -43,11 +40,9 @@ import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type {
-  ImageProviderKind,
   MediaAsset,
   MediaGenerationJob,
   MediaLibraryResponse,
-  ProviderConnectionResult,
   PublicAppState,
   PublicImageProviderSettings,
 } from "@/lib/app-types";
@@ -101,7 +96,7 @@ async function uploadAsset(file: File) {
   return { asset: payload.asset, deduplicated: Boolean(payload.deduplicated) };
 }
 
-export function MediaLibrary({ imageProvider, initialGenerationBrief, onStateChange, onUseInDraft }: Props) {
+export function MediaLibrary({ imageProvider, initialGenerationBrief, onUseInDraft }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const generationActiveRef = useRef(false);
   const [library, setLibrary] = useState<MediaLibraryResponse | null>(null);
@@ -113,13 +108,6 @@ export function MediaLibrary({ imageProvider, initialGenerationBrief, onStateCha
   const [editAsset, setEditAsset] = useState<MediaAsset | null>(null);
   const [editForm, setEditForm] = useState({ altText: "", publicSourceUrl: "" });
   const [deleteAsset, setDeleteAsset] = useState<MediaAsset | null>(null);
-  const [imageProviderForm, setImageProviderForm] = useState({
-    kind: imageProvider.kind,
-    baseUrl: imageProvider.baseUrl,
-    model: imageProvider.model,
-    apiKey: "",
-    workflowJson: "",
-  });
   const [generateForm, setGenerateForm] = useState({
     prompt: initialGenerationBrief?.prompt ?? "",
     negativePrompt: initialGenerationBrief?.negativePrompt ?? "",
@@ -233,40 +221,6 @@ export function MediaLibrary({ imageProvider, initialGenerationBrief, onStateCha
       });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Image upload failed.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  function changeProviderKind(kind: ImageProviderKind) {
-    setImageProviderForm({
-      kind,
-      baseUrl: kind === "automatic1111" ? "http://127.0.0.1:7860" : kind === "comfyui" ? "http://127.0.0.1:8188" : "https://api.openai.com/v1",
-      model: kind === "openai-images" ? "gpt-image-2" : "",
-      apiKey: "",
-      workflowJson: "",
-    });
-  }
-
-  async function saveImageProvider(verify: boolean) {
-    setBusy(verify ? "image-provider-test" : "image-provider-save");
-    try {
-      const response = await requestJson<{ ok: boolean; state: PublicAppState }>(
-        "/api/settings/image-provider",
-        { method: "PUT", body: JSON.stringify(imageProviderForm) },
-      );
-      onStateChange(response.state);
-      if (verify) {
-        const result = await requestJson<ProviderConnectionResult>("/api/image-providers/test", {
-          method: "POST",
-        });
-        toast.success("Image provider connected", { description: result.message });
-      } else {
-        toast.success("Image provider settings saved");
-      }
-      setImageProviderForm((current) => ({ ...current, apiKey: "", workflowJson: "" }));
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save the image provider.");
     } finally {
       setBusy(null);
     }
@@ -408,7 +362,7 @@ export function MediaLibrary({ imageProvider, initialGenerationBrief, onStateCha
               imageProvider.configured ? "text-emerald-300" : "text-amber-300",
             )} variant="outline">
               <span className={cn("mr-1.5 size-1.5 rounded-full", imageProvider.configured ? "bg-emerald-400" : "bg-amber-400")} />
-              {imageProvider.configured ? "Provider saved" : "Setup required"}
+              {imageProvider.configured ? "Connected AI ready" : "AI image capability required"}
             </Badge>
           </div>
         </CardHeader>
@@ -469,41 +423,19 @@ export function MediaLibrary({ imageProvider, initialGenerationBrief, onStateCha
             </div>
           </form>
 
-          <div className="border-t border-zinc-900 bg-[#030303] p-5 xl:border-t-0 xl:border-l sm:p-6">
-            <div className="mb-4 flex items-center gap-2"><KeyRound className="size-4 text-cyan-300" /><h2 className="text-sm font-semibold text-zinc-200">Image provider</h2></div>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="image-provider-kind">Adapter</Label>
-                <Select onValueChange={(value) => changeProviderKind(value as ImageProviderKind)} value={imageProviderForm.kind}>
-                  <SelectTrigger className="w-full bg-black" id="image-provider-kind"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="comfyui">ComfyUI workflow</SelectItem><SelectItem value="automatic1111">Automatic1111 / Forge</SelectItem><SelectItem value="openai-images">OpenAI-compatible Images API</SelectItem></SelectContent>
-                </Select>
+          <aside className="border-t border-zinc-900 bg-[#030303] p-5 xl:border-t-0 xl:border-l sm:p-6">
+            <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-5">
+              <div className="flex items-center gap-3">
+                <div className="grid size-10 place-items-center rounded-lg border border-cyan-400/20 bg-cyan-500/10 text-cyan-300"><ShieldCheck className="size-5" /></div>
+                <div><h2 className="text-sm font-semibold text-zinc-100">One connected AI</h2><p className="mt-1 text-xs text-zinc-500">No separate image API or adapter is needed.</p></div>
               </div>
-              <div className="space-y-2"><Label htmlFor="image-provider-url">Base URL</Label><Input id="image-provider-url" onChange={(event) => setImageProviderForm((current) => ({ ...current, baseUrl: event.target.value }))} required type="url" value={imageProviderForm.baseUrl} /><p className="text-[10px] text-zinc-600">{imageProviderForm.kind === "automatic1111" ? "Start WebUI with --api. Forge uses the same endpoint." : imageProviderForm.kind === "comfyui" ? "Default local ComfyUI server: http://127.0.0.1:8188" : "Use an API root or a URL ending in /v1."}</p></div>
-              <div className="space-y-2"><Label htmlFor="image-provider-model">Model {imageProviderForm.kind !== "openai-images" ? "(optional label/checkpoint)" : ""}</Label><Input id="image-provider-model" onChange={(event) => setImageProviderForm((current) => ({ ...current, model: event.target.value }))} placeholder={imageProviderForm.kind === "automatic1111" ? "Use active checkpoint" : imageProviderForm.kind === "comfyui" ? "Workflow model" : "gpt-image-2"} required={imageProviderForm.kind === "openai-images"} value={imageProviderForm.model} /></div>
-              {imageProviderForm.kind === "comfyui" ? <div className="space-y-2"><Label htmlFor="comfy-workflow">Workflow (API format JSON)</Label><Textarea className="min-h-32 font-mono text-[11px]" id="comfy-workflow" maxLength={200000} onChange={(event) => setImageProviderForm((current) => ({ ...current, workflowJson: event.target.value }))} placeholder={imageProvider.hasWorkflow ? "Stored workflow — leave blank to keep it" : "Paste ComfyUI's Save (API Format) JSON. Replace values with {{prompt}}, {{negative_prompt}}, {{seed}}, {{width}}, {{height}}, {{steps}}, or {{guidance_scale}}."} value={imageProviderForm.workflowJson} /><p className="text-[10px] leading-4 text-zinc-600">The workflow stays on this computer. Socium injects only declared placeholders and reads the first image output.</p></div> : null}
-              <div className="space-y-2">
-                <Label htmlFor="image-provider-key">API key</Label>
-                <Input autoComplete="off" id="image-provider-key" onChange={(event) => setImageProviderForm((current) => ({ ...current, apiKey: event.target.value }))} placeholder={imageProvider.hasApiKey ? "Stored — blank keeps current key" : "Optional for local; required by most hosted APIs"} type="password" value={imageProviderForm.apiKey} />
-                {imageProviderForm.kind === "openai-images" ? (
-                  <CredentialHelp
-                    description="For this field: create an OpenAI Platform API key and paste it above. A ChatGPT subscription does not include API credits."
-                    primary={{ href: "https://platform.openai.com/api-keys", label: "Get Images API key" }}
-                    secondary={{ href: "https://platform.openai.com/docs/guides/images", label: "Images guide" }}
-                  />
-                ) : (
-                  <CredentialHelp
-                    description={imageProviderForm.kind === "automatic1111" ? "This field is only for optional local --api-auth. Enter username:password; there is no provider token." : "Normal local ComfyUI has no token for this field. Leave it blank unless your own proxy requires one."}
-                    primary={{ href: imageProviderForm.kind === "automatic1111" ? "https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/API" : "https://docs.comfy.org/development/core-concepts/api-server", label: "Local setup guide" }}
-                  />
-                )}
+              <div className="mt-5 space-y-3 rounded-lg border border-zinc-900 bg-black p-4 text-xs">
+                <div className="flex justify-between gap-4"><span className="text-zinc-500">Image engine</span><span className="text-right font-medium text-zinc-200">{imageProvider.model || "Not available"}</span></div>
+                <div className="flex justify-between gap-4"><span className="text-zinc-500">Connection</span><span className={imageProvider.configured ? "text-emerald-300" : "text-amber-300"}>{imageProvider.configured ? "Uses primary AI credentials" : "Choose an image-capable AI in Integrations"}</span></div>
               </div>
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <Button disabled={busy === "image-provider-save" || busy === "image-provider-test"} onClick={() => void saveImageProvider(false)} type="button" variant="outline">{busy === "image-provider-save" ? <Loader2 className="animate-spin" /> : <Check />} Save</Button>
-                <Button disabled={busy === "image-provider-save" || busy === "image-provider-test"} onClick={() => void saveImageProvider(true)} type="button">{busy === "image-provider-test" ? <Loader2 className="animate-spin" /> : <PlugZap />} Save & test</Button>
-              </div>
+              <p className="mt-4 text-xs leading-5 text-zinc-500">For automated posts, Socium creates the caption, hashtags, alt text, and campaign image together, then sends the complete package for approval.</p>
             </div>
-          </div>
+          </aside>
         </CardContent>
       </Card>
 

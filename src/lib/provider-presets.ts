@@ -46,7 +46,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     label: "Google Gemini",
     description: "Uses Gemini's official OpenAI-compatible API.",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    defaultModel: "gemini-3.7-flash",
+    defaultModel: "gemini-3.5-flash-lite",
     apiKeyRequired: true,
     keyPlaceholder: "AIza…",
     credentialUrl: "https://aistudio.google.com/apikey",

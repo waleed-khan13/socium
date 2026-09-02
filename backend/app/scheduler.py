@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
+from app.automation_service import generate_automation_draft
+from app.connectors.service import send_saved_slack_approval
 from app.errors import AppError
 from app.media_job_store import (
     complete_media_generation_job,
@@ -20,12 +23,14 @@ from app.services.publishing import publish_to_target, resolve_publish_target
 from app.services.seo_audit import audit_website
 from app.store import (
     claim_due_job,
+    complete_automation_occurrence,
     complete_job,
+    fail_automation_occurrence,
     fail_job,
     fail_publish_uncertain,
     finish_publish,
-    image_provider_runtime,
     next_job_run_at,
+    primary_image_runtime,
     publish_reservation_active,
     recover_stale_jobs,
     reserve_publish,
@@ -43,6 +48,7 @@ class LocalScheduler:
         lease_seconds: int = 360,
         worker_timeout_seconds: int = 300,
         crash_limit: int = 3,
+        approval_wake: Callable[[], None] | None = None,
     ) -> None:
         self.crash_backoff_base = max(0.05, interval)
         self.catch_up_hours = catch_up_hours
@@ -50,6 +56,7 @@ class LocalScheduler:
         self.lease_seconds = max(30, lease_seconds, worker_timeout_seconds + 30)
         self.worker_timeout_seconds = max(0.01, worker_timeout_seconds)
         self.crash_limit = max(1, crash_limit)
+        self.approval_wake = approval_wake
         self._task: asyncio.Task[None] | None = None
         self._worker_task: asyncio.Task[None] | None = None
         self._wake = asyncio.Event()
@@ -235,6 +242,28 @@ class LocalScheduler:
     async def _execute(self, job: dict[str, Any]) -> None:
         job_id = str(job["id"])
         lease_token = str(job.get("leaseToken") or "") or None
+        if job.get("kind") == "automation.generate":
+            payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+            automation_id = str(payload.get("automation_id") or "")
+            publish_at = str(payload.get("publish_at") or "")
+            try:
+                result = await generate_automation_draft(
+                    automation_id,
+                    publish_at,
+                    send_slack_approval=send_saved_slack_approval,
+                )
+                complete_automation_occurrence(automation_id, publish_at)
+                complete_job(job_id, lease_token)
+                warnings = result.get("warnings") if isinstance(result, dict) else []
+                self._last_error = "; ".join(warnings) if warnings else None
+                if self.approval_wake is not None:
+                    self.approval_wake()
+            except Exception as error:  # noqa: BLE001 - generation is safe before delivery.
+                message = error.message if isinstance(error, AppError) else str(error) or "Automation failed."
+                fail_automation_occurrence(automation_id, message)
+                fail_job(job_id, message, retryable=True, lease_token=lease_token)
+                self._last_error = message
+            return
         if job.get("kind") == "media.generate":
             payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
             request_payload = payload.get("request") if isinstance(payload.get("request"), dict) else {}
@@ -242,10 +271,10 @@ class LocalScheduler:
                 payload.get("provider") if isinstance(payload.get("provider"), dict) else {}
             )
             try:
-                provider = image_provider_runtime()
+                provider = primary_image_runtime()
                 if provider.get("updated_at") != provider_snapshot.get("updated_at"):
                     raise AppError(
-                        "Image provider settings changed after this job was queued; retry to use the new settings."
+                        "Primary AI settings changed after this job was queued; retry to use the new settings."
                     )
                 request = ImageGenerateRequest.model_validate(request_payload)
 

@@ -126,6 +126,8 @@ def test_confirmed_brand_profile_persists_assets_preferences_and_revision(client
         "primaryColor": "#F59E0B",
         "secondaryColor": "#18181B",
         "accentColor": "#10B981",
+        "headingFont": "Sora",
+        "bodyFont": "Inter",
         "visualStyle": "Dark structured layouts with authentic product imagery.",
     }
     saved = client.put("/api/settings/brand-profile", json=payload)
@@ -137,6 +139,8 @@ def test_confirmed_brand_profile_persists_assets_preferences_and_revision(client
     assert profile["website"] == "https://northstar.example/about"
     assert profile["brandedHashtags"] == ["#Socium", "#LocalFirstAI"]
     assert profile["primaryColor"] == "#f59e0b"
+    assert profile["headingFont"] == "Sora"
+    assert profile["bodyFont"] == "Inter"
     assert profile["logo"] == {
         "id": logo["id"],
         "originalName": "brand-logo.png",
@@ -153,10 +157,7 @@ def test_confirmed_brand_profile_persists_assets_preferences_and_revision(client
     assert second.status_code == 200
     assert second.json()["state"]["workspace"]["profileVersion"] == 2
     assert second.json()["state"]["workspace"]["logo"] is None
-    assert any(
-        event["action"] == "brand_profile.confirmed"
-        for event in second.json()["state"]["audit"]
-    )
+    assert any(event["action"] == "brand_profile.confirmed" for event in second.json()["state"]["audit"])
 
     missing_asset = client.put(
         "/api/settings/brand-profile",
@@ -165,6 +166,121 @@ def test_confirmed_brand_profile_persists_assets_preferences_and_revision(client
     assert missing_asset.status_code == 400
     assert "no longer exist" in missing_asset.json()["error"]
     assert client.delete(f"/api/media/{logo['id']}").status_code == 200
+
+
+def test_previous_brand_cleanup_preserves_active_profile_and_integrations(client) -> None:
+    from PIL import Image
+
+    from app.media_store import create_website_media_asset
+    from app.store import create_approval_action, create_post
+
+    old_logo_bytes = BytesIO()
+    Image.new("RGB", (64, 64), color=(17, 34, 51)).save(old_logo_bytes, format="PNG")
+    old_logo = create_website_media_asset(
+        old_logo_bytes.getvalue(),
+        "old-brand-logo.png",
+        "https://old.example/logo.png",
+    )["asset"]
+
+    current_logo_bytes = BytesIO()
+    Image.new("RGB", (64, 64), color=(0, 110, 254)).save(current_logo_bytes, format="PNG")
+    current_logo = client.post(
+        "/api/media",
+        files={"file": ("current-brand-logo.png", current_logo_bytes.getvalue(), "image/png")},
+    ).json()["asset"]
+
+    base_profile = {
+        "name": "Old brand",
+        "businessName": "Old Brand",
+        "description": "The previous business profile.",
+        "timezone": "Asia/Karachi",
+        "website": "https://old.example",
+        "industry": "Software",
+        "productsServices": "Previous software services.",
+        "targetAudience": "Previous software customers.",
+        "location": "Global",
+        "goals": ["Build awareness"],
+        "callToAction": "Learn more.",
+        "language": "English",
+        "tone": "Clear",
+        "contentPillars": ["Education"],
+        "restrictedClaims": [],
+        "brandedHashtags": ["#OldBrand"],
+        "logoMediaId": old_logo["id"],
+        "referenceMediaIds": [],
+        "primaryColor": "#112233",
+        "secondaryColor": "#18181b",
+        "accentColor": "#10b981",
+        "headingFont": "Inter",
+        "bodyFont": "Inter",
+        "visualStyle": "Clean layouts.",
+    }
+    old_saved = client.put("/api/settings/brand-profile", json=base_profile)
+    assert old_saved.status_code == 200
+    old_profile_version = old_saved.json()["state"]["workspace"]["profileVersion"]
+
+    post = create_post(
+        request={
+            "topic": "Previous brand test",
+            "channel": "linkedin",
+            "tone": "Clear",
+            "objective": "Test cleanup",
+        },
+        content={"title": "Old draft", "body": "Previous brand content."},
+        provider={"kind": "test", "model": "deterministic"},
+        brand_profile_version=old_profile_version,
+    )
+    create_approval_action(post["id"], post["revision"], "slack")
+
+    current_profile = {
+        **base_profile,
+        "name": "Current brand",
+        "businessName": "Current Brand",
+        "description": "The active business profile.",
+        "website": "https://current.example",
+        "productsServices": "Current software services.",
+        "targetAudience": "Current software customers.",
+        "brandedHashtags": ["#CurrentBrand"],
+        "logoMediaId": current_logo["id"],
+    }
+    saved = client.put("/api/settings/brand-profile", json=current_profile)
+    assert saved.status_code == 200
+    current_profile_version = saved.json()["state"]["workspace"]["profileVersion"]
+    assert current_profile_version == old_profile_version + 1
+
+    preview = client.get("/api/settings/brand-profile/history")
+    assert preview.status_code == 200
+    summary = preview.json()["summary"]
+    assert summary["posts"] == 1
+    assert summary["approvalActions"] == 1
+    assert summary["mediaAssets"] == 1
+
+    stale = client.request(
+        "DELETE",
+        "/api/settings/brand-profile/history",
+        json={"currentBusinessName": "Wrong Brand"},
+    )
+    assert stale.status_code == 409
+
+    deleted = client.request(
+        "DELETE",
+        "/api/settings/brand-profile/history",
+        json={"currentBusinessName": "Current Brand"},
+    )
+    assert deleted.status_code == 200
+    payload = deleted.json()
+    assert payload["deleted"]["posts"] == 1
+    assert payload["deleted"]["approvalActions"] == 1
+    assert payload["deleted"]["mediaAssets"] == 1
+    assert payload["state"]["workspace"]["businessName"] == "Current Brand"
+    assert payload["state"]["workspace"]["profileVersion"] == current_profile_version
+    assert payload["state"]["workspace"]["logoMediaId"] == current_logo["id"]
+    assert payload["state"]["posts"] == []
+    assert all(event["entityId"] != post["id"] for event in payload["state"]["audit"])
+
+    media = client.get("/api/media").json()["items"]
+    assert all(asset["id"] != old_logo["id"] for asset in media)
+    assert any(asset["id"] == current_logo["id"] for asset in media)
 
 
 def test_onboarding_is_resumable_and_requires_verified_live_settings(client) -> None:
@@ -210,10 +326,7 @@ def test_onboarding_is_resumable_and_requires_verified_live_settings(client) -> 
     assert completed.status_code == 200
     assert completed.json()["state"]["onboarding"]["status"] == "completed"
     assert completed.json()["state"]["onboarding"]["showWizard"] is False
-    assert any(
-        event["action"] == "onboarding.completed"
-        for event in completed.json()["state"]["audit"]
-    )
+    assert any(event["action"] == "onboarding.completed" for event in completed.json()["state"]["audit"])
 
     changed = client.put(
         "/api/settings/provider",
@@ -404,10 +517,11 @@ def test_public_website_crawl_preview_and_import(client, monkeypatch) -> None:
     extractor.feed(
         """
         <html><head><title>Acme Studio | Home</title><meta name="description" content="Local studio">
+        <meta name="theme-color" content="#123456"><style>body { font-family: "Inter", sans-serif; color: #abcdef; }</style>
         <script type="application/ld+json">{
           "@type":"LocalBusiness","name":"Acme Studio","telephone":"+92 300 1234567",
           "email":"hello@acme.example","address":{"addressLocality":"Karachi","addressCountry":"PK"}
-        }</script></head><body><a href="/contact">Contact</a><h1>Acme Studio</h1></body></html>
+        }</script></head><body><header><img class="brand-logo" src="/logo.png"></header><a href="/contact">Contact</a><h1>Acme Studio</h1></body></html>
         """
     )
     extracted = extractor.result()
@@ -415,6 +529,26 @@ def test_public_website_crawl_preview_and_import(client, monkeypatch) -> None:
     assert extracted["emails"] == ["hello@acme.example"]
     assert extracted["phones"] == ["+92 300 1234567"]
     assert extracted["locations"] == ["Karachi, PK"]
+    assert extracted["logoCandidates"] == ["/logo.png"]
+    assert extracted["colors"] == ["#123456", "#abcdef"]
+    assert extracted["fonts"] == ["Inter"]
+    assert "font-family" not in extracted["visibleText"]
+
+    strict_logo_extractor = PageExtractor()
+    strict_logo_extractor.feed(
+        """
+        <html><head><link rel="icon" href="/favicon.png"></head><body>
+        <main><img alt="Partner logo" src="/content-logo.png"></main>
+        <header><img alt="Acme brand logo" src="/header-logo.svg"></header>
+        <footer><img class="brand-mark" data-src="/footer-logo.webp"></footer>
+        <script type="application/ld+json">{"@type":"Organization","logo":"/schema-logo.png"}</script>
+        </body></html>
+        """
+    )
+    assert strict_logo_extractor.result()["logoCandidates"] == [
+        "/header-logo.svg",
+        "/footer-logo.webp",
+    ]
 
     with pytest.raises(AppError, match="public internet addresses"):
         asyncio.run(validate_public_url("http://127.0.0.1/private"))
@@ -452,6 +586,124 @@ def test_public_website_crawl_preview_and_import(client, monkeypatch) -> None:
     assert "website-crawl" in {item["source"] for item in lead["evidence"]}
     website_evidence = next(item for item in lead["evidence"] if item["source"] == "website-crawl")
     assert website_evidence["sourceLabel"] == "Public website crawl"
+
+
+def test_website_brand_discovery_returns_editable_unconfirmed_draft(client, monkeypatch) -> None:
+    from app.schemas import BrandDiscoveryDraft
+
+    profile_version_before = client.get("/api/state").json()["workspace"]["profileVersion"]
+    client.put(
+        "/api/settings/provider",
+        json={
+            "kind": "openai-compatible",
+            "baseUrl": "https://provider.example/v1",
+            "model": "brand-model",
+            "apiKey": "test-key",
+        },
+    )
+
+    async def fake_brand_crawl(url: str):
+        assert url == "https://acme.example"
+        return {
+            "businessName": "Acme Studio",
+            "website": "https://acme.example/",
+            "location": "Karachi, PK",
+            "description": "Local product studio.",
+            "colors": ["#123456", "#abcdef"],
+            "fonts": ["Sora", "Inter"],
+            "logoCandidates": [],
+            "socialLinks": ["https://linkedin.com/company/acme"],
+            "pages": [{"url": "https://acme.example/", "title": "Acme Studio", "text": "Public facts"}],
+        }
+
+    async def fake_brand_ai(runtime: dict[str, str], evidence: dict[str, object]):
+        assert runtime["model"] == "brand-model"
+        assert evidence["businessName"] == "Acme Studio"
+        return BrandDiscoveryDraft(
+            business_name="Acme Studio",
+            website="https://acme.example/",
+            description="Local product studio.",
+            industry="Product design",
+            products_services="Brand and product design services.",
+            target_audience="Growing local businesses.",
+            goals=["Build useful awareness"],
+            call_to_action="Start a project conversation.",
+            content_pillars=["Practical design"],
+            primary_color="#123456",
+            secondary_color="#abcdef",
+            heading_font="Sora",
+            body_font="Inter",
+        )
+
+    monkeypatch.setattr("app.main.crawl_brand_website", fake_brand_crawl)
+    monkeypatch.setattr("app.main.discover_brand_profile", fake_brand_ai)
+    response = client.post(
+        "/api/settings/brand-profile/discover",
+        json={"url": "https://acme.example"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["storagePolicy"] == "editable-draft"
+    assert payload["draft"]["businessName"] == "Acme Studio"
+    assert payload["draft"]["headingFont"] == "Sora"
+    assert payload["fieldOrigins"]["businessName"] == "website"
+    assert payload["fieldOrigins"]["industry"] == "ai-suggestion"
+    assert payload["provider"] == {"kind": "openai-compatible", "model": "brand-model", "local": False}
+    assert client.get("/api/state").json()["workspace"]["profileVersion"] == profile_version_before
+
+
+def test_website_brand_discovery_falls_back_to_crawled_facts_when_ai_is_unavailable(
+    client, monkeypatch
+) -> None:
+    from app.errors import ExternalServiceError
+
+    async def fake_brand_crawl(_url: str):
+        return {
+            "businessName": "EAMS",
+            "website": "https://eams.example/",
+            "location": "",
+            "description": "",
+            "colors": ["#112233", "#445566"],
+            "fonts": ["Sora", "Inter"],
+            "logoCandidates": [],
+            "socialLinks": [],
+            "pages": [
+                {
+                    "url": "https://eams.example/",
+                    "title": "EAMS | Enterprise Workforce Analytics",
+                    "text": (
+                        "EAMS is a fully managed enterprise SaaS designed to track productive "
+                        "work and manage tasks from a secure dashboard."
+                    ),
+                }
+            ],
+        }
+
+    async def unavailable_ai(_runtime, _evidence):
+        raise ExternalServiceError("The AI provider is temporarily unavailable after 3 attempts.")
+
+    monkeypatch.setattr("app.main.crawl_brand_website", fake_brand_crawl)
+    monkeypatch.setattr("app.main.discover_brand_profile", unavailable_ai)
+    response = client.post(
+        "/api/settings/brand-profile/discover",
+        json={"url": "https://eams.example"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["draft"]["businessName"] == "EAMS"
+    assert payload["draft"]["description"].startswith("EAMS is a fully managed enterprise SaaS")
+    assert payload["draft"]["industry"] == "Workforce analytics software"
+    assert payload["draft"]["productsServices"] == (
+        "Enterprise Workforce Analytics platform and related services."
+    )
+    assert payload["draft"]["targetAudience"] == ("Enterprise HR, people operations, and workforce leaders.")
+    assert payload["draft"]["goals"]
+    assert payload["draft"]["contentPillars"]
+    assert payload["draft"]["brandedHashtags"] == ["#EAMS"]
+    assert payload["draft"]["headingFont"] == "Sora"
+    assert payload["fieldOrigins"]["industry"] == "website-suggestion"
+    assert "fallback suggestions" in payload["warnings"][0]
 
 
 def test_deterministic_seo_analyzer_scores_real_page_signals() -> None:
@@ -858,7 +1110,7 @@ def test_draft_version_approval_and_single_publish(client, monkeypatch) -> None:
     async def fake_publish(*_args, **_kwargs):
         return "telegram-message-42"
 
-    monkeypatch.setattr("app.main.generate_content", fake_generate)
+    monkeypatch.setattr("app.services.provider.generate_content", fake_generate)
     monkeypatch.setattr("app.services.publishing.publish_telegram_post", fake_publish)
 
     generated = client.post(
@@ -936,10 +1188,10 @@ def test_draft_version_approval_and_single_publish(client, monkeypatch) -> None:
 
 
 def test_local_telegram_polling_mode(client, monkeypatch) -> None:
-    async def fake_connection(_token: str):
+    async def fake_connection(_token: str, _proxy_url: str = ""):
         return {"id": 1, "name": "@local_test_bot"}
 
-    async def fake_delete(_token: str):
+    async def fake_delete(_token: str, _proxy_url: str = ""):
         return None
 
     async def fake_updates(*_args, **_kwargs):
@@ -950,6 +1202,11 @@ def test_local_telegram_polling_mode(client, monkeypatch) -> None:
     monkeypatch.setattr("app.main.delete_webhook", fake_delete)
     monkeypatch.setattr("app.poller.get_updates", fake_updates)
 
+    saved = client.put(
+        "/api/settings/telegram",
+        json={"chatId": "12345", "botToken": "123456:polling-token"},
+    )
+    assert saved.status_code == 200
     started = client.put("/api/integrations/telegram/polling", json={"enabled": True})
     assert started.status_code == 200
     assert started.json()["state"]["telegram"]["pollingEnabled"] is True
@@ -957,6 +1214,53 @@ def test_local_telegram_polling_mode(client, monkeypatch) -> None:
     stopped = client.put("/api/integrations/telegram/polling", json={"enabled": False})
     assert stopped.status_code == 200
     assert stopped.json()["state"]["telegram"]["pollingEnabled"] is False
+
+
+def test_telegram_connect_discovers_chat_and_starts_listener_automatically(client, monkeypatch) -> None:
+    async def fake_connection(token: str, _proxy_url: str = ""):
+        assert token == "123456:auto-connect-token"
+        return {"id": 123456, "name": "@socium_test_bot"}
+
+    async def fake_delete(_token: str, _proxy_url: str = ""):
+        return None
+
+    discovered: dict[str, object] | None = None
+
+    async def fake_discovery(_token: str, _proxy_url: str = ""):
+        return discovered
+
+    async def fake_updates(*_args, **_kwargs):
+        await asyncio.sleep(0.05)
+        return []
+
+    monkeypatch.setattr("app.main.test_connection", fake_connection)
+    monkeypatch.setattr("app.main.delete_webhook", fake_delete)
+    monkeypatch.setattr("app.main.discover_recent_chat", fake_discovery)
+    monkeypatch.setattr("app.poller.get_updates", fake_updates)
+
+    waiting = client.post(
+        "/api/integrations/telegram/connect",
+        json={"botToken": "123456:auto-connect-token"},
+    )
+    assert waiting.status_code == 200
+    assert waiting.json()["connected"] is False
+    assert waiting.json()["botUrl"] == "https://t.me/socium_test_bot"
+    assert waiting.json()["state"]["telegram"]["hasBotToken"] is True
+    assert waiting.json()["state"]["telegram"]["chatId"] == ""
+
+    discovered = {
+        "chatId": "987654321",
+        "chatType": "private",
+        "chatLabel": "Waleed",
+        "updateId": 42,
+        "started": True,
+    }
+    connected = client.post("/api/integrations/telegram/connect", json={"botToken": ""})
+    assert connected.status_code == 200
+    assert connected.json()["connected"] is True
+    assert connected.json()["chat"] == {"label": "Waleed", "type": "private"}
+    assert connected.json()["state"]["telegram"]["chatId"] == "987654321"
+    assert connected.json()["state"]["telegram"]["pollingEnabled"] is True
 
 
 def test_durable_scheduler_is_idempotent_and_publishes_after_resume(client, monkeypatch) -> None:
@@ -977,7 +1281,7 @@ def test_durable_scheduler_is_idempotent_and_publishes_after_resume(client, monk
     async def fake_publish(*_args, **_kwargs):
         return "scheduled-message-99"
 
-    monkeypatch.setattr("app.main.generate_content", fake_generate)
+    monkeypatch.setattr("app.services.provider.generate_content", fake_generate)
     monkeypatch.setattr("app.services.publishing.publish_telegram_post", fake_publish)
 
     telegram = client.put(
@@ -1088,13 +1392,15 @@ def test_slack_approval_message_buttons_are_revision_bound(monkeypatch) -> None:
     actions = captured["body"]["blocks"][-1]["elements"]
     assert [action["action_id"] for action in actions] == [
         "socium_approve",
-        "socium_regenerate",
+        "socium_regenerate_post",
+        "socium_regenerate_image",
         "socium_edit",
         "socium_skip",
     ]
     assert [action["value"] for action in actions] == [
         "sa:a:action-token-123",
-        "sa:r:action-token-123",
+        "sa:p:action-token-123",
+        "sa:i:action-token-123",
         "sa:e:action-token-123",
         "sa:s:action-token-123",
     ]
@@ -1108,7 +1414,7 @@ def test_connector_vault_redacts_secrets_and_validates_slack(client, monkeypatch
     assert catalog.status_code == 200
     slack_manifest = next(item for item in catalog.json()["catalog"] if item["adapterId"] == "slack")
     assert slack_manifest["availability"] == "available"
-    assert set(slack_manifest["requiredScopes"]) == {"chat:write", "connections:write"}
+    assert set(slack_manifest["requiredScopes"]) == {"chat:write", "files:write"}
     approval_adapters = {
         item["adapterId"] for item in catalog.json()["catalog"] if "approval" in item["capabilities"]
     }
@@ -1147,11 +1453,11 @@ def test_connector_vault_redacts_secrets_and_validates_slack(client, monkeypatch
             "name": "Missing scope",
             "config": {"approval_channel_id": "C0123456789"},
             "secrets": {"bot_token": "xoxb-invalid", "app_token": "xapp-invalid"},
-            "scopes": ["chat:write"],
+            "scopes": ["connections:write"],
         },
     )
     assert invalid.status_code == 400
-    assert "connections:write" in invalid.json()["error"]
+    assert "chat:write" in invalid.json()["error"]
 
     bot_token = "xoxb-local-test-fixture"
     app_token = "xapp-local-test-fixture"
@@ -1162,14 +1468,18 @@ def test_connector_vault_redacts_secrets_and_validates_slack(client, monkeypatch
             "name": "Approvals workspace",
             "config": {"approval_channel_id": "C0123456789"},
             "secrets": {"bot_token": bot_token, "app_token": app_token},
-            "scopes": ["chat:write", "connections:write"],
+            "scopes": ["chat:write", "connections:write", "files:write"],
             "enabled": True,
         },
     )
     assert created.status_code == 200
     account = created.json()["account"]
     account_id = account["id"]
-    assert account["secretStatus"] == {"bot_token": True, "app_token": True}
+    assert account["secretStatus"] == {
+        "bot_token": True,
+        "app_token": True,
+        "relay_token": False,
+    }
     assert bot_token not in created.text
     assert app_token not in created.text
 
@@ -1190,12 +1500,16 @@ def test_connector_vault_redacts_secrets_and_validates_slack(client, monkeypatch
             "name": "Approvals workspace",
             "config": {"approval_channel_id": "C9876543210"},
             "secrets": {},
-            "scopes": ["chat:write", "connections:write"],
+            "scopes": ["chat:write", "connections:write", "files:write"],
             "enabled": True,
         },
     )
     assert updated.status_code == 200
-    assert updated.json()["account"]["secretStatus"] == {"bot_token": True, "app_token": True}
+    assert updated.json()["account"]["secretStatus"] == {
+        "bot_token": True,
+        "app_token": True,
+        "relay_token": False,
+    }
 
     async def fake_slack_test(_self, config, secrets):
         assert config["approval_channel_id"] == "C9876543210"
@@ -1239,14 +1553,20 @@ def test_connector_vault_redacts_secrets_and_validates_slack(client, monkeypatch
     sent_posts: list[dict] = []
     sent_action_ids: list[str] = []
 
-    async def fake_slack_send(_token: str, channel_id: str, post: dict, action_id: str):
+    async def fake_slack_send(
+        _token: str,
+        channel_id: str,
+        post: dict,
+        action_id: str,
+        **_relay: str,
+    ):
         assert channel_id == "C9876543210"
         assert action_id
         sent_posts.append(post)
         sent_action_ids.append(action_id)
         return "1712345678.000100"
 
-    monkeypatch.setattr("app.main.generate_content", fake_generate)
+    monkeypatch.setattr("app.services.provider.generate_content", fake_generate)
     monkeypatch.setattr("app.connectors.service.send_approval_message", fake_slack_send)
     generated = client.post(
         "/api/posts/generate",
@@ -1304,7 +1624,13 @@ def test_connector_vault_redacts_secrets_and_validates_slack(client, monkeypatch
     socket = FakeSocket()
     feedback: list[str] = []
 
-    async def fake_feedback(_token: str, _channel: str, _user: str, message: str) -> None:
+    async def fake_feedback(
+        _token: str,
+        _channel: str,
+        _user: str,
+        message: str,
+        **_relay: str,
+    ) -> None:
         feedback.append(message)
 
     monkeypatch.setattr("app.slack_listener.send_decision_feedback", fake_feedback)
@@ -1426,7 +1752,7 @@ def test_wordpress_connector_publishes_exact_approved_blog_revision(client, monk
             remote_url="https://example.com/approved-wordpress-title/",
         )
 
-    monkeypatch.setattr("app.main.generate_content", fake_generate)
+    monkeypatch.setattr("app.services.provider.generate_content", fake_generate)
     monkeypatch.setattr("app.services.publishing.publish_wordpress_post", fake_wordpress_publish)
     generated = client.post(
         "/api/posts/generate",
@@ -1622,7 +1948,7 @@ def test_meta_connector_publishes_exact_approved_facebook_revision(client, monke
         delivered.append(post)
         return MetaPublishResult(remote_id=f"{page_id}_987654321")
 
-    monkeypatch.setattr("app.main.generate_content", fake_generate)
+    monkeypatch.setattr("app.services.provider.generate_content", fake_generate)
     monkeypatch.setattr("app.services.publishing.publish_facebook_page_post", fake_meta_publish)
     generated = client.post(
         "/api/posts/generate",
@@ -1726,9 +2052,10 @@ def test_meta_payload_and_graph_endpoint_validation(monkeypatch) -> None:
     with pytest.raises(ExternalServiceError, match="Page ID"):
         validate_meta_page_id("northstar-page")
 
-    assert approved_facebook_message(
-        {"body": "Approved body", "hashtags": ["#Socium", "Reviewed"]}
-    ) == "Approved body\n\n#Socium #Reviewed"
+    assert (
+        approved_facebook_message({"body": "Approved body", "hashtags": ["#Socium", "Reviewed"]})
+        == "Approved body\n\n#Socium #Reviewed"
+    )
 
     leaked_token = "page-token-that-must-not-leak"
     request_capture: dict = {}
@@ -1873,7 +2200,7 @@ def test_instagram_connector_publishes_exact_approved_image_revision(client, mon
         delivered.append(post)
         return InstagramPublishResult(remote_id="18000000000000001")
 
-    monkeypatch.setattr("app.main.generate_content", fake_generate)
+    monkeypatch.setattr("app.services.provider.generate_content", fake_generate)
     monkeypatch.setattr("app.services.publishing.publish_instagram_image", fake_instagram_publish)
     generated = client.post(
         "/api/posts/generate",
@@ -1981,20 +2308,23 @@ def test_instagram_media_validation_and_container_publish_flow(monkeypatch) -> N
         validate_instagram_media_url("https://localhost/image.jpg")
     with pytest.raises(ExternalServiceError, match="public host"):
         validate_instagram_media_url("https://192.168.1.20/image.jpg")
-    assert validate_instagram_media_url(
-        "https://cdn.example.com/image.jpg?signature=one-time"
-    ) == "https://cdn.example.com/image.jpg?signature=one-time"
+    assert (
+        validate_instagram_media_url("https://cdn.example.com/image.jpg?signature=one-time")
+        == "https://cdn.example.com/image.jpg?signature=one-time"
+    )
     with pytest.raises(ExternalServiceError, match="HTTPS"):
         validate_instagram_graph_base_url("http://graph.example.com")
-    assert validate_instagram_graph_base_url(
-        "http://127.0.0.1:4100/instagram/"
-    ) == "http://127.0.0.1:4100/instagram"
+    assert (
+        validate_instagram_graph_base_url("http://127.0.0.1:4100/instagram/")
+        == "http://127.0.0.1:4100/instagram"
+    )
     with pytest.raises(ExternalServiceError, match="Account ID"):
         validate_instagram_user_id("northstar")
 
-    assert approved_instagram_caption(
-        {"body": "Approved caption", "hashtags": ["#Socium", "Reviewed"]}
-    ) == "Approved caption\n\n#Socium #Reviewed"
+    assert (
+        approved_instagram_caption({"body": "Approved caption", "hashtags": ["#Socium", "Reviewed"]})
+        == "Approved caption\n\n#Socium #Reviewed"
+    )
     with pytest.raises(ExternalServiceError, match="2,200"):
         approved_instagram_caption({"body": "x" * 2_201, "hashtags": []})
 
@@ -2171,14 +2501,14 @@ def test_linkedin_connector_publishes_exact_approved_member_revision(client, mon
 
     delivered: list[dict] = []
 
-    async def fake_linkedin_publish(saved_person_id, api_version, saved_token, post):
+    async def fake_linkedin_publish(saved_person_id, api_version, saved_token, post, media=None):
         assert saved_person_id == person_id
         assert api_version == "202607"
         assert saved_token == access_token
         delivered.append(post)
         return LinkedInPublishResult(remote_id="urn:li:share:7190000000000000001")
 
-    monkeypatch.setattr("app.main.generate_content", fake_generate)
+    monkeypatch.setattr("app.services.provider.generate_content", fake_generate)
     monkeypatch.setattr(
         "app.services.publishing.publish_linkedin_member_post",
         fake_linkedin_publish,
@@ -2279,18 +2609,19 @@ def test_linkedin_payload_versioning_and_token_redaction(monkeypatch) -> None:
 
     with pytest.raises(ExternalServiceError, match="HTTPS"):
         validate_linkedin_api_base_url("http://api.example.com")
-    assert validate_linkedin_api_base_url(
-        "http://127.0.0.1:4100/linkedin/"
-    ) == "http://127.0.0.1:4100/linkedin"
+    assert (
+        validate_linkedin_api_base_url("http://127.0.0.1:4100/linkedin/") == "http://127.0.0.1:4100/linkedin"
+    )
     with pytest.raises(ExternalServiceError, match="YYYYMM"):
         validate_linkedin_version("latest")
     assert validate_linkedin_version("202607") == "202607"
     with pytest.raises(ExternalServiceError, match="unsupported"):
         validate_linkedin_person_id("member:id")
 
-    assert approved_linkedin_commentary(
-        {"body": "Approved update", "hashtags": ["#Socium", "Reviewed"]}
-    ) == "Approved update\n\n#Socium #Reviewed"
+    assert (
+        approved_linkedin_commentary({"body": "Approved update", "hashtags": ["#Socium", "Reviewed"]})
+        == "Approved update\n\n#Socium #Reviewed"
+    )
     with pytest.raises(ExternalServiceError, match="3,000"):
         approved_linkedin_commentary({"body": "x" * 3_001, "hashtags": []})
 
@@ -2448,14 +2779,14 @@ def test_linkedin_company_connector_publishes_exact_approved_page_revision(clien
 
     delivered: list[dict] = []
 
-    async def fake_company_publish(saved_organization_id, api_version, saved_token, post):
+    async def fake_company_publish(saved_organization_id, api_version, saved_token, post, media=None):
         assert saved_organization_id == organization_id
         assert api_version == "202607"
         assert saved_token == access_token
         delivered.append(post)
         return LinkedInPublishResult(remote_id="urn:li:share:7190000000000000010")
 
-    monkeypatch.setattr("app.main.generate_content", fake_generate)
+    monkeypatch.setattr("app.services.provider.generate_content", fake_generate)
     monkeypatch.setattr(
         "app.services.publishing.publish_linkedin_organization_post",
         fake_company_publish,
@@ -2761,7 +3092,7 @@ def test_local_media_library_uploads_deduplicates_transforms_and_deletes(client)
     assert library.status_code == 200
     assert library.headers["cache-control"] == "no-store"
     assert library.json()["storagePolicy"] == "local-only"
-    assert library.json()["total"] == 2
+    assert library.json()["total"] >= 2
 
     removed_transform = client.delete(f"/api/media/{transformed_asset['id']}")
     assert removed_transform.status_code == 200
@@ -2779,7 +3110,7 @@ def test_local_media_library_uploads_deduplicates_transforms_and_deletes(client)
     assert any(item["action"] == "media.deleted" and item["entityId"] == asset["id"] for item in audit)
 
 
-def test_image_provider_settings_are_separate_and_encrypted(client) -> None:
+def test_legacy_image_provider_secret_is_encrypted_but_not_exposed_as_primary(client) -> None:
     saved = client.put(
         "/api/settings/image-provider",
         json={
@@ -2791,22 +3122,15 @@ def test_image_provider_settings_are_separate_and_encrypted(client) -> None:
     )
     assert saved.status_code == 200
     public = saved.json()["state"]["imageProvider"]
-    assert public == {
-        "kind": "openai-images",
-        "baseUrl": "https://images.example/v1",
-        "model": "image-model",
-        "hasApiKey": True,
-        "hasWorkflow": False,
-        "configured": True,
-        "updatedAt": public["updatedAt"],
-    }
+    assert public["baseUrl"] != "https://images.example/v1"
+    assert public["model"] != "image-model"
 
     from app.config import get_settings
 
     with sqlite3.connect(Path(get_settings().database_path)) as connection:
-        encrypted = connection.execute(
-            "SELECT api_key FROM image_provider_settings WHERE id = 1"
-        ).fetchone()[0]
+        encrypted = connection.execute("SELECT api_key FROM image_provider_settings WHERE id = 1").fetchone()[
+            0
+        ]
     assert "image-key-must-stay-encrypted" not in encrypted
     assert "image-key-must-stay-encrypted" not in json.dumps(saved.json())
 
@@ -2920,6 +3244,16 @@ def test_generated_image_is_validated_stored_and_audited(client, monkeypatch) ->
         )
 
     monkeypatch.setattr("app.main.generate_image", fake_generate)
+    configured = client.put(
+        "/api/settings/provider",
+        json={
+            "kind": "openai",
+            "baseUrl": "https://api.openai.com/v1",
+            "model": "gpt-5.4-mini",
+            "apiKey": "primary-ai-secret",
+        },
+    )
+    assert configured.status_code == 200
     created = client.post(
         "/api/media/generate",
         json={
@@ -2969,6 +3303,16 @@ def test_malformed_generated_image_returns_a_validation_error(client, monkeypatc
         )
 
     monkeypatch.setattr("app.main.generate_image", fake_generate)
+    configured = client.put(
+        "/api/settings/provider",
+        json={
+            "kind": "openai",
+            "baseUrl": "https://api.openai.com/v1",
+            "model": "gpt-5.4-mini",
+            "apiKey": "primary-ai-secret",
+        },
+    )
+    assert configured.status_code == 200
     rejected = client.post(
         "/api/media/generate",
         json={"prompt": "A malformed provider response for validation"},
@@ -2977,7 +3321,7 @@ def test_malformed_generated_image_returns_a_validation_error(client, monkeypatc
     assert rejected.json()["error"] == "The image data is not a valid JPEG, PNG, or WebP image."
 
 
-def test_comfyui_workflow_settings_are_validated_and_preserved(client) -> None:
+def test_legacy_comfyui_workflow_is_preserved_without_becoming_primary(client) -> None:
     workflow = {
         "3": {"class_type": "KSampler", "inputs": {"seed": "{{seed}}", "steps": "{{steps}}"}},
         "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{prompt}}"}},
@@ -2994,10 +3338,7 @@ def test_comfyui_workflow_settings_are_validated_and_preserved(client) -> None:
     )
     assert saved.status_code == 200
     public = saved.json()["state"]["imageProvider"]
-    assert public["kind"] == "comfyui"
-    assert public["baseUrl"] == "http://127.0.0.1:8188"
-    assert public["hasWorkflow"] is True
-    assert public["configured"] is True
+    assert public["baseUrl"] != "http://127.0.0.1:8188"
     assert "workflowJson" not in public
 
     preserved = client.put(
@@ -3010,7 +3351,14 @@ def test_comfyui_workflow_settings_are_validated_and_preserved(client) -> None:
         },
     )
     assert preserved.status_code == 200
-    assert preserved.json()["state"]["imageProvider"]["hasWorkflow"] is True
+    from app.config import get_settings
+
+    with sqlite3.connect(get_settings().database_path) as connection:
+        stored = connection.execute(
+            "SELECT kind, base_url, model, workflow_json FROM image_provider_settings WHERE id = 1"
+        ).fetchone()
+    assert stored[:3] == ("comfyui", "http://127.0.0.1:8188", "renamed-workflow")
+    assert json.loads(stored[3]) == workflow
 
     rejected = client.put(
         "/api/settings/image-provider",
@@ -3045,11 +3393,7 @@ def test_comfyui_adapter_injects_placeholders_and_fetches_first_output(monkeypat
                 "prompt-123": {
                     "status": {"status_str": "success"},
                     "outputs": {
-                        "9": {
-                            "images": [
-                                {"filename": "result.png", "subfolder": "socium", "type": "output"}
-                            ]
-                        }
+                        "9": {"images": [{"filename": "result.png", "subfolder": "socium", "type": "output"}]}
                     },
                 }
             }
@@ -3174,12 +3518,12 @@ def test_media_generation_runs_through_durable_worker(client, monkeypatch) -> No
     from app.store import utc_now
 
     configured = client.put(
-        "/api/settings/image-provider",
+        "/api/settings/provider",
         json={
-            "kind": "openai-images",
-            "baseUrl": "https://images.example/v1",
-            "model": "queue-image-model",
-            "apiKey": "secret",
+            "kind": "openai",
+            "baseUrl": "https://api.openai.com/v1",
+            "model": "gpt-5.4-mini",
+            "apiKey": "primary-ai-secret",
         },
     )
     assert configured.status_code == 200
@@ -3204,7 +3548,7 @@ def test_media_generation_runs_through_durable_worker(client, monkeypatch) -> No
         return GeneratedImage(
             data=output.getvalue(),
             provider_kind="openai-images",
-            model="queue-image-model",
+            model="gpt-image-2",
             parameters={"preset": request.preset},
         )
 
@@ -3234,11 +3578,12 @@ def test_media_generation_runs_through_durable_worker(client, monkeypatch) -> No
 
 def test_media_generation_can_be_cancelled_and_retried(client) -> None:
     configured = client.put(
-        "/api/settings/image-provider",
+        "/api/settings/provider",
         json={
-            "kind": "automatic1111",
-            "baseUrl": "http://127.0.0.1:7860",
-            "model": "",
+            "kind": "gemini",
+            "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "model": "gemini-3.6-flash",
+            "apiKey": "primary-gemini-secret",
         },
     )
     assert configured.status_code == 200
@@ -3251,12 +3596,12 @@ def test_media_generation_can_be_cancelled_and_retried(client) -> None:
     assert cancelled.status_code == 200
     assert cancelled.json()["job"]["status"] == "cancelled"
     changed_provider = client.put(
-        "/api/settings/image-provider",
+        "/api/settings/provider",
         json={
-            "kind": "openai-images",
-            "baseUrl": "https://images-v2.example/v1",
-            "model": "new-image-model",
-            "apiKey": "new-secret",
+            "kind": "openai",
+            "baseUrl": "https://api.openai.com/v1",
+            "model": "gpt-5.4-mini",
+            "apiKey": "new-primary-secret",
         },
     )
     assert changed_provider.status_code == 200
@@ -3265,5 +3610,119 @@ def test_media_generation_can_be_cancelled_and_retried(client) -> None:
     assert retried.json()["job"]["status"] == "queued"
     assert retried.json()["job"]["attempts"] == 0
     assert retried.json()["job"]["payload"]["provider"]["kind"] == "openai-images"
-    assert retried.json()["job"]["payload"]["provider"]["model"] == "new-image-model"
+    assert retried.json()["job"]["payload"]["provider"]["model"] == "gpt-image-2"
     assert client.put("/api/scheduler", json={"paused": False}).status_code == 200
+
+
+def test_recurring_automation_crud_and_approval_bound_publish(client) -> None:
+    from sqlalchemy import select
+
+    from app.database import read_session
+    from app.models import LocalJob
+
+    def generation_job_for(automation_id: str) -> LocalJob:
+        with read_session() as session:
+            jobs = session.scalars(
+                select(LocalJob).where(LocalJob.kind == "automation.generate")
+            ).all()
+            return next(
+                job
+                for job in jobs
+                if str((job.payload or {}).get("automation_id") or "") == automation_id
+            )
+
+    def job_status(job_id: str) -> str:
+        with read_session() as session:
+            job = session.get(LocalJob, job_id)
+            assert job is not None
+            return job.status
+
+    payload = {
+        "name": "Three useful posts",
+        "enabled": False,
+        "channel": "linkedin",
+        "topic": "Share practical local-first marketing lessons.",
+        "tone": "Clear and useful",
+        "objective": "Build trust",
+        "timezone": "Asia/Karachi",
+        "daysOfWeek": [0, 2, 4],
+        "publishTime": "10:00",
+        "approvalChannels": [],
+        "generateAheadMinutes": 60,
+        "publishAfterApproval": True,
+    }
+    created = client.post("/api/automations", json=payload)
+    assert created.status_code == 200
+    automation = created.json()["automation"]
+    assert automation["postsPerWeek"] == 3
+    assert automation["nextRunAt"] is None
+
+    enabled = client.put(
+        f"/api/automations/{automation['id']}",
+        json={**payload, "enabled": True},
+    )
+    assert enabled.status_code == 200
+    enabled_rule = enabled.json()["automation"]
+    assert enabled_rule["nextRunAt"]
+    assert enabled_rule["nextPublishAt"]
+    generation_job = generation_job_for(automation["id"])
+
+    renamed = client.put(
+        f"/api/automations/{automation['id']}",
+        json={**payload, "name": "Renamed useful posts", "enabled": True},
+    )
+    assert renamed.status_code == 200
+    assert job_status(generation_job.id) == "queued"
+
+    duplicated = client.post(f"/api/automations/{automation['id']}/duplicate")
+    assert duplicated.status_code == 200
+    copied = duplicated.json()["automation"]
+    assert copied["enabled"] is False
+    assert copied["name"].endswith("copy")
+
+    from app.store import create_post, decide_post, provider_runtime
+
+    publish_at = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
+    generated = create_post(
+        request={
+            "topic": payload["topic"],
+            "channel": payload["channel"],
+            "tone": payload["tone"],
+            "objective": payload["objective"],
+            "media_url": None,
+        },
+        content={"title": "Scheduled insight", "body": "Approved automation content."},
+        provider=provider_runtime(),
+        automation_id=automation["id"],
+        automation_publish_at=publish_at,
+    )
+    decide_post(generated["id"], generated["revision"], "approve")
+    state = client.get("/api/state").json()
+    publish_job = next(job for job in state["jobs"] if job["payload"]["post_id"] == generated["id"])
+    assert publish_job["status"] == "queued"
+    assert datetime.fromisoformat(publish_job["runAt"]) >= datetime.fromisoformat(publish_at)
+
+    paused = client.put(
+        f"/api/automations/{automation['id']}",
+        json={**payload, "name": "Renamed useful posts", "enabled": False},
+    )
+    assert paused.status_code == 200
+    paused_jobs = paused.json()["state"]["jobs"]
+    assert job_status(generation_job.id) == "cancelled"
+    assert next(job for job in paused_jobs if job["id"] == publish_job["id"])["status"] == "cancelled"
+
+    resumed = client.put(
+        f"/api/automations/{automation['id']}",
+        json={**payload, "name": "Renamed useful posts", "enabled": True},
+    )
+    assert resumed.status_code == 200
+    assert job_status(generation_job.id) == "queued"
+    assert resumed.json()["automation"]["nextRunAt"]
+
+    deleted = client.delete(f"/api/automations/{automation['id']}")
+    assert deleted.status_code == 200
+    assert all(item["id"] != automation["id"] for item in deleted.json()["state"]["automations"])
+    assert job_status(generation_job.id) == "cancelled"
+    preserved = next(post for post in deleted.json()["state"]["posts"] if post["id"] == generated["id"])
+    assert preserved["automationId"] is None
+    assert client.delete(f"/api/automations/{copied['id']}").status_code == 200

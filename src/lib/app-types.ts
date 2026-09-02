@@ -7,7 +7,7 @@ export type ProviderKind =
   | "openrouter"
   | "nvidia"
   | "openai-compatible";
-export type ImageProviderKind = "openai-images" | "automatic1111" | "comfyui";
+export type ImageProviderKind = "openai-images" | "gemini-images" | "automatic1111" | "comfyui";
 export type ContentChannel = "linkedin" | "linkedin-company" | "instagram" | "facebook" | "x" | "telegram" | "blog";
 export type PostStatus = "pending" | "approved" | "skipped" | "rejected" | "publishing" | "published" | "failed";
 export type LocalJobStatus = "queued" | "retrying" | "running" | "completed" | "failed" | "cancelled" | "missed" | "skipped";
@@ -52,12 +52,51 @@ export interface WorkspaceSettings {
   primaryColor: string;
   secondaryColor: string;
   accentColor: string;
+  headingFont: string;
+  bodyFont: string;
   visualStyle: string;
   profileVersion: number;
   confirmedAt: string | null;
   updatedAt: string | null;
   profileComplete: boolean;
   missingFields: string[];
+}
+
+export interface BrandDiscoveryDraft {
+  businessName: string;
+  website: string;
+  description: string;
+  industry: string;
+  productsServices: string;
+  targetAudience: string;
+  location: string;
+  goals: string[];
+  callToAction: string;
+  language: string;
+  tone: string;
+  contentPillars: string[];
+  brandedHashtags: string[];
+  primaryColor: string;
+  secondaryColor: string;
+  accentColor: string;
+  headingFont: string;
+  bodyFont: string;
+  visualStyle: string;
+}
+
+export interface BrandDiscoveryResponse {
+  ok: boolean;
+  draft: BrandDiscoveryDraft;
+  fieldOrigins: Record<
+    keyof BrandDiscoveryDraft,
+    "website" | "website-suggestion" | "ai-suggestion" | "not-found"
+  >;
+  sources: { url: string; title: string }[];
+  signals: { colors: string[]; fonts: string[]; logoCandidates: string[]; socialLinks: string[] };
+  logoAsset: MediaAsset | null;
+  provider: { kind: ProviderKind; model: string; local: boolean };
+  warnings: string[];
+  storagePolicy: "editable-draft";
 }
 
 export interface PublicProviderSettings {
@@ -67,6 +106,11 @@ export interface PublicProviderSettings {
   hasApiKey: boolean;
   configured: boolean;
   verified: boolean;
+  capabilities: {
+    text: boolean;
+    image: boolean;
+    imageModel: string | null;
+  };
   updatedAt: string | null;
 }
 
@@ -103,6 +147,7 @@ export interface PublicImageProviderSettings {
 export interface PublicTelegramSettings {
   chatId: string;
   hasBotToken: boolean;
+  hasProxy: boolean;
   configured: boolean;
   pollingEnabled: boolean;
   pollingActive: boolean;
@@ -126,6 +171,8 @@ export interface GeneratedPost {
   imageNegativePrompt: string;
   imageAltText: string;
   brandProfileVersion: number;
+  mediaAssetId: string | null;
+  mediaPreviewUrl: string | null;
   mediaUrl: string | null;
   rationale: string;
   status: PostStatus;
@@ -138,12 +185,37 @@ export interface GeneratedPost {
   remoteId: string | null;
   remoteUrl: string | null;
   lastError: string | null;
+  automationId: string | null;
+  automationPublishAt: string | null;
+}
+
+export interface AutomationRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  channel: ContentChannel;
+  topic: string;
+  tone: string;
+  objective: string;
+  timezone: string;
+  daysOfWeek: number[];
+  postsPerWeek: number;
+  publishTime: string;
+  approvalChannels: Array<"telegram" | "slack">;
+  generateAheadMinutes: number;
+  publishAfterApproval: boolean;
+  nextRunAt: string | null;
+  nextPublishAt: string | null;
+  lastRunAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AuditEvent {
   id: string;
   action: string;
-  entityType: "settings" | "provider" | "post" | "publisher" | "scheduler" | "connector" | "lead" | "outreach" | "seo" | "media";
+  entityType: "settings" | "provider" | "post" | "publisher" | "scheduler" | "automation" | "connector" | "lead" | "outreach" | "seo" | "media";
   entityId: string;
   summary: string;
   createdAt: string;
@@ -298,6 +370,7 @@ export interface ConnectorAccount {
 export interface PublicConnectorsState {
   catalog: ConnectorManifest[];
   accounts: ConnectorAccount[];
+  oneClickConfigured: boolean;
 }
 
 export interface LeadEvidence {
@@ -550,6 +623,7 @@ export interface PublicAppState {
   imageProvider: PublicImageProviderSettings;
   telegram: PublicTelegramSettings;
   posts: GeneratedPost[];
+  automations: AutomationRule[];
   remoteEditRequest: {
     id: string;
     postId: string;

@@ -10,13 +10,13 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from PIL import Image, ImageOps, UnidentifiedImageError
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from app.config import get_settings
 from app.database import read_session, write_session
 from app.errors import AppError
-from app.models import MediaAsset, MediaGeneration
+from app.models import AuditEvent, MediaAsset, MediaGeneration
 from app.schemas import MediaAssetUpdate
 from app.store import append_audit, utc_now
 
@@ -164,6 +164,24 @@ def media_asset_path(asset_id: str, variant: Literal["content", "preview"]) -> t
     return path, mime_type
 
 
+def media_asset_delivery(asset_id: str) -> dict[str, Any]:
+    asset = _asset_by_id(asset_id)
+    path = _safe_path(asset.storage_name)
+    if not path.is_file():
+        raise AppError("The media file is missing from local storage.", 404)
+    data = path.read_bytes()
+    if len(data) != asset.byte_size or hashlib.sha256(data).hexdigest() != asset.sha256:
+        raise AppError("The local media file failed its integrity check.", 500)
+    return {
+        "id": asset.id,
+        "data": data,
+        "filename": asset.original_name,
+        "mimeType": asset.mime_type,
+        "altText": asset.alt_text,
+        "byteSize": asset.byte_size,
+    }
+
+
 def _save_asset(
     *,
     data: bytes,
@@ -179,6 +197,7 @@ def _save_asset(
     generation_provider: str | None = None,
     generation_model: str | None = None,
     generation_parameters: dict[str, Any] | None = None,
+    public_source_url: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     digest = hashlib.sha256(data).hexdigest()
     with write_session() as session:
@@ -212,7 +231,7 @@ def _save_asset(
                 preview_name=preview_name,
                 source=source,
                 source_asset_id=source_asset_id,
-                public_source_url=None,
+                public_source_url=public_source_url,
                 alt_text=alt_text,
                 generation_prompt=generation_prompt,
                 generation_negative_prompt=generation_negative_prompt,
@@ -227,7 +246,7 @@ def _save_asset(
                 session,
                 action=(
                     "media.created"
-                    if source == "upload"
+                    if source in {"upload", "website-import"}
                     else "media.generated"
                     if source == "ai-generated"
                     else "media.transformed"
@@ -236,7 +255,7 @@ def _save_asset(
                 entity_id=asset_id,
                 summary=(
                     f"Stored local media asset {original_name}."
-                    if source == "upload"
+                    if source in {"upload", "website-import"}
                     else f"Generated local media with {generation_provider}."
                     if source == "ai-generated"
                     else f"Created {source} transform from media asset {source_asset_id}."
@@ -260,6 +279,21 @@ def create_media_asset(data: bytes, filename: str | None) -> dict[str, Any]:
         suffix=suffix,
         original_name=_clean_original_name(filename),
         source="upload",
+    )
+    return {"asset": asset, "deduplicated": deduplicated}
+
+
+def create_website_media_asset(data: bytes, filename: str | None, source_url: str) -> dict[str, Any]:
+    image, mime_type, suffix = _inspect_image(data)
+    asset, deduplicated = _save_asset(
+        data=data,
+        image=image,
+        mime_type=mime_type,
+        suffix=suffix,
+        original_name=_clean_original_name(filename or "website-logo"),
+        source="website-import",
+        public_source_url=source_url,
+        alt_text="Logo detected on the business website",
     )
     return {"asset": asset, "deduplicated": deduplicated}
 
@@ -384,3 +418,36 @@ def delete_media_asset(asset_id: str) -> dict[str, str]:
     _safe_path(asset.storage_name).unlink(missing_ok=True)
     _safe_path(asset.preview_name).unlink(missing_ok=True)
     return {"id": asset_id, "message": "Media asset deleted from this computer."}
+
+
+def purge_previous_brand_media(asset_ids: list[str]) -> int:
+    if not asset_ids:
+        return 0
+    paths: list[Path] = []
+    deleted = 0
+    with write_session() as session:
+        assets = list(
+            session.scalars(
+                select(MediaAsset).where(
+                    MediaAsset.id.in_(asset_ids),
+                    MediaAsset.source == "website-import",
+                )
+            ).all()
+        )
+        for asset in assets:
+            paths.extend([_safe_path(asset.storage_name), _safe_path(asset.preview_name)])
+            session.execute(delete(AuditEvent).where(AuditEvent.entity_id == asset.id))
+            session.execute(delete(MediaGeneration).where(MediaGeneration.asset_id == asset.id))
+            session.delete(asset)
+            deleted += 1
+        if deleted:
+            append_audit(
+                session,
+                action="brand_media.deleted",
+                entity_type="settings",
+                entity_id="brand-profile",
+                summary=f"Deleted {deleted} unused previous-brand media asset(s).",
+            )
+    for path in paths:
+        path.unlink(missing_ok=True)
+    return deleted

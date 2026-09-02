@@ -42,6 +42,12 @@ def _public_account(
     except RuntimeError as error:
         saved_secret_keys = set()
         vault_error = str(error)
+    missing_scopes = sorted(set(manifest.required_scopes) - set(account.scopes or []))
+    scope_error = (
+        f"Reconnect {manifest.name} to grant the new required scope: {', '.join(missing_scopes)}."
+        if missing_scopes
+        else None
+    )
     return {
         "id": account.id,
         "adapterId": account.adapter_id,
@@ -52,11 +58,15 @@ def _public_account(
         "scopes": list(account.scopes or []),
         "capabilities": list(manifest.capabilities),
         "enabled": account.enabled,
-        "status": "error" if vault_error else account.status,
+        "status": "error" if vault_error or scope_error else account.status,
         "remoteAccountId": account.remote_account_id,
         "lastVerifiedAt": account.last_verified_at,
-        "lastError": vault_error or account.last_error,
-        "listener": listener_status or {"active": False, "status": "stopped", "lastError": None},
+        "lastError": vault_error or scope_error or account.last_error,
+        "listener": (
+            {"active": False, "status": "stopped", "lastError": scope_error}
+            if scope_error
+            else listener_status or {"active": False, "status": "stopped", "lastError": None}
+        ),
         "createdAt": account.created_at,
         "updatedAt": account.updated_at,
     }
@@ -114,6 +124,9 @@ def connector_runtimes(adapter_id: str, *, verified_only: bool = False) -> list[
         accounts = list(session.scalars(statement.order_by(ConnectorAccount.created_at.asc())).all())
         runtimes: list[dict[str, Any]] = []
         for account in accounts:
+            manifest = get_manifest(account.adapter_id)
+            if set(manifest.required_scopes) - set(account.scopes or []):
+                continue
             try:
                 secrets = _decrypt_secrets(account.encrypted_secrets)
             except RuntimeError:
@@ -183,6 +196,20 @@ def create_connector(payload: ConnectorAccountUpsert) -> dict[str, Any]:
         )
         session.flush()
         return _public_account(account)
+
+
+def upsert_oauth_connector(payload: ConnectorAccountUpsert) -> dict[str, Any]:
+    """Create or replace the first account for an OAuth-managed adapter."""
+    with read_session() as session:
+        existing_id = session.scalar(
+            select(ConnectorAccount.id)
+            .where(ConnectorAccount.adapter_id == payload.adapter_id)
+            .order_by(ConnectorAccount.created_at.asc())
+            .limit(1)
+        )
+    if existing_id:
+        return update_connector(str(existing_id), payload)
+    return create_connector(payload)
 
 
 def update_connector(account_id: str, payload: ConnectorAccountUpsert) -> dict[str, Any]:

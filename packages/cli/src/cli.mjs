@@ -36,6 +36,10 @@ Environment:
   SOCIUM_RELEASE_MANIFEST     Override the official release manifest URL.
   SOCIUM_DATA_DIR             Default durable data location for first install.
   SOCIUM_MODELS_DIR           Default local AI model location for first install.
+
+Ports:
+  3000 and 8000 are preferred defaults. Busy ports automatically fall forward to
+  the next available localhost ports; the selected dashboard URL opens automatically.
 `;
 
 function parseArguments(argv) {

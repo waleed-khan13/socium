@@ -6,11 +6,11 @@ import {
   Check,
   CheckCircle2,
   Cloud,
-  Copy,
   Cpu,
   Database,
   Download,
   ExternalLink,
+  FolderOpen,
   HardDrive,
   Loader2,
   LockKeyhole,
@@ -63,6 +63,7 @@ type Props = {
 
 type StateResponse = { ok: boolean; state: PublicAppState };
 type AiMode = "local" | "cloud";
+type StoragePickerResponse = { ok: boolean; cancelled: boolean; path: string | null };
 
 const steps: Array<{ id: OnboardingStep; label: string }> = [
   { id: "welcome", label: "Welcome" },
@@ -118,6 +119,10 @@ export function OnboardingWizard({ open, state, onOpenAdvancedAi, onOpenChange, 
   const [localAi, setLocalAi] = useState<LocalAiStatus | null>(null);
   const [localModel, setLocalModel] = useState(state.provider.kind === "ollama" ? state.provider.model : "");
   const [localPull, setLocalPull] = useState<{ percentage: number; status: string } | null>(null);
+  const [storageDialogOpen, setStorageDialogOpen] = useState(false);
+  const [selectedDataDirectory, setSelectedDataDirectory] = useState(state.storage.locations.data.path);
+  const [selectedModelsDirectory, setSelectedModelsDirectory] = useState(state.storage.locations.models.path);
+  const [storageRestarting, setStorageRestarting] = useState(false);
 
   const currentStep = state.onboarding.currentStep;
   const currentIndex = Math.max(0, steps.findIndex((step) => step.id === currentStep));
@@ -193,6 +198,66 @@ export function OnboardingWizard({ open, state, onOpenAdvancedAi, onOpenChange, 
       void refreshLocalAi();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not confirm storage.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function openStorageDialog() {
+    setSelectedDataDirectory(state.storage.locations.data.path);
+    setSelectedModelsDirectory(state.storage.locations.models.path);
+    setStorageDialogOpen(true);
+  }
+
+  async function chooseStorageDirectory(purpose: "data" | "models") {
+    setBusy(`pick-${purpose}`);
+    try {
+      const result = await requestJson<StoragePickerResponse>("/api/storage/pick-directory", {
+        method: "POST",
+        body: JSON.stringify({ purpose }),
+      });
+      if (!result.cancelled && result.path) {
+        if (purpose === "data") setSelectedDataDirectory(result.path);
+        else setSelectedModelsDirectory(result.path);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not open the folder picker.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function moveStorage() {
+    setBusy("storage-move");
+    try {
+      await requestJson<{ ok: boolean; restarting: boolean }>("/api/storage/move", {
+        method: "POST",
+        body: JSON.stringify({
+          dataDir: selectedDataDirectory,
+          modelsDir: selectedModelsDirectory,
+        }),
+      });
+      setStorageDialogOpen(false);
+      setStorageRestarting(true);
+      toast.success("Storage move started", {
+        description: "Socium is verifying the copy and will restart automatically.",
+      });
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+        try {
+          const response = await fetch("/api/health", { cache: "no-store" });
+          if (response.ok && attempt > 1) {
+            window.location.reload();
+            return;
+          }
+        } catch {
+          // The local server is expected to be briefly unavailable during the move.
+        }
+      }
+      throw new Error("Socium did not restart within two minutes. Start it again from the Start menu.");
+    } catch (error) {
+      setStorageRestarting(false);
+      toast.error(error instanceof Error ? error.message : "Could not move storage.");
     } finally {
       setBusy(null);
     }
@@ -341,8 +406,20 @@ export function OnboardingWizard({ open, state, onOpenAdvancedAi, onOpenChange, 
             })}
           </div>
           {state.storage.warnings.length ? <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-4"><p className="text-xs font-semibold text-amber-200">Review storage warnings</p>{state.storage.warnings.map((warning) => <p className="mt-2 text-[11px] leading-5 text-amber-200/75" key={warning}>• {warning}</p>)}<label className="mt-4 flex cursor-pointer items-start gap-3 text-[11px] leading-5 text-zinc-400"><input checked={acknowledgeWarnings} className="mt-1 accent-amber-400" onChange={(event) => setAcknowledgeWarnings(event.target.checked)} type="checkbox" />I understand these warnings and want to use the current locations.</label></div> : <div className="flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4 text-xs text-emerald-200"><CheckCircle2 className="size-4" />Both durable locations are available.</div>}
-          <div className="rounded-lg border border-zinc-800 bg-black p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-medium text-zinc-300">Want different drives?</p><p className="mt-1 text-[10px] leading-4 text-zinc-600">Stop Socium first, then run this generated command. The old copy is preserved after checksum verification.</p></div><Button onClick={() => void navigator.clipboard.writeText(state.storage.moveCommand).then(() => toast.success("Move command copied"))} size="sm" type="button" variant="outline"><Copy />Copy move command</Button></div><code className="mt-3 block overflow-x-auto rounded bg-[#050505] p-3 font-mono text-[10px] text-amber-300">{state.storage.moveCommand}</code></div>
+          <div className="rounded-lg border border-zinc-800 bg-black p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-medium text-zinc-300">Want different drives?</p><p className="mt-1 text-[10px] leading-4 text-zinc-600">Choose folders using your computer&apos;s folder window. Socium verifies every copied file, preserves the old copy, and restarts itself.</p></div><Button onClick={openStorageDialog} size="sm" type="button" variant="outline"><FolderOpen />Change storage locations</Button></div></div>
           <div className="flex flex-col-reverse gap-2 border-t border-zinc-900 pt-5 sm:flex-row sm:justify-between"><Button onClick={() => void goTo("welcome")} variant="ghost"><ArrowLeft />Back</Button><Button disabled={!state.onboarding.storageReady || (state.storage.warnings.length > 0 && !acknowledgeWarnings) || busy === "storage"} onClick={() => void confirmStorage()}>{busy === "storage" ? <Loader2 className="animate-spin" /> : <Database />}Confirm these locations</Button></div>
+          <Dialog onOpenChange={(next) => { if (busy !== "storage-move") setStorageDialogOpen(next); }} open={storageDialogOpen}>
+            <DialogContent className="max-w-xl border-zinc-700 bg-[#080808]">
+              <DialogHeader><DialogTitle>Choose private storage folders</DialogTitle><DialogDescription>Select separate folders for Socium data and local AI models. Empty folders are accepted and can be created in the native window.</DialogDescription></DialogHeader>
+              <div className="space-y-4 py-2">
+                <div className="space-y-2"><Label>Database, credentials, and media</Label><div className="flex gap-2"><Input aria-label="Selected Socium data folder" className="font-mono text-xs" readOnly value={selectedDataDirectory} /><Button aria-label="Choose Socium data folder" disabled={busy !== null} onClick={() => void chooseStorageDirectory("data")} type="button" variant="outline">{busy === "pick-data" ? <Loader2 className="animate-spin" /> : <FolderOpen />}Choose</Button></div></div>
+                <div className="space-y-2"><Label>Local AI models</Label><div className="flex gap-2"><Input aria-label="Selected Socium models folder" className="font-mono text-xs" readOnly value={selectedModelsDirectory} /><Button aria-label="Choose Socium models folder" disabled={busy !== null} onClick={() => void chooseStorageDirectory("models")} type="button" variant="outline">{busy === "pick-models" ? <Loader2 className="animate-spin" /> : <FolderOpen />}Choose</Button></div></div>
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 text-[11px] leading-5 text-emerald-200/80"><ShieldCheck className="mr-2 inline size-4" />Socium closes SQLite first, verifies file sizes and SHA-256 checksums, switches locations, then starts again. Your old folders are not deleted.</div>
+              </div>
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button disabled={busy === "storage-move"} onClick={() => setStorageDialogOpen(false)} variant="ghost">Cancel</Button><Button disabled={busy !== null || !selectedDataDirectory || !selectedModelsDirectory || (selectedDataDirectory === locations.data.path && selectedModelsDirectory === locations.models.path)} onClick={() => void moveStorage()}>{busy === "storage-move" ? <Loader2 className="animate-spin" /> : <Database />}Move safely & restart</Button></div>
+            </DialogContent>
+          </Dialog>
+          {storageRestarting ? <div className="fixed inset-0 z-[100] grid place-items-center bg-black/90 p-6"><div className="max-w-sm text-center"><Loader2 className="mx-auto size-8 animate-spin text-amber-300" /><p className="mt-5 text-sm font-semibold text-white">Moving private storage</p><p className="mt-2 text-xs leading-5 text-zinc-500">Socium will reload automatically after checksum verification and restart.</p></div></div> : null}
         </div>
       );
     }
@@ -397,9 +474,9 @@ export function OnboardingWizard({ open, state, onOpenAdvancedAi, onOpenChange, 
 
   return (
     <Dialog onOpenChange={(next) => { if (next) onOpenChange(true); }} open={open}>
-      <DialogContent className="max-h-[calc(100vh-2rem)] max-w-[min(1120px,calc(100vw-2rem))] gap-0 overflow-hidden border-zinc-700 bg-[#070707] p-0" showCloseButton={false}>
+      <DialogContent className="h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] gap-0 overflow-hidden border-zinc-700 bg-[#070707] p-0 sm:h-[min(720px,calc(100dvh-2rem))] sm:max-h-[calc(100dvh-2rem)] sm:max-w-[min(1120px,calc(100vw-2rem))]" showCloseButton={false}>
         <DialogHeader className="sr-only"><DialogTitle>Socium first-run setup</DialogTitle><DialogDescription>Configure private storage, one AI provider, and a confirmed brand profile.</DialogDescription></DialogHeader>
-        <div className="grid min-h-[620px] lg:grid-cols-[220px_minmax(0,1fr)]">
+        <div className="grid h-full min-h-0 lg:grid-cols-[220px_minmax(0,1fr)]">
           <aside className="hidden border-r border-zinc-900 bg-black/70 p-5 lg:flex lg:flex-col">
             <div><p className="text-xs font-semibold tracking-[0.16em] text-zinc-200 uppercase">SOCIUM</p><p className="mt-1 font-mono text-[9px] text-zinc-700">LOCAL SETUP · V1</p></div>
             <ol className="mt-8 space-y-2">{steps.map((step, index) => { const active = step.id === currentStep; const complete = index < currentIndex || (step.id === "finish" && state.onboarding.status === "completed"); return <li className={cn("flex items-center gap-3 rounded-lg border px-3 py-2.5", active ? "border-amber-500/25 bg-amber-500/7" : "border-transparent")} key={step.id}><span className={cn("grid size-6 place-items-center rounded-full border font-mono text-[9px]", complete ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : active ? "border-amber-500/30 text-amber-300" : "border-zinc-800 text-zinc-700")}>{complete ? <Check className="size-3" /> : index + 1}</span><span className={cn("text-xs", active ? "text-zinc-100" : "text-zinc-600")}>{step.label}</span></li>; })}</ol>

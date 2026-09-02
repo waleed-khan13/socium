@@ -17,7 +17,13 @@ import { diagnose } from "../src/doctor.mjs";
 import { installRelease, loadInstallation } from "../src/installation.mjs";
 import { applyUpdate, compareVersions, terminateMigrationCheck } from "../src/lifecycle.mjs";
 import { resolveAssetSource, validateManifest } from "../src/manifest.mjs";
-import { autostartStatus, setAutostart, writePortableLauncher } from "../src/native-integration.mjs";
+import {
+  autostartStatus,
+  quoteWindowsArgument,
+  setAutostart,
+  windowsNativeHelperPath,
+  writePortableLauncher,
+} from "../src/native-integration.mjs";
 import { sociumPaths, sociumRoot } from "../src/paths.mjs";
 import { backendFileName, releaseTarget } from "../src/platform.mjs";
 import { uninstall } from "../src/uninstall.mjs";
@@ -76,6 +82,15 @@ test("maps application data to native OS locations", () => {
     sociumRoot({ platform: "linux", homeDirectory: "/home/ada", environment: {} }),
     path.resolve("/home/ada/.local/share/socium"),
   );
+});
+
+test("maps the active Windows runtime to the native helper without PowerShell", () => {
+  const installation = { runtimePath: "C:\\Socium\\runtime" };
+  assert.equal(
+    windowsNativeHelperPath(installation),
+    path.join(installation.runtimePath, "native", "socium-windows-helper.exe"),
+  );
+  assert.equal(quoteWindowsArgument("C:\\Socium Data\\launch.mjs"), '"C:\\Socium Data\\launch.mjs"');
 });
 
 test("force-stops a migration check that ignores graceful termination", async () => {
@@ -499,6 +514,27 @@ test("moves storage with checksum verification and preserves the source", async 
   assert.equal(await readFile(path.join(nextModels, "model.gguf"), "utf8"), "local model");
   assert.equal(await readFile(path.join(installed.dataDirectory, "socium.db"), "utf8"), "durable database");
   assert.equal((await loadInstallation(current.paths)).dataDirectory, path.resolve(nextData));
+});
+
+test("moves storage into empty folders selected by a native folder picker", async (context) => {
+  const current = await fixture();
+  context.after(() => rm(current.root, { recursive: true, force: true }));
+  const installed = await installRelease({
+    manifestSource: current.manifest,
+    paths: current.paths,
+    target: current.target,
+    log() {},
+  });
+  await writeFile(path.join(installed.dataDirectory, "socium.db"), "durable database");
+  const nextData = path.join(current.root, "selected-data");
+  const nextModels = path.join(current.root, "selected-models");
+  await mkdir(nextData, { recursive: true });
+  await mkdir(nextModels, { recursive: true });
+
+  await relocateStorage({ paths: current.paths, dataDirectory: nextData, modelsDirectory: nextModels });
+
+  assert.equal(await readFile(path.join(nextData, "socium.db"), "utf8"), "durable database");
+  assert.equal((await loadInstallation(current.paths)).modelsDirectory, path.resolve(nextModels));
 });
 
 test("reports a selected data drive as unavailable instead of creating a blank location", async (context) => {

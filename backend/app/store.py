@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+import re
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
@@ -18,6 +20,7 @@ from app.models import (
     AppMetadata,
     ApprovalAction,
     AuditEvent,
+    AutomationRule,
     IcpProfile,
     ImageProviderSettings,
     LocalJob,
@@ -28,6 +31,7 @@ from app.models import (
     Workspace,
 )
 from app.schemas import (
+    AutomationRuleUpsert,
     BrandProfileUpdate,
     EditPostRequest,
     ImageProviderUpdate,
@@ -57,6 +61,23 @@ def utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+_MEDIA_ID_IN_URL = re.compile(r"/api/media/([0-9a-fA-F-]{36})/")
+
+PRIMARY_IMAGE_MODELS = {
+    "gemini": ("gemini-images", "gemini-3.1-flash-image"),
+    "openai": ("openai-images", "gpt-image-2"),
+}
+
+
+def primary_ai_capabilities(kind: str) -> dict[str, Any]:
+    image = PRIMARY_IMAGE_MODELS.get(kind)
+    return {
+        "text": True,
+        "image": image is not None,
+        "imageModel": image[1] if image else None,
+    }
+
+
 def _utc_iso(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
@@ -78,13 +99,7 @@ def initialize_storage() -> None:
     with write_session() as session:
         if session.get(Workspace, 1) is not None:
             _ensure_singletons(session)
-            _recover_interrupted_approval_actions(session)
-            _mark_overdue_jobs_for_recovery(
-                session,
-                "Socium was not running at the scheduled time. Choose Run now, Reschedule, or Skip.",
-            )
-            return
-        if settings.legacy_json_path.exists():
+        elif settings.legacy_json_path.exists():
             _import_legacy_json(session, settings.legacy_json_path)
         else:
             _seed_defaults(session)
@@ -93,6 +108,7 @@ def initialize_storage() -> None:
             session,
             "Socium was not running at the scheduled time. Choose Run now, Reschedule, or Skip.",
         )
+    ensure_automation_jobs()
 
 
 def _recover_interrupted_approval_actions(session: Session) -> None:
@@ -343,6 +359,8 @@ def _post_dict(post: Post) -> dict[str, Any]:
         "imageNegativePrompt": post.image_negative_prompt,
         "imageAltText": post.image_alt_text,
         "brandProfileVersion": post.brand_profile_version,
+        "mediaAssetId": post.media_asset_id,
+        "mediaPreviewUrl": f"/api/media/{post.media_asset_id}/preview" if post.media_asset_id else None,
         "mediaUrl": post.media_url,
         "rationale": post.rationale,
         "status": post.status,
@@ -355,6 +373,8 @@ def _post_dict(post: Post) -> dict[str, Any]:
         "remoteId": post.remote_id,
         "remoteUrl": post.remote_url,
         "lastError": post.last_error,
+        "automationId": post.automation_id,
+        "automationPublishAt": post.automation_publish_at,
     }
 
 
@@ -380,6 +400,31 @@ def _job_dict(job: LocalJob) -> dict[str, Any]:
         "resultRef": job.result_ref,
         "createdAt": job.created_at,
         "updatedAt": job.updated_at,
+    }
+
+
+def _automation_dict(rule: AutomationRule) -> dict[str, Any]:
+    return {
+        "id": rule.id,
+        "name": rule.name,
+        "enabled": rule.enabled,
+        "channel": rule.channel,
+        "topic": rule.topic,
+        "tone": rule.tone,
+        "objective": rule.objective,
+        "timezone": rule.timezone,
+        "daysOfWeek": list(rule.days_of_week or []),
+        "postsPerWeek": len(rule.days_of_week or []),
+        "publishTime": rule.publish_time,
+        "approvalChannels": list(rule.approval_channels or []),
+        "generateAheadMinutes": rule.generate_ahead_minutes,
+        "publishAfterApproval": rule.publish_after_approval,
+        "nextRunAt": rule.next_run_at,
+        "nextPublishAt": rule.next_publish_at,
+        "lastRunAt": rule.last_run_at,
+        "lastError": rule.last_error,
+        "createdAt": rule.created_at,
+        "updatedAt": rule.updated_at,
     }
 
 
@@ -441,6 +486,8 @@ def _workspace_dict(session: Session, workspace: Workspace) -> dict[str, Any]:
         "primaryColor": workspace.primary_color,
         "secondaryColor": workspace.secondary_color,
         "accentColor": workspace.accent_color,
+        "headingFont": workspace.heading_font,
+        "bodyFont": workspace.body_font,
         "visualStyle": workspace.visual_style,
         "profileVersion": workspace.profile_version,
         "confirmedAt": workspace.confirmed_at,
@@ -586,9 +633,9 @@ def update_onboarding(payload: OnboardingUpdate, storage: dict[str, Any]) -> Non
             return
         if payload.action == "confirm-storage":
             volumes = storage.get("volumes") or {}
-            if not (volumes.get("data") or {}).get("available") or not (
-                volumes.get("models") or {}
-            ).get("available"):
+            if not (volumes.get("data") or {}).get("available") or not (volumes.get("models") or {}).get(
+                "available"
+            ):
                 raise AppError("The selected data and model drives must both be available.")
             if storage.get("warnings") and not payload.acknowledge_warnings:
                 raise AppError("Review and acknowledge the storage warnings before continuing.")
@@ -667,6 +714,9 @@ def public_state(
         if workspace is None or provider is None or image_provider is None or telegram is None:
             raise RuntimeError("Local storage has not been initialized.")
         posts = list(session.scalars(select(Post).order_by(Post.created_at.desc())).all())
+        automations = list(
+            session.scalars(select(AutomationRule).order_by(AutomationRule.created_at.desc())).all()
+        )
         audit = list(
             session.scalars(select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(200)).all()
         )
@@ -691,9 +741,9 @@ def public_state(
         provider_verified = bool(
             provider.base_url
             and provider.model
-            and _metadata_value(session, "provider_verified_snapshot")
-            == _provider_fingerprint(provider)
+            and _metadata_value(session, "provider_verified_snapshot") == _provider_fingerprint(provider)
         )
+        provider_capabilities = primary_ai_capabilities(provider.kind)
         remote_edit_request: dict[str, Any] | None = None
         raw_edit_request = _metadata_value(session, "remote_edit_request")
         if raw_edit_request:
@@ -712,28 +762,24 @@ def public_state(
                 "hasApiKey": bool(provider.api_key),
                 "configured": bool(provider.base_url and provider.model),
                 "verified": provider_verified,
+                "capabilities": provider_capabilities,
                 "updatedAt": provider.updated_at,
             },
             "imageProvider": {
-                "kind": image_provider.kind,
-                "baseUrl": image_provider.base_url,
-                "model": image_provider.model,
-                "hasApiKey": bool(image_provider.api_key),
-                "hasWorkflow": bool(image_provider.workflow_json),
+                "kind": PRIMARY_IMAGE_MODELS.get(provider.kind, (image_provider.kind, ""))[0],
+                "baseUrl": provider.base_url,
+                "model": provider_capabilities["imageModel"] or "",
+                "hasApiKey": bool(provider.api_key),
+                "hasWorkflow": False,
                 "configured": bool(
-                    image_provider.updated_at
-                    and image_provider.base_url
-                    and (
-                        image_provider.kind == "automatic1111"
-                        or (image_provider.kind == "comfyui" and image_provider.workflow_json)
-                        or (image_provider.kind == "openai-images" and image_provider.model)
-                    )
+                    provider_verified and provider_capabilities["image"] and provider.api_key
                 ),
-                "updatedAt": image_provider.updated_at,
+                "updatedAt": provider.updated_at,
             },
             "telegram": {
                 "chatId": telegram.chat_id,
                 "hasBotToken": bool(telegram.bot_token),
+                "hasProxy": bool(telegram.proxy_url),
                 "configured": bool(telegram.chat_id and telegram.bot_token),
                 "pollingEnabled": telegram.polling_enabled,
                 "pollingActive": bool(polling.get("active")),
@@ -742,6 +788,7 @@ def public_state(
                 "updatedAt": telegram.updated_at,
             },
             "posts": [_post_dict(post) for post in posts],
+            "automations": [_automation_dict(rule) for rule in automations],
             "remoteEditRequest": remote_edit_request,
             "jobs": [_job_dict(job) for job in jobs],
             "scheduler": {
@@ -804,9 +851,7 @@ def update_brand_profile(payload: BrandProfileUpdate) -> None:
         if workspace is None:
             raise RuntimeError("Workspace settings are missing.")
         media_ids = [
-            media_id
-            for media_id in [payload.logo_media_id, *payload.reference_media_ids]
-            if media_id
+            media_id for media_id in [payload.logo_media_id, *payload.reference_media_ids] if media_id
         ]
         missing_assets = [media_id for media_id in media_ids if session.get(MediaAsset, media_id) is None]
         if missing_assets:
@@ -833,6 +878,8 @@ def update_brand_profile(payload: BrandProfileUpdate) -> None:
         workspace.primary_color = payload.primary_color.lower()
         workspace.secondary_color = payload.secondary_color.lower()
         workspace.accent_color = payload.accent_color.lower()
+        workspace.heading_font = payload.heading_font
+        workspace.body_font = payload.body_font
         workspace.visual_style = payload.visual_style
         workspace.profile_version += 1
         workspace.confirmed_at = now
@@ -844,6 +891,137 @@ def update_brand_profile(payload: BrandProfileUpdate) -> None:
             entity_id="brand-profile",
             summary=f"Confirmed brand profile revision {workspace.profile_version}.",
         )
+
+
+def _previous_brand_data(session: Session) -> dict[str, Any]:
+    workspace = session.get(Workspace, 1)
+    if workspace is None:
+        raise RuntimeError("Workspace settings are missing.")
+
+    posts = list(
+        session.scalars(
+            select(Post).where(Post.brand_profile_version < workspace.profile_version)
+        ).all()
+    )
+    post_ids = {post.id for post in posts}
+    jobs = [
+        job
+        for job in session.scalars(select(LocalJob)).all()
+        if str((job.payload or {}).get("post_id") or "") in post_ids
+    ]
+    job_ids = {job.id for job in jobs}
+    approvals = (
+        list(
+            session.scalars(
+                select(ApprovalAction).where(ApprovalAction.post_id.in_(post_ids))
+            ).all()
+        )
+        if post_ids
+        else []
+    )
+
+    referenced_media_ids = {
+        str(asset_id)
+        for asset_id in [workspace.logo_media_id, *(workspace.reference_media_ids or [])]
+        if asset_id
+    }
+    current_posts = session.scalars(
+        select(Post).where(Post.brand_profile_version >= workspace.profile_version)
+    ).all()
+    for post in current_posts:
+        match = _MEDIA_ID_IN_URL.search(str(post.media_url or ""))
+        if match:
+            referenced_media_ids.add(match.group(1))
+    unused_website_media = [
+        asset
+        for asset in session.scalars(
+            select(MediaAsset).where(MediaAsset.source == "website-import")
+        ).all()
+        if asset.id not in referenced_media_ids
+    ]
+    media_ids = {asset.id for asset in unused_website_media}
+
+    audit_entity_ids = post_ids | job_ids | media_ids
+    audit_conditions = []
+    if audit_entity_ids:
+        audit_conditions.append(AuditEvent.entity_id.in_(audit_entity_ids))
+    if workspace.confirmed_at:
+        audit_conditions.append(
+            and_(
+                AuditEvent.action == "brand_profile.confirmed",
+                AuditEvent.created_at < workspace.confirmed_at,
+            )
+        )
+    audits = (
+        list(session.scalars(select(AuditEvent).where(or_(*audit_conditions))).all())
+        if audit_conditions
+        else []
+    )
+    return {
+        "currentBusinessName": workspace.business_name,
+        "currentProfileVersion": workspace.profile_version,
+        "posts": len(posts),
+        "publishedPosts": sum(1 for post in posts if post.status == "published"),
+        "approvalActions": len(approvals),
+        "scheduledJobs": len(jobs),
+        "auditEvents": len(audits),
+        "mediaAssets": len(unused_website_media),
+        "_postIds": sorted(post_ids),
+        "_jobIds": sorted(job_ids),
+        "_auditIds": sorted(event.id for event in audits),
+        "_mediaIds": sorted(media_ids),
+    }
+
+
+def previous_brand_data_summary() -> dict[str, Any]:
+    with read_session() as session:
+        summary = _previous_brand_data(session)
+        return {key: value for key, value in summary.items() if not key.startswith("_")}
+
+
+def delete_previous_brand_data(current_business_name: str) -> dict[str, Any]:
+    with write_session() as session:
+        summary = _previous_brand_data(session)
+        if current_business_name != summary["currentBusinessName"]:
+            raise AppError("The active business changed. Review the cleanup details and try again.", 409)
+
+        post_ids = summary["_postIds"]
+        publishing = (
+            session.scalar(
+                select(Post.id).where(
+                    Post.id.in_(post_ids),
+                    Post.status == "publishing",
+                )
+            )
+            if post_ids
+            else None
+        )
+        if publishing:
+            raise AppError("A previous-brand post is currently publishing. Wait for it to finish.", 409)
+
+        if summary["_auditIds"]:
+            session.execute(delete(AuditEvent).where(AuditEvent.id.in_(summary["_auditIds"])))
+        if post_ids:
+            session.execute(
+                delete(ApprovalAction).where(ApprovalAction.post_id.in_(post_ids))
+            )
+        if summary["_jobIds"]:
+            session.execute(delete(LocalJob).where(LocalJob.id.in_(summary["_jobIds"])))
+        if post_ids:
+            session.execute(delete(Post).where(Post.id.in_(post_ids)))
+
+        if any(
+            int(summary[key])
+            for key in ("posts", "approvalActions", "scheduledJobs", "auditEvents", "mediaAssets")
+        ):
+            _append_audit(
+                session,
+                action="brand_history.deleted",
+                entity_type="settings",
+                entity_id="brand-profile",
+                summary="Deleted previous brand content and local history.",
+            )
+        return summary
 
 
 def update_provider(payload: ProviderUpdate) -> None:
@@ -924,6 +1102,10 @@ def update_telegram(payload: TelegramUpdate) -> None:
             telegram.bot_token = encrypt_secret(payload.bot_token)
             telegram.polling_enabled = False
             telegram.last_update_id = 0
+        if payload.clear_proxy:
+            telegram.proxy_url = None
+        elif payload.proxy_url:
+            telegram.proxy_url = encrypt_secret(payload.proxy_url)
         telegram.chat_id = payload.chat_id
         telegram.updated_at = utc_now()
         _append_audit(
@@ -932,6 +1114,68 @@ def update_telegram(payload: TelegramUpdate) -> None:
             entity_type="settings",
             entity_id="telegram",
             summary="Telegram connection settings saved.",
+        )
+
+
+def save_telegram_token(
+    bot_token: str,
+    *,
+    proxy_url: str = "",
+    clear_proxy: bool = False,
+) -> None:
+    with write_session() as session:
+        telegram = session.get(TelegramSettings, 1)
+        if telegram is None:
+            raise RuntimeError("Telegram settings are missing.")
+        telegram.bot_token = encrypt_secret(bot_token)
+        if clear_proxy:
+            telegram.proxy_url = None
+        elif proxy_url:
+            telegram.proxy_url = encrypt_secret(proxy_url)
+        telegram.chat_id = ""
+        telegram.polling_enabled = False
+        telegram.last_update_id = 0
+        telegram.updated_at = utc_now()
+        _append_audit(
+            session,
+            action="telegram.bot_verified",
+            entity_type="settings",
+            entity_id="telegram",
+            summary="Saved a verified Telegram bot token and started automatic chat discovery.",
+        )
+
+
+def update_telegram_proxy(proxy_url: str, *, clear: bool = False) -> None:
+    with write_session() as session:
+        telegram = session.get(TelegramSettings, 1)
+        if telegram is None:
+            raise RuntimeError("Telegram settings are missing.")
+        telegram.proxy_url = None if clear else encrypt_secret(proxy_url)
+        telegram.updated_at = utc_now()
+        _append_audit(
+            session,
+            action="telegram.proxy_updated",
+            entity_type="settings",
+            entity_id="telegram",
+            summary="Telegram-only network proxy settings updated locally.",
+        )
+
+
+def complete_telegram_connection(chat_id: str, update_id: int) -> None:
+    with write_session() as session:
+        telegram = session.get(TelegramSettings, 1)
+        if telegram is None or not telegram.bot_token:
+            raise AppError("Save a Telegram bot token before discovering its approval chat.")
+        telegram.chat_id = chat_id
+        telegram.last_update_id = max(update_id, 0)
+        telegram.polling_enabled = True
+        telegram.updated_at = utc_now()
+        _append_audit(
+            session,
+            action="telegram.connected",
+            entity_type="settings",
+            entity_id="telegram",
+            summary="Automatically discovered the Telegram approval chat and started local approvals.",
         )
 
 
@@ -966,6 +1210,28 @@ def provider_runtime() -> dict[str, str]:
         }
 
 
+def primary_image_runtime() -> dict[str, str]:
+    with read_session() as session:
+        provider = session.get(ProviderSettings, 1)
+        if provider is None:
+            raise RuntimeError("Provider settings are missing.")
+        image = PRIMARY_IMAGE_MODELS.get(provider.kind)
+        if image is None:
+            raise AppError(
+                "The connected AI provider does not expose image generation through the same connection."
+            )
+        if not provider.api_key:
+            raise AppError("The connected AI provider requires its saved API key for image generation.")
+        return {
+            "kind": image[0],
+            "base_url": provider.base_url,
+            "model": image[1],
+            "api_key": decrypt_secret(provider.api_key),
+            "workflow_json": "",
+            "updated_at": provider.updated_at or "",
+        }
+
+
 def image_provider_runtime() -> dict[str, str]:
     with read_session() as session:
         provider = session.get(ImageProviderSettings, 1)
@@ -989,6 +1255,7 @@ def telegram_runtime() -> dict[str, Any]:
         return {
             "chat_id": telegram.chat_id,
             "bot_token": decrypt_secret(telegram.bot_token),
+            "proxy_url": decrypt_secret(telegram.proxy_url),
             "polling_enabled": telegram.polling_enabled,
             "last_update_id": telegram.last_update_id,
         }
@@ -1025,7 +1292,10 @@ def workspace_runtime() -> dict[str, Any]:
                         workspace.secondary_color,
                         workspace.accent_color,
                     ],
+                    "heading_font": workspace.heading_font,
+                    "body_font": workspace.body_font,
                     "visual_style": workspace.visual_style,
+                    "logo_media_id": workspace.logo_media_id,
                     "profile_version": workspace.profile_version,
                 }
             )
@@ -1038,6 +1308,8 @@ def create_post(
     content: dict[str, Any],
     provider: dict[str, str],
     brand_profile_version: int = 0,
+    automation_id: str | None = None,
+    automation_publish_at: str | None = None,
 ) -> dict[str, Any]:
     now = utc_now()
     post = Post(
@@ -1055,6 +1327,7 @@ def create_post(
         image_negative_prompt=content.get("image_negative_prompt", ""),
         image_alt_text=content.get("image_alt_text", ""),
         brand_profile_version=brand_profile_version,
+        media_asset_id=request.get("media_asset_id") or None,
         media_url=request.get("media_url") or None,
         rationale=content.get("rationale", ""),
         status="pending",
@@ -1067,6 +1340,8 @@ def create_post(
         remote_id=None,
         remote_url=None,
         last_error=None,
+        automation_id=automation_id,
+        automation_publish_at=automation_publish_at,
     )
     with write_session() as session:
         session.add(post)
@@ -1191,6 +1466,8 @@ def edit_post(post_id: str, payload: EditPostRequest) -> None:
             raise AppError("This draft is currently being published.")
         if post.channel == "instagram" and not payload.media_url:
             raise AppError("Instagram drafts require a public image URL.")
+        if payload.media_asset_id is not None and session.get(MediaAsset, str(payload.media_asset_id)) is None:
+            raise AppError("Selected media asset no longer exists.", 404)
         post.title = payload.title
         post.body = payload.body
         post.hashtags = payload.hashtags
@@ -1202,6 +1479,7 @@ def edit_post(post_id: str, payload: EditPostRequest) -> None:
             post.image_negative_prompt = payload.image_negative_prompt
         if payload.image_alt_text is not None:
             post.image_alt_text = payload.image_alt_text
+        post.media_asset_id = str(payload.media_asset_id) if payload.media_asset_id else None
         post.media_url = payload.media_url or None
         previous_revision = post.revision
         post.status = "pending"
@@ -1243,6 +1521,8 @@ def decide_post(
         post.updated_at = utc_now()
         post.last_error = None
         _supersede_approval_actions(session, post.id, revision)
+        if approved:
+            _queue_approved_automation_publish(session, post)
         if not approved:
             _cancel_pending_post_jobs(session, post.id, "Draft skipped; scheduled publish cancelled.")
         external_source = source if source in {"telegram", "slack"} else None
@@ -1293,7 +1573,11 @@ def finish_post_regeneration(
             raise AppError("This draft changed while regeneration was running. Review the latest revision.")
         if approval_action_id:
             action = session.get(ApprovalAction, approval_action_id)
-            if action is None or action.status != "processing" or action.selected_action != "regenerate":
+            if (
+                action is None
+                or action.status != "processing"
+                or action.selected_action not in {"regenerate", "regenerate_post"}
+            ):
                 raise AppError("This regeneration action is no longer active.")
             action.status = "consumed"
             action.consumed_at = utc_now()
@@ -1325,9 +1609,63 @@ def finish_post_regeneration(
         return _post_dict(post)
 
 
+def finish_image_regeneration(
+    post_id: str,
+    revision: int,
+    *,
+    media_asset_id: str,
+    source: str = "dashboard",
+    approval_action_id: str | None = None,
+) -> dict[str, Any]:
+    with write_session() as session:
+        post = session.get(Post, post_id)
+        asset = session.get(MediaAsset, media_asset_id)
+        if post is None:
+            raise AppError("Draft not found.", 404)
+        if asset is None:
+            raise AppError("The regenerated image could not be found.", 404)
+        if post.revision != revision or post.status != "pending":
+            raise AppError("This draft changed while image regeneration was running.")
+        if approval_action_id:
+            action = session.get(ApprovalAction, approval_action_id)
+            if (
+                action is None
+                or action.status != "processing"
+                or action.selected_action != "regenerate_image"
+            ):
+                raise AppError("This image regeneration action is no longer active.")
+            action.status = "consumed"
+            action.consumed_at = utc_now()
+        post.media_asset_id = media_asset_id
+        post.image_alt_text = asset.alt_text or post.image_alt_text
+        post.revision += 1
+        post.status = "pending"
+        post.approved_at = None
+        post.updated_at = utc_now()
+        post.last_error = None
+        _supersede_approval_actions(session, post.id, revision, except_id=approval_action_id)
+        _cancel_pending_post_jobs(
+            session, post.id, "Image regenerated; scheduled publish cancelled."
+        )
+        suffix = f".{source}" if source in {"telegram", "slack"} else ""
+        _append_audit(
+            session,
+            action=f"post.image_regenerated{suffix}",
+            entity_type="post",
+            entity_id=post.id,
+            summary=(
+                f"Image for revision {revision} regenerated as revision {post.revision}; "
+                "fresh approval required."
+            ),
+        )
+        return _post_dict(post)
+
+
 def claim_remote_approval_action(
     action_id: str,
-    selected_action: Literal["approve", "regenerate", "edit", "skip"],
+    selected_action: Literal[
+        "approve", "regenerate", "regenerate_post", "regenerate_image", "edit", "skip"
+    ],
     source: Literal["telegram", "slack"],
 ) -> dict[str, Any]:
     error: AppError | None = None
@@ -1337,7 +1675,26 @@ def claim_remote_approval_action(
         if action is None or action.transport != source:
             error = AppError("Unknown or mismatched Socium approval action.")
         elif action.status != "sent":
-            error = AppError("This approval action was already used or is no longer active.")
+            post = session.get(Post, action.post_id)
+            same_revision = post is not None and post.revision == action.revision
+            same_terminal_decision = (
+                selected_action == "approve"
+                and post is not None
+                and post.status in {"approved", "publishing", "published"}
+            ) or (
+                selected_action == "skip" and post is not None and post.status == "skipped"
+            )
+            if same_revision and same_terminal_decision:
+                # Slack and Telegram can carry separate buttons for the same revision.
+                # Treat the later matching decision as a successful replay. The first
+                # transaction already changed the post and (when applicable) created
+                # the uniquely-keyed publish job, so no side effect is repeated here.
+                action.selected_action = selected_action
+                action.consumed_at = action.consumed_at or utc_now()
+                result = _post_dict(post)
+                result["approvalReplay"] = True
+            else:
+                error = AppError("This approval action was already used or is no longer active.")
         elif datetime.fromisoformat(action.expires_at) <= datetime.now(UTC):
             action.status = "expired"
             action.consumed_at = utc_now()
@@ -1359,7 +1716,7 @@ def claim_remote_approval_action(
             else:
                 action.selected_action = selected_action
                 action.consumed_at = utc_now()
-                if selected_action == "regenerate":
+                if selected_action in {"regenerate", "regenerate_post", "regenerate_image"}:
                     action.status = "processing"
                     result = _post_dict(post)
                 elif selected_action == "edit":
@@ -1394,6 +1751,8 @@ def claim_remote_approval_action(
                     post.updated_at = utc_now()
                     post.last_error = None
                     _supersede_approval_actions(session, post.id, post.revision, except_id=action.id)
+                    if approved:
+                        _queue_approved_automation_publish(session, post)
                     if not approved:
                         _cancel_pending_post_jobs(
                             session, post.id, "Draft skipped; scheduled publish cancelled."
@@ -1449,20 +1808,47 @@ def process_telegram_update(update: dict[str, Any]) -> dict[str, str] | None:
             return None
         callback_id = str(callback.get("id") or "")
         data = callback["data"].split(":")
-        if len(data) != 3 or data[0] != "sa" or data[1] not in {"a", "r", "e", "s"}:
+        if len(data) != 3 or data[0] != "sa" or data[1] not in {"a", "r", "p", "i", "e", "s"}:
             return {"callbackId": callback_id, "error": "Unknown Socium action."} if callback_id else None
 
         message = callback.get("message")
         chat = message.get("chat") if isinstance(message, dict) else None
         callback_chat = chat.get("id") if isinstance(chat, dict) else None
         if telegram.chat_id.lstrip("-").isdigit() and str(callback_chat) != telegram.chat_id:
-            return {"callbackId": callback_id, "error": "This chat is not authorized for Socium approvals."} if callback_id else None
-        action_names = {"a": "approve", "r": "regenerate", "e": "edit", "s": "skip"}
-        return {
+            return (
+                {"callbackId": callback_id, "error": "This chat is not authorized for Socium approvals."}
+                if callback_id
+                else None
+            )
+        action_names = {
+            "a": "approve",
+            "r": "regenerate_post",
+            "p": "regenerate_post",
+            "i": "regenerate_image",
+            "e": "edit",
+            "s": "skip",
+        }
+        message_id = message.get("message_id") if isinstance(message, dict) else None
+        message_text = (
+            message.get("text") or message.get("caption") if isinstance(message, dict) else None
+        )
+        if not callback_id:
+            return None
+        parsed = {
             "callbackId": callback_id,
             "actionId": data[2],
             "action": action_names[data[1]],
-        } if callback_id else None
+        }
+        if callback_chat is not None and message_id is not None:
+            parsed.update(
+                {
+                    "chatId": str(callback_chat),
+                    "messageId": str(message_id),
+                    "messageText": str(message_text) if isinstance(message_text, str) else "",
+                    "hasPhoto": bool(message.get("photo")) if isinstance(message, dict) else False,
+                }
+            )
+        return parsed
 
 
 def reserve_publish(post_id: str, revision: int) -> dict[str, Any]:
@@ -1662,6 +2048,356 @@ def pending_approval_action_count(transport: Literal["telegram", "slack"]) -> in
                 )
             ).all()
         )
+
+
+def _next_automation_occurrence(
+    timezone: str,
+    days_of_week: list[int],
+    publish_time: str,
+    *,
+    after: datetime | None = None,
+) -> datetime:
+    zone = ZoneInfo(timezone)
+    cursor = (after or datetime.now(UTC)).astimezone(zone)
+    hour, minute = (int(part) for part in publish_time.split(":", 1))
+    for offset in range(15):
+        candidate_date = cursor.date() + timedelta(days=offset)
+        if candidate_date.weekday() not in days_of_week:
+            continue
+        candidate = datetime.combine(candidate_date, time(hour, minute), tzinfo=zone)
+        if candidate > cursor:
+            return candidate.astimezone(UTC)
+    raise AppError("Could not calculate the next automation run.")
+
+
+def _cancel_automation_jobs(session: Session, automation_id: str, summary: str) -> None:
+    generation_jobs = session.scalars(
+        select(LocalJob).where(
+            LocalJob.kind == "automation.generate",
+            LocalJob.status.in_({"queued", "retrying"}),
+        )
+    ).all()
+    post_ids = set(
+        session.scalars(select(Post.id).where(Post.automation_id == automation_id)).all()
+    )
+    publish_jobs = session.scalars(
+        select(LocalJob).where(
+            LocalJob.kind == "post.publish",
+            LocalJob.status.in_({"queued", "retrying"}),
+        )
+    ).all()
+    now = utc_now()
+    for job in generation_jobs:
+        if str((job.payload or {}).get("automation_id") or "") != automation_id:
+            continue
+        job.status = "cancelled"
+        job.completed_at = now
+        job.updated_at = now
+        job.last_error = summary
+    for job in publish_jobs:
+        if str((job.payload or {}).get("post_id") or "") not in post_ids:
+            continue
+        job.status = "cancelled"
+        job.completed_at = now
+        job.updated_at = now
+        job.last_error = summary
+
+
+def _queue_approved_automation_publish(session: Session, post: Post) -> bool:
+    if not post.automation_id or not post.automation_publish_at:
+        return False
+    rule = session.get(AutomationRule, post.automation_id)
+    if rule is None or not rule.publish_after_approval:
+        return False
+    key = f"post.publish:{post.id}:{post.revision}"
+    if session.scalar(select(LocalJob).where(LocalJob.idempotency_key == key)) is not None:
+        return False
+    publish_at = datetime.fromisoformat(post.automation_publish_at)
+    run_at = max(datetime.now(UTC), publish_at)
+    now = utc_now()
+    session.add(
+        LocalJob(
+            id=str(uuid4()),
+            idempotency_key=key,
+            kind="post.publish",
+            status="queued",
+            payload={"post_id": post.id, "revision": post.revision, "channel": post.channel},
+            run_at=_utc_iso(run_at),
+            attempts=0,
+            max_attempts=3,
+            locked_at=None,
+            completed_at=None,
+            last_error=None,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    _append_audit(
+        session,
+        action="automation.publish_queued",
+        entity_type="automation",
+        entity_id=post.automation_id,
+        summary=f"Approved revision {post.revision} queued for its automation publish time.",
+    )
+    return True
+
+
+def _queue_automation_occurrence(
+    session: Session,
+    rule: AutomationRule,
+    *,
+    after: datetime | None = None,
+) -> LocalJob:
+    occurrence = _next_automation_occurrence(
+        rule.timezone,
+        list(rule.days_of_week or []),
+        rule.publish_time,
+        after=after,
+    )
+    now = datetime.now(UTC)
+    run_at = max(now, occurrence - timedelta(minutes=rule.generate_ahead_minutes))
+    occurrence_iso = _utc_iso(occurrence)
+    key = f"automation.generate:{rule.id}:{occurrence_iso}"
+    existing = session.scalar(select(LocalJob).where(LocalJob.idempotency_key == key))
+    if existing is not None:
+        if existing.status not in {"queued", "retrying", "running"}:
+            existing.status = "queued"
+            existing.payload = {"automation_id": rule.id, "publish_at": occurrence_iso}
+            existing.run_at = _utc_iso(run_at)
+            existing.attempts = 0
+            existing.locked_at = None
+            existing.lease_token = None
+            existing.lease_expires_at = None
+            existing.recovery_required_at = None
+            existing.recovery_reason = None
+            existing.completed_at = None
+            existing.last_error = None
+            existing.progress_percent = 0
+            existing.progress_message = None
+            existing.cancel_requested = False
+            existing.remote_ref = None
+            existing.result_ref = None
+            existing.updated_at = utc_now()
+        rule.next_run_at = existing.run_at
+        rule.next_publish_at = occurrence_iso
+        return existing
+    created_at = utc_now()
+    job = LocalJob(
+        id=str(uuid4()),
+        idempotency_key=key,
+        kind="automation.generate",
+        status="queued",
+        payload={"automation_id": rule.id, "publish_at": occurrence_iso},
+        run_at=_utc_iso(run_at),
+        attempts=0,
+        max_attempts=3,
+        locked_at=None,
+        completed_at=None,
+        last_error=None,
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    session.add(job)
+    rule.next_run_at = job.run_at
+    rule.next_publish_at = occurrence_iso
+    return job
+
+
+def create_automation(payload: AutomationRuleUpsert) -> dict[str, Any]:
+    now = utc_now()
+    with write_session() as session:
+        rule = AutomationRule(
+            id=str(uuid4()),
+            name=payload.name,
+            enabled=payload.enabled,
+            channel=payload.channel,
+            topic=payload.topic,
+            tone=payload.tone,
+            objective=payload.objective,
+            timezone=payload.timezone,
+            days_of_week=payload.days_of_week,
+            publish_time=payload.publish_time,
+            approval_channels=payload.approval_channels,
+            generate_ahead_minutes=payload.generate_ahead_minutes,
+            publish_after_approval=payload.publish_after_approval,
+            next_run_at=None,
+            next_publish_at=None,
+            last_run_at=None,
+            last_error=None,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(rule)
+        session.flush()
+        if rule.enabled:
+            _queue_automation_occurrence(session, rule)
+        _append_audit(
+            session,
+            action="automation.created",
+            entity_type="automation",
+            entity_id=rule.id,
+            summary=f"Created {rule.name} with {len(rule.days_of_week)} post slots per week.",
+        )
+        session.flush()
+        return _automation_dict(rule)
+
+
+def update_automation(automation_id: str, payload: AutomationRuleUpsert) -> dict[str, Any]:
+    with write_session() as session:
+        rule = session.get(AutomationRule, automation_id)
+        if rule is None:
+            raise AppError("Automation not found.", 404)
+        material_change = any(
+            (
+                rule.enabled != payload.enabled,
+                rule.channel != payload.channel,
+                rule.topic != payload.topic,
+                rule.tone != payload.tone,
+                rule.objective != payload.objective,
+                rule.timezone != payload.timezone,
+                list(rule.days_of_week or []) != payload.days_of_week,
+                rule.publish_time != payload.publish_time,
+                list(rule.approval_channels or []) != payload.approval_channels,
+                rule.generate_ahead_minutes != payload.generate_ahead_minutes,
+                rule.publish_after_approval != payload.publish_after_approval,
+            )
+        )
+        if material_change:
+            _cancel_automation_jobs(session, rule.id, "Automation schedule changed or paused.")
+        rule.name = payload.name
+        rule.enabled = payload.enabled
+        rule.channel = payload.channel
+        rule.topic = payload.topic
+        rule.tone = payload.tone
+        rule.objective = payload.objective
+        rule.timezone = payload.timezone
+        rule.days_of_week = payload.days_of_week
+        rule.publish_time = payload.publish_time
+        rule.approval_channels = payload.approval_channels
+        rule.generate_ahead_minutes = payload.generate_ahead_minutes
+        rule.publish_after_approval = payload.publish_after_approval
+        if material_change:
+            rule.next_run_at = None
+            rule.next_publish_at = None
+            rule.last_error = None
+        rule.updated_at = utc_now()
+        if rule.enabled and (material_change or not rule.next_run_at):
+            _queue_automation_occurrence(session, rule)
+        _append_audit(
+            session,
+            action="automation.updated",
+            entity_type="automation",
+            entity_id=rule.id,
+            summary=f"Updated {rule.name}; {len(rule.days_of_week)} post slots per week.",
+        )
+        session.flush()
+        return _automation_dict(rule)
+
+
+def delete_automation(automation_id: str) -> None:
+    with write_session() as session:
+        rule = session.get(AutomationRule, automation_id)
+        if rule is None:
+            raise AppError("Automation not found.", 404)
+        name = rule.name
+        _cancel_automation_jobs(session, rule.id, "Automation deleted.")
+        for post in session.scalars(select(Post).where(Post.automation_id == rule.id)).all():
+            post.automation_id = None
+        session.delete(rule)
+        _append_audit(
+            session,
+            action="automation.deleted",
+            entity_type="automation",
+            entity_id=automation_id,
+            summary=f"Deleted {name}. Existing drafts and published history were preserved.",
+        )
+
+
+def duplicate_automation(automation_id: str) -> dict[str, Any]:
+    with read_session() as session:
+        rule = session.get(AutomationRule, automation_id)
+        if rule is None:
+            raise AppError("Automation not found.", 404)
+        payload = AutomationRuleUpsert(
+            name=f"{rule.name} copy"[:120],
+            enabled=False,
+            channel=rule.channel,
+            topic=rule.topic,
+            tone=rule.tone,
+            objective=rule.objective,
+            timezone=rule.timezone,
+            days_of_week=list(rule.days_of_week or []),
+            publish_time=rule.publish_time,
+            approval_channels=list(rule.approval_channels or []),
+            generate_ahead_minutes=rule.generate_ahead_minutes,
+            publish_after_approval=rule.publish_after_approval,
+        )
+    return create_automation(payload)
+
+
+def automation_runtime(automation_id: str) -> dict[str, Any]:
+    with read_session() as session:
+        rule = session.get(AutomationRule, automation_id)
+        if rule is None or not rule.enabled:
+            raise AppError("This automation is disabled or no longer exists.")
+        return _automation_dict(rule)
+
+
+def complete_automation_occurrence(automation_id: str, occurrence_at: str) -> dict[str, Any]:
+    with write_session() as session:
+        rule = session.get(AutomationRule, automation_id)
+        if rule is None:
+            raise AppError("Automation not found.", 404)
+        now = utc_now()
+        rule.last_run_at = now
+        rule.last_error = None
+        rule.updated_at = now
+        rule.next_run_at = None
+        rule.next_publish_at = None
+        if rule.enabled:
+            after = datetime.fromisoformat(occurrence_at)
+            _queue_automation_occurrence(session, rule, after=after)
+        _append_audit(
+            session,
+            action="automation.generated",
+            entity_type="automation",
+            entity_id=rule.id,
+            summary=f"{rule.name} generated its scheduled draft.",
+        )
+        session.flush()
+        return _automation_dict(rule)
+
+
+def fail_automation_occurrence(automation_id: str, message: str) -> None:
+    with write_session() as session:
+        rule = session.get(AutomationRule, automation_id)
+        if rule is None:
+            return
+        rule.last_error = message[:2_000]
+        rule.updated_at = utc_now()
+
+
+def ensure_automation_jobs() -> int:
+    created = 0
+    with write_session() as session:
+        rules = session.scalars(select(AutomationRule).where(AutomationRule.enabled.is_(True))).all()
+        for rule in rules:
+            active = False
+            for job in session.scalars(
+                select(LocalJob).where(
+                    LocalJob.kind == "automation.generate",
+                    LocalJob.status.in_({"queued", "retrying", "running"}),
+                )
+            ).all():
+                if str((job.payload or {}).get("automation_id") or "") == rule.id:
+                    active = True
+                    rule.next_run_at = job.run_at
+                    rule.next_publish_at = str((job.payload or {}).get("publish_at") or "") or None
+                    break
+            if not active:
+                _queue_automation_occurrence(session, rule)
+                created += 1
+    return created
 
 
 def schedule_post(

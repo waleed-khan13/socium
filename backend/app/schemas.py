@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime
 from typing import Any, Literal, Self
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 from pydantic.alias_generators import to_camel
@@ -55,6 +56,8 @@ class BrandProfileUpdate(ApiModel):
     primary_color: str = Field(default="#f59e0b", pattern=r"^#[0-9a-fA-F]{6}$")
     secondary_color: str = Field(default="#18181b", pattern=r"^#[0-9a-fA-F]{6}$")
     accent_color: str = Field(default="#10b981", pattern=r"^#[0-9a-fA-F]{6}$")
+    heading_font: str = Field(default="", max_length=160)
+    body_font: str = Field(default="", max_length=160)
     visual_style: str = Field(default="", max_length=2_000)
 
     @field_validator("website")
@@ -101,6 +104,54 @@ class BrandProfileUpdate(ApiModel):
         return cleaned
 
 
+class BrandDiscoveryRequest(ApiModel):
+    url: str = Field(min_length=4, max_length=2_048)
+
+
+class PreviousBrandCleanupRequest(ApiModel):
+    current_business_name: str = Field(min_length=1, max_length=120)
+
+
+class BrandDiscoveryDraft(ApiModel):
+    business_name: str = Field(default="", max_length=120)
+    website: str = Field(default="", max_length=2_048)
+    description: str = Field(default="", max_length=2_000)
+    industry: str = Field(default="", max_length=160)
+    products_services: str = Field(default="", max_length=4_000)
+    target_audience: str = Field(default="", max_length=3_000)
+    location: str = Field(default="", max_length=240)
+    goals: list[str] = Field(default_factory=list, max_length=12)
+    call_to_action: str = Field(default="", max_length=500)
+    language: str = Field(default="English", max_length=80)
+    tone: str = Field(default="Clear and confident", max_length=240)
+    content_pillars: list[str] = Field(default_factory=list, max_length=12)
+    branded_hashtags: list[str] = Field(default_factory=list, max_length=20)
+    primary_color: str = Field(default="#f59e0b", pattern=r"^#[0-9a-fA-F]{6}$")
+    secondary_color: str = Field(default="#18181b", pattern=r"^#[0-9a-fA-F]{6}$")
+    accent_color: str = Field(default="#10b981", pattern=r"^#[0-9a-fA-F]{6}$")
+    heading_font: str = Field(default="", max_length=160)
+    body_font: str = Field(default="", max_length=160)
+    visual_style: str = Field(default="", max_length=2_000)
+
+    @field_validator("goals", "content_pillars", "branded_hashtags")
+    @classmethod
+    def normalize_discovered_lists(cls, values: list[str], info: ValidationInfo) -> list[str]:
+        maximum = 80 if info.field_name == "branded_hashtags" else 240
+        output: list[str] = []
+        seen: set[str] = set()
+        for raw in values:
+            value = str(raw).strip()[:maximum]
+            if info.field_name == "branded_hashtags" and value:
+                value = f"#{value.lstrip('#')}"
+                if not value[1:].replace("_", "").isalnum():
+                    continue
+            identity = value.casefold()
+            if value and identity not in seen:
+                output.append(value)
+                seen.add(identity)
+        return output
+
+
 class OnboardingUpdate(ApiModel):
     action: Literal["start", "set-step", "confirm-storage", "dismiss", "complete", "reset"]
     step: Literal["welcome", "storage", "ai", "brand", "finish"] | None = None
@@ -111,6 +162,15 @@ class OnboardingUpdate(ApiModel):
         if self.action == "set-step" and self.step is None:
             raise ValueError("Choose an onboarding step.")
         return self
+
+
+class StorageDirectoryPickerRequest(ApiModel):
+    purpose: Literal["data", "models"]
+
+
+class StorageMoveRequest(ApiModel):
+    data_dir: str = Field(min_length=2, max_length=4_096)
+    models_dir: str = Field(min_length=2, max_length=4_096)
 
 
 class ProviderUpdate(ApiModel):
@@ -172,6 +232,18 @@ class ImageGenerateRequest(ApiModel):
 class TelegramUpdate(ApiModel):
     chat_id: str = Field(min_length=1, max_length=160)
     bot_token: str = Field(default="", max_length=2_000)
+    proxy_url: str = Field(default="", max_length=2_048)
+    clear_proxy: bool = False
+
+
+class TelegramConnectRequest(ApiModel):
+    bot_token: str = Field(default="", max_length=2_000)
+    proxy_url: str = Field(default="", max_length=2_048)
+    clear_proxy: bool = False
+
+
+class TelegramProxyTestRequest(ApiModel):
+    proxy_url: str = Field(default="", max_length=2_048)
 
 
 class PollingUpdate(ApiModel):
@@ -215,6 +287,7 @@ class EditPostRequest(ApiModel):
     image_prompt: str | None = Field(default=None, max_length=4_000)
     image_negative_prompt: str | None = Field(default=None, max_length=2_000)
     image_alt_text: str | None = Field(default=None, max_length=500)
+    media_asset_id: UUID | None = None
     media_url: str | None = Field(default=None, max_length=2_048)
 
     _validate_media_url = field_validator("media_url")(_validate_post_media_url)
@@ -257,6 +330,48 @@ class SchedulePostRequest(ApiModel):
 
 class SchedulerUpdate(ApiModel):
     paused: bool
+
+
+class AutomationRuleUpsert(ApiModel):
+    name: str = Field(min_length=2, max_length=120)
+    enabled: bool = True
+    channel: Literal[
+        "linkedin",
+        "linkedin-company",
+        "facebook",
+        "telegram",
+        "blog",
+    ]
+    topic: str = Field(min_length=3, max_length=1_000)
+    tone: str = Field(default="Clear and confident", min_length=2, max_length=160)
+    objective: str = Field(default="Build useful awareness", min_length=2, max_length=500)
+    timezone: str = Field(default="Asia/Karachi", min_length=1, max_length=80)
+    days_of_week: list[int] = Field(min_length=1, max_length=7)
+    publish_time: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    approval_channels: list[Literal["telegram", "slack"]] = Field(default_factory=list, max_length=2)
+    generate_ahead_minutes: int = Field(default=60, ge=15, le=10_080)
+    publish_after_approval: bool = True
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as error:
+            raise ValueError("Choose a valid IANA timezone, for example Asia/Karachi.") from error
+        return value
+
+    @field_validator("days_of_week")
+    @classmethod
+    def validate_days(cls, values: list[int]) -> list[int]:
+        if any(day < 0 or day > 6 for day in values):
+            raise ValueError("daysOfWeek values must be between 0 (Monday) and 6 (Sunday).")
+        return sorted(set(values))
+
+    @field_validator("approval_channels")
+    @classmethod
+    def unique_approval_channels(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(values))
 
 
 class JobRecoveryRequest(ApiModel):

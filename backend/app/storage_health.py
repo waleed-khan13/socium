@@ -10,7 +10,8 @@ from typing import Any
 from app.config import Settings, get_settings
 
 LOW_SPACE_BYTES = 2 * 1024 * 1024 * 1024
-_cache: tuple[float, dict[str, Any]] | None = None
+STORAGE_CACHE_SECONDS = 60.0
+_cache: tuple[float, tuple[str, str, str], dict[str, Any]] | None = None
 
 
 def _directory_bytes(directory: Path, *, excluded_names: frozenset[str] = frozenset()) -> int:
@@ -130,8 +131,19 @@ def _build_storage_state(settings: Settings) -> dict[str, Any]:
 def storage_state(settings: Settings | None = None, *, refresh: bool = False) -> dict[str, Any]:
     global _cache
     now = time.monotonic()
-    if not refresh and _cache and now - _cache[0] < 5:
-        return _cache[1]
-    result = _build_storage_state(settings or get_settings())
-    _cache = (now, result)
+    resolved_settings = settings or get_settings()
+    location_key = (
+        str(resolved_settings.runtime_dir),
+        str(resolved_settings.data_dir),
+        str(resolved_settings.models_dir),
+    )
+    if (
+        not refresh
+        and _cache
+        and _cache[1] == location_key
+        and now - _cache[0] < STORAGE_CACHE_SECONDS
+    ):
+        return _cache[2]
+    result = _build_storage_state(resolved_settings)
+    _cache = (now, location_key, result)
     return result

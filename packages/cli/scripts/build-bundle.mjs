@@ -6,7 +6,12 @@ import { fileURLToPath } from "node:url";
 
 import * as tar from "tar";
 
-import { backendFileName, releaseTarget, supportedReleaseTargets } from "../src/platform.mjs";
+import {
+  backendFileName,
+  nativeHelperFileName,
+  releaseTarget,
+  supportedReleaseTargets,
+} from "../src/platform.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const projectRoot = path.resolve(packageRoot, "../..");
@@ -41,6 +46,13 @@ const executableName = backendFileName(platform);
 const backendBinary = path.resolve(
   process.env.SOCIUM_API_BINARY || path.join(projectRoot, "backend", "dist", executableName),
 );
+const helperName = nativeHelperFileName(platform);
+const nativeHelperBinary = helperName
+  ? path.resolve(
+      process.env.SOCIUM_WINDOWS_HELPER_BINARY ||
+        path.join(projectRoot, "native", "windows-helper", "target", "release", helperName),
+    )
+  : null;
 const standaloneRoot = path.join(projectRoot, ".next", "standalone");
 const portableModulesRoot = path.join(projectRoot, "packaging", "web-runtime", "node_modules");
 const outputRoot = path.join(projectRoot, "release");
@@ -57,6 +69,9 @@ if (!(await exists(path.join(portableModulesRoot, "next", "package.json")))) {
 }
 if (!(await exists(backendBinary))) {
   throw new Error(`Bundled FastAPI executable is missing: ${backendBinary}. Run \`pnpm backend:bundle\` first.`);
+}
+if (nativeHelperBinary && !(await exists(nativeHelperBinary))) {
+  throw new Error(`Windows native helper is missing: ${nativeHelperBinary}. Run \`pnpm native:build\` first.`);
 }
 
 await rm(stagingRoot, { recursive: true, force: true });
@@ -80,6 +95,10 @@ if (await exists(path.join(projectRoot, "public"))) {
 }
 await cp(backendBinary, path.join(runtimeRoot, "backend", executableName));
 if (platform !== "win32") await chmod(path.join(runtimeRoot, "backend", executableName), 0o755);
+if (nativeHelperBinary && helperName) {
+  await mkdir(path.join(runtimeRoot, "native"), { recursive: true });
+  await cp(nativeHelperBinary, path.join(runtimeRoot, "native", helperName));
+}
 await mkdir(path.join(runtimeRoot, "bin"), { recursive: true });
 const nodeName = platform === "win32" ? "node.exe" : "node";
 await cp(process.execPath, path.join(runtimeRoot, "bin", nodeName));
@@ -94,7 +113,7 @@ await writeFile(
   path.join(runtimeRoot, "bundle.json"),
   `${JSON.stringify(
     {
-      schemaVersion: 2,
+      schemaVersion: 3,
       product: "socium",
       version,
       target,
@@ -108,6 +127,8 @@ await writeFile(
 
 await mkdir(outputRoot, { recursive: true });
 await rm(archivePath, { force: true });
+const bundleEntries = ["bundle.json", "backend", "bin", "controller", "web"];
+if (nativeHelperBinary) bundleEntries.push("native");
 await tar.c(
   {
     cwd: runtimeRoot,
@@ -116,7 +137,7 @@ await tar.c(
     portable: true,
     noMtime: true,
   },
-  ["bundle.json", "backend", "bin", "controller", "web"],
+  bundleEntries,
 );
 
 const archiveChecksum = await sha256(archivePath);

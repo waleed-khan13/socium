@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 
 import type { PublicAppState } from "../src/lib/app-types";
 
@@ -46,7 +46,41 @@ async function expectNoAccessibilityViolations(page: Page, testInfo: TestInfo, n
   expect(violations, `${name} has automated WCAG A/AA violations`).toEqual([]);
 }
 
+async function expectDialogFitsViewport(
+  page: Page,
+  dialog: Locator,
+  viewport: { width: number; height: number },
+) {
+  await page.setViewportSize(viewport);
+  await expect(dialog).toBeVisible();
+
+  const minimumExpectedWidth = viewport.width >= 1024
+    ? 1000
+    : viewport.width >= 640
+      ? viewport.width - 70
+      : viewport.width - 40;
+  await expect.poll(
+    async () => (await dialog.boundingBox())?.width ?? 0,
+    { message: `dialog should reflow at ${viewport.width}x${viewport.height}` },
+  ).toBeGreaterThan(minimumExpectedWidth);
+
+  const box = await dialog.boundingBox();
+  expect(box, `dialog should have a box at ${viewport.width}x${viewport.height}`).not.toBeNull();
+  if (!box) return;
+
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + 1);
+  expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1);
+
+  const horizontalOverflow = await dialog.evaluate(
+    (element) => element.scrollWidth - element.clientWidth,
+  );
+  expect(horizontalOverflow, `dialog should not clip horizontally at ${viewport.width}x${viewport.height}`).toBeLessThanOrEqual(1);
+}
+
 async function dismissOnboardingIfPresent(page: Page) {
+  await page.getByText(/LOCAL.*v\d+\.\d+\.\d+/).first().waitFor({ state: "attached", timeout: 60_000 });
   const dialog = page.getByRole("dialog", { name: "Socium first-run setup" });
   if (await dialog.isVisible().catch(() => false)) {
     await dialog.getByRole("button", { name: "Set up later" }).click();
@@ -60,11 +94,27 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   const onboarding = page.getByRole("dialog", { name: "Socium first-run setup" });
   await expect(onboarding.getByRole("heading", { name: "Welcome to Socium" })).toBeVisible();
   await expect(onboarding.getByText("LOCAL-FIRST · NO SOCIUM ACCOUNT")).toBeVisible();
+  for (const viewport of [
+    { width: 360, height: 800 },
+    { width: 768, height: 1024 },
+    { width: 1600, height: 900 },
+  ]) {
+    await expectDialogFitsViewport(page, onboarding, viewport);
+  }
+  await page.setViewportSize({ width: 1280, height: 720 });
   await expectNoAccessibilityViolations(page, testInfo, "onboarding-welcome");
 
   await onboarding.getByRole("button", { name: "Start setup" }).click();
   await expect(onboarding.getByRole("heading", { name: "Confirm private storage" })).toBeVisible();
   await expect(onboarding.getByText("Both durable locations are available.")).toBeVisible();
+  await onboarding.getByRole("button", { name: "Change storage locations" }).click();
+  const storagePicker = page.getByRole("dialog", { name: "Choose private storage folders" });
+  await expect(storagePicker.getByLabel("Selected Socium data folder")).toHaveValue(/.+/);
+  await expect(storagePicker.getByLabel("Selected Socium models folder")).toHaveValue(/.+/);
+  await expect(storagePicker.getByRole("button", { name: "Move safely & restart" })).toBeDisabled();
+  await expectNoAccessibilityViolations(page, testInfo, "onboarding-storage-picker");
+  await storagePicker.getByRole("button", { name: "Cancel" }).click();
+  await expect(storagePicker).toHaveCount(0);
   await onboarding.getByRole("button", { name: "Confirm these locations" }).click();
 
   await expect(onboarding.getByRole("heading", { name: "Connect one AI" })).toBeVisible();
@@ -80,6 +130,49 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await onboarding.getByRole("button", { name: "Continue to brand" }).click();
 
   await expect(onboarding.getByRole("heading", { name: "Confirm your brand" })).toBeVisible();
+  await page.route("**/api/settings/brand-profile/discover", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        draft: {
+          businessName: "Northstar Studio",
+          website: "https://northstar.example/",
+          description: "Northstar Studio helps local service businesses build useful marketing systems.",
+          industry: "Marketing technology",
+          productsServices: "Private social publishing workflows with human approval.",
+          targetAudience: "Privacy-conscious local service businesses.",
+          location: "Lahore, Pakistan",
+          goals: ["Build useful awareness", "Earn qualified conversations"],
+          callToAction: "Book a practical workflow review.",
+          language: "English",
+          tone: "Clear, practical, and calm",
+          contentPillars: ["Local-first AI", "Human-reviewed publishing"],
+          brandedHashtags: ["#NorthstarStudio", "#HumanReviewed"],
+          primaryColor: "#f59e0b",
+          secondaryColor: "#18181b",
+          accentColor: "#10b981",
+          headingFont: "Sora",
+          bodyFont: "Inter",
+          visualStyle: "Dark, clear layouts with authentic product imagery.",
+        },
+        fieldOrigins: {},
+        sources: [{ url: "https://northstar.example/", title: "Northstar Studio" }],
+        signals: { colors: ["#f59e0b"], fonts: ["Sora", "Inter"], logoCandidates: [], socialLinks: [] },
+        logoAsset: null,
+        provider: { kind: "openai-compatible", model: "e2e-model", local: false },
+        warnings: [],
+        storagePolicy: "editable-draft",
+      }),
+      status: 200,
+    });
+  });
+  await onboarding.getByLabel("Business website to analyze").fill("https://northstar.example");
+  await onboarding.getByRole("button", { name: "Analyze & fill" }).click();
+  await expect(onboarding.getByText("1 PAGES READ")).toBeVisible();
+  await expect(onboarding.getByLabel("Business name")).toHaveValue("Northstar Studio");
+  await expect(onboarding.getByLabel("Heading font")).toHaveValue("Sora");
+  await expect(onboarding.getByLabel("Body font")).toHaveValue("Inter");
   await onboarding.getByLabel("Workspace name").fill("E2E workspace");
   await onboarding.getByLabel("Business name").fill("Northstar Studio");
   await onboarding
@@ -168,7 +261,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   const regenerateResponse = page.waitForResponse(
     (response) => /\/api\/posts\/[^/]+\/regenerate$/.test(response.url()) && response.request().method() === "POST",
   );
-  await postCard.getByRole("button", { name: "Regenerate" }).click();
+  await postCard.getByRole("button", { name: "Regenerate post", exact: true }).click();
   await expect((await regenerateResponse).status()).toBe(200);
   await expect(page.getByText("Fresh revision generated")).toBeVisible();
   const regeneratedStateResponse = await page.request.get("/api/state");
@@ -183,10 +276,10 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await expect(postCard.getByText("Book a practical workflow review.", { exact: true })).toBeVisible();
   await expect(postCard.getByText(/A dark editorial small-business workspace/)).toBeVisible();
   await expect(postCard.getByText(/Small-business workspace arranged/)).toBeVisible();
-  await postCard.getByRole("button", { name: "Create image from this brief" }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Media library" })).toBeVisible();
-  await expect(page.getByLabel("Campaign image prompt")).toHaveValue(/A dark editorial small-business workspace/);
-  await expect(page.getByLabel("Planned alt text")).toHaveValue(/Small-business workspace arranged/);
+  await expect(postCard.getByRole("button", { name: "Regenerate image", exact: true })).toBeVisible();
+  await navigate(page, "Media library", "Media library");
+  await expect(page.getByText(/A dark editorial small-business workspace/)).toBeVisible();
+  await expect(page.getByRole("img", { name: /Small-business workspace arranged/ })).toBeVisible();
   await navigate(page, "Approval queue", "Approval queue");
   postCard = page
     .getByRole("heading", { level: 2, name: generatedTitle })
@@ -404,13 +497,27 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   expect(instagramMockState.lastInstagramPublish).toEqual({ creation_id: "18000000000000010" });
 
   await navigate(page, "Integrations", "Connections");
-  const linkedinForm = page.getByLabel("LinkedIn Member ID").locator("xpath=ancestor::form");
-  await linkedinForm.getByLabel("Connection name").fill("E2E LinkedIn profile");
-  await linkedinForm.getByLabel("LinkedIn Member ID").fill("782bbtaQ");
-  await linkedinForm.getByLabel("LinkedIn API version").fill("202607");
-  await linkedinForm.getByLabel("OAuth Access Token").fill("e2e-linkedin-access-token");
-  await linkedinForm.getByRole("button", { name: "Save & test" }).click();
-  await expect(page.getByText("Connected to LinkedIn as Waleed Khan.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Connect LinkedIn" })).toBeVisible();
+  await expect(page.getByLabel("LinkedIn Member ID")).toHaveCount(0);
+  const linkedinCreateResponse = await page.request.post("/api/connectors", {
+    data: {
+      adapterId: "linkedin",
+      name: "E2E LinkedIn profile",
+      config: { person_id: "782bbtaQ", api_version: "202607" },
+      secrets: { access_token: "e2e-linkedin-access-token" },
+      scopes: ["openid", "profile", "w_member_social"],
+      enabled: true,
+    },
+  });
+  expect(linkedinCreateResponse.status()).toBe(200);
+  const linkedinCreateBody = (await linkedinCreateResponse.json()) as {
+    account: { id: string };
+  };
+  const linkedinTestResponse = await page.request.post(
+    `/api/connectors/${linkedinCreateBody.account.id}/test`,
+  );
+  expect(linkedinTestResponse.status()).toBe(200);
+  await page.reload();
 
   await navigate(page, "Create content", "Create a draft");
   await page.getByLabel("Topic or source brief").fill(
@@ -595,7 +702,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   const skipCard = page
     .getByRole("heading", { level: 2, name: "A skippable X review draft" })
     .locator('xpath=ancestor::div[@data-slot="card"]');
-  await expect(skipCard.getByRole("button", { name: "Regenerate" })).toBeVisible();
+  await expect(skipCard.getByRole("button", { name: "Regenerate post", exact: true })).toBeVisible();
   await expect(skipCard.getByRole("button", { name: "Edit" })).toBeVisible();
   await expect(skipCard.getByRole("button", { name: "Approve" })).toBeVisible();
   await skipCard.getByRole("button", { name: "Skip" }).click();
@@ -675,8 +782,8 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
 
 test("offers simple prebuilt AI providers without a Socium account", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
   await dismissOnboardingIfPresent(page);
+  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
   await navigate(page, "Integrations", "Connections");
 
   const providerCard = page
@@ -695,7 +802,7 @@ test("offers simple prebuilt AI providers without a Socium account", async ({ pa
   await expect(providerCard.getByRole("button", { name: "Connect provider" })).toBeEnabled();
 
   for (const [option, model, credentialLabel, credentialUrl] of [
-    ["Google Gemini", "gemini-3.7-flash", "Get Gemini key", "https://aistudio.google.com/apikey"],
+    ["Google Gemini", "gemini-3.5-flash-lite", "Get Gemini key", "https://aistudio.google.com/apikey"],
     ["Claude (Anthropic)", "claude-sonnet-4-6", "Get Claude key", "https://platform.claude.com/settings/keys"],
     ["OpenRouter", "openrouter/free", "Get OpenRouter key", "https://openrouter.ai/settings/keys"],
     ["NVIDIA NIM", "meta/llama-3.1-8b-instruct", "Get NVIDIA key", "https://build.nvidia.com/settings/api-keys"],
@@ -726,9 +833,31 @@ test("offers simple prebuilt AI providers without a Socium account", async ({ pa
 
   const telegramCard = page.getByText("Telegram", { exact: true }).locator('xpath=ancestor::div[@data-slot="card"]');
   await expect(telegramCard.getByRole("link", { name: "Get bot token" })).toHaveAttribute("href", "https://t.me/BotFather");
+  await expect(telegramCard.getByLabel("Approval chat ID")).toHaveCount(0);
+  const telegramProxySwitch = telegramCard.getByRole("switch", { name: "Use your own Telegram-only proxy" });
+  await expect(telegramProxySwitch).toBeVisible();
+  await telegramProxySwitch.click();
+  await expect(telegramCard.getByRole("button", { name: "Test proxy" })).toBeDisabled();
+  await page.route("**/api/integrations/telegram/proxy/test", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, message: "Proxy reached the Telegram Bot API successfully." }),
+      status: 200,
+    });
+  });
+  await telegramCard.getByLabel("HTTP or SOCKS5 proxy").fill("socks5://proxy.example:1080");
+  await telegramCard.getByRole("button", { name: "Test proxy" }).click();
+  await expect(telegramCard.getByText("Proxy reached the Telegram Bot API successfully.")).toBeVisible();
+  await expect(telegramCard.getByRole("button", { name: /Connect Telegram|Reconnect Telegram/ })).toBeVisible();
   const slackCard = page.getByText("Slack approval connector", { exact: true }).locator('xpath=ancestor::div[@data-slot="card"]');
-  await expect(slackCard.getByRole("link", { name: "Get bot token" })).toHaveAttribute("href", "https://api.slack.com/apps");
-  await expect(slackCard.getByRole("link", { name: "Get app token" })).toHaveAttribute("href", "https://api.slack.com/apps");
+  await expect(slackCard.getByText("No Slack tokens or channel IDs", { exact: true })).toBeVisible();
+  await expect(slackCard.getByLabel("Bot token")).toHaveCount(0);
+  await expect(slackCard.getByLabel("App token")).toHaveCount(0);
+  await expect(slackCard.getByRole("button", { name: /Connect Slack|Reconnect Slack/ })).toBeVisible();
+  const linkedinCard = page.getByText("LinkedIn Member", { exact: true }).locator('xpath=ancestor::div[@data-slot="card"]');
+  await expect(linkedinCard.getByText("The browser never receives the access token.", { exact: false })).toBeVisible();
+  await expect(linkedinCard.getByLabel("OAuth Access Token")).toHaveCount(0);
+  await expect(linkedinCard.getByRole("button", { name: /Connect LinkedIn|Reconnect LinkedIn/ })).toBeVisible();
   const wordpressCard = page
     .getByText("WordPress publisher", { exact: true })
     .locator('xpath=ancestor::div[@data-slot="card"]');
@@ -740,54 +869,85 @@ test("offers simple prebuilt AI providers without a Socium account", async ({ pa
   await expect(page.getByRole("link", { name: "Get OAuth token", exact: true }).first()).toHaveAttribute("href", "https://www.linkedin.com/developers/tools/oauth/token-generator");
 });
 
+test("manages recurring automations with readable scheduling controls", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await dismissOnboardingIfPresent(page);
+  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
+
+  const created = await page.request.post("/api/automations", {
+    data: {
+      name: "E2E weekly plan",
+      enabled: false,
+      channel: "linkedin",
+      topic: "Share practical local-first marketing lessons.",
+      tone: "Clear and useful",
+      objective: "Build trust",
+      timezone: "Asia/Karachi",
+      daysOfWeek: [0, 2, 4],
+      publishTime: "10:00",
+      approvalChannels: [],
+      generateAheadMinutes: 60,
+      publishAfterApproval: true,
+    },
+  });
+  expect(created.ok()).toBeTruthy();
+  const automation = (await created.json()).automation as { id: string };
+
+  await page.reload();
+  await dismissOnboardingIfPresent(page);
+  await navigate(page, "Automations", "Automations");
+  await expect(page.getByText("E2E weekly plan", { exact: true })).toBeVisible();
+  await expect(page.getByText("3 / week", { exact: true })).toBeVisible();
+  await expect(page.getByText("Approval-first", { exact: true })).toBeVisible();
+  await expectNoAccessibilityViolations(page, testInfo, "automations");
+
+  await page.getByRole("button", { name: "New automation" }).click();
+  const createDialog = page.getByRole("dialog", { name: "Create automation" });
+  await expect(createDialog.getByLabel("Name")).toBeVisible();
+  await expect(createDialog.getByText("3 posts every week", { exact: true })).toBeVisible();
+  await expect(createDialog.getByRole("button", { name: "3 per week", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await createDialog.getByRole("button", { name: "Daily", exact: true }).click();
+  await expect(createDialog.getByText("7 posts every week", { exact: true })).toBeVisible();
+  await expect(createDialog.getByRole("switch", { name: /Publish automatically after approval/ })).toBeChecked();
+  await createDialog.getByRole("button", { name: "Cancel" }).click();
+
+  const card = page.getByText("E2E weekly plan", { exact: true }).locator('xpath=ancestor::div[@data-slot="card"]');
+  await card.getByRole("button", { name: "Edit" }).click();
+  const editDialog = page.getByRole("dialog", { name: "Edit automation" });
+  await editDialog.getByLabel("Name").fill("E2E updated plan");
+  await editDialog.getByRole("button", { name: "Save automation" }).click();
+  await expect(page.getByText("E2E updated plan", { exact: true })).toBeVisible();
+
+  const updatedCard = page.getByText("E2E updated plan", { exact: true }).locator('xpath=ancestor::div[@data-slot="card"]');
+  await updatedCard.getByRole("button", { name: "Delete" }).click();
+  const deleteDialog = page.getByRole("dialog", { name: "Delete automation?" });
+  await deleteDialog.getByRole("button", { name: "Delete automation" }).click();
+  await expect(page.getByText("E2E updated plan", { exact: true })).toHaveCount(0);
+  expect((await page.request.delete(`/api/automations/${automation.id}`)).status()).toBe(404);
+});
+
 test("manages a real local media asset and hands its HTTPS source to a draft", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
   await dismissOnboardingIfPresent(page);
+  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
   await navigate(page, "Media library", "Media library");
-  await expect(page.getByText("No media stored yet")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Media library" })).toBeVisible();
 
-  await page.getByLabel("Adapter").click();
-  await page.getByRole("option", { name: "OpenAI-compatible Images API" }).click();
-  await expect(page.getByRole("link", { name: "Get Images API key" })).toHaveAttribute("href", "https://platform.openai.com/api-keys");
-  await page.getByLabel("Base URL").fill(`${mockBaseUrl}/v1`);
-  await page.getByLabel("Model").fill("e2e-image-model");
-  await page.getByLabel("API key").fill("e2e-image-key");
-  await page.getByRole("button", { name: "Save & test" }).click();
-  await expect(page.getByText("Image provider connected")).toBeVisible();
-
-  const imagePrompt = "A cyan product launch scene on a deep black background with editorial lighting";
-  await page.getByLabel("Campaign image prompt").fill(imagePrompt);
-  await page.getByLabel("Planned alt text").fill("Cyan product launch scene with editorial lighting");
-  await page.getByLabel("Aspect").click();
-  await page.getByRole("option", { name: "Landscape" }).click();
-  await page.getByLabel("Quality").click();
-  await page.getByRole("option", { name: "Medium" }).click();
-  const imageGenerationResponse = page.waitForResponse(
-    (response) => response.url().endsWith("/api/media/generations") && response.request().method() === "POST",
-  );
-  await page.getByRole("button", { name: "Generate image" }).click();
-  expect((await imageGenerationResponse).status()).toBe(200);
-  await expect(page.getByText("Image generation queued")).toBeVisible();
-  await expect(page.getByText("Image saved privately and ready for review.")).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText("AI provenance")).toBeVisible();
-  await expect(page.getByTitle(imagePrompt)).toBeVisible();
-
-  const generatedAssetsResponse = await page.request.get("/api/media");
-  const generatedAssets = await generatedAssetsResponse.json();
-  expect(generatedAssets.items[0].altText).toBe("Cyan product launch scene with editorial lighting");
-
-  const imageMockResponse = await page.request.get(`${mockBaseUrl}/__e2e/state`);
-  const imageMockState = await imageMockResponse.json();
-  expect(imageMockState.imageGenerationRequests).toBe(1);
-  expect(imageMockState.lastImageGeneration).toEqual({
-    model: "e2e-image-model",
-    prompt: imagePrompt,
-    n: 1,
-    size: "1536x1024",
-    quality: "medium",
-    output_format: "png",
+  const providerResponse = await page.request.put("/api/settings/provider", {
+    data: {
+      kind: "openai-compatible",
+      baseUrl: `${mockBaseUrl}/v1`,
+      model: "e2e-model",
+      apiKey: "e2e-provider-key",
+    },
   });
+  expect(providerResponse.status()).toBe(200);
+  await page.reload();
+  await navigate(page, "Media library", "Media library");
+  await expect(page.getByText("One connected AI", { exact: true })).toBeVisible();
+  await expect(page.getByText("No separate image API or adapter is needed.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Choose an image-capable AI in Integrations", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Generate image" })).toBeDisabled();
 
   const png = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -836,7 +996,6 @@ test("manages a real local media asset and hands its HTTPS source to a draft", a
   await assetCard.getByRole("button", { name: "Create Portrait 4:5 transform of e2e-campaign.png" }).click();
   expect((await transformResponse).status()).toBe(200);
   await expect(page.getByText("Portrait 4:5 created")).toBeVisible();
-  await expect(page.getByText("3 stored images")).toBeVisible();
 
   const transformedCard = page
     .getByText("e2e-campaign-portrait.webp", { exact: true })
@@ -847,13 +1006,13 @@ test("manages a real local media asset and hands its HTTPS source to a draft", a
   await expect(deleteDialog.getByText("This deletion cannot be undone.", { exact: false })).toBeVisible();
   await deleteDialog.getByRole("button", { name: "Delete local files" }).click();
   await expect(page.getByText("Media asset deleted from this computer")).toBeVisible();
-  await expect(page.getByText("2 stored images")).toBeVisible();
+  await expect(page.getByText("e2e-campaign-portrait.webp", { exact: true })).toHaveCount(0);
 });
 
 test("passes automated accessibility checks in core workflow views", async ({ page }, testInfo) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
   await dismissOnboardingIfPresent(page);
+  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
   await expectNoAccessibilityViolations(page, testInfo, "growth-command");
 
   await navigate(page, "Setup guide", "Setup guide");
@@ -867,13 +1026,16 @@ test("passes automated accessibility checks in core workflow views", async ({ pa
 
   await navigate(page, "Approval queue", "Approval queue");
   await expectNoAccessibilityViolations(page, testInfo, "approval-queue");
+
+  await navigate(page, "Automations", "Automations");
+  await expectNoAccessibilityViolations(page, testInfo, "automations-empty");
 });
 
 test("supports keyboard navigation on the mobile layout", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
   await dismissOnboardingIfPresent(page);
+  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
 
   const navigationTrigger = page.getByRole("button", { name: "Open navigation" });
   await navigationTrigger.focus();

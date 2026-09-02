@@ -1,0 +1,29 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "socium-connect",
+	"main": "src/worker.mjs",
+	"compatibility_date": "2026-08-30",
+	"workers_dev": true,
+	"observability": {
+		"enabled": true
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_id": "e695a8ab-3210-4bfe-a822-4934b14da7cb"
+		}
+	],
+	"secrets": {
+		"required": [
+			"HANDOFF_ENCRYPTION_KEY",
+			"SLACK_CLIENT_ID",
+			"SLACK_CLIENT_SECRET",
+			"SLACK_SIGNING_SECRET"
+		]
+	},
+	"triggers": {
+		"crons": [
+			"0 * * * *"
+		]
+	}
+}

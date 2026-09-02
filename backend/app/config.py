@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+DEFAULT_CONNECT_BROKER_URL = "https://socium-connect.socium-connect-broker.workers.dev"
+
 
 @dataclass(frozen=True, slots=True)
 class Settings:
@@ -26,6 +28,7 @@ class Settings:
     scheduler_worker_timeout_seconds: int
     scheduler_crash_limit: int
     slack_socket_enabled: bool
+    connect_broker_url: str
     labs_enabled: bool
     migration_check: bool
 
@@ -79,6 +82,10 @@ def get_settings() -> Settings:
         "no",
         "off",
     }
+    connect_broker_url = os.getenv(
+        "SOCIUM_CONNECT_BROKER_URL",
+        DEFAULT_CONNECT_BROKER_URL,
+    ).strip().rstrip("/")
     labs_enabled = os.getenv("SOCIUM_ENABLE_LABS", "0").strip().lower() in {
         "1",
         "true",
@@ -110,6 +117,7 @@ def get_settings() -> Settings:
         scheduler_worker_timeout_seconds=scheduler_worker_timeout_seconds,
         scheduler_crash_limit=scheduler_crash_limit,
         slack_socket_enabled=slack_socket_enabled,
+        connect_broker_url=connect_broker_url,
         labs_enabled=labs_enabled,
         migration_check=migration_check,
     )

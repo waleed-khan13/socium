@@ -143,7 +143,7 @@ export function SetupGuide({
       action: "Add remote approvals",
       complete: approvalReady,
       description: "Dashboard approval works without another connector. Add Telegram or Slack only if reviews should reach another app.",
-      detail: "Optional: Telegram needs a bot token, chat ID, and polling enabled. Slack needs bot/app tokens, Socket Mode, and an invited approval channel.",
+      detail: "Optional: Telegram needs one BotFather token; Socium discovers the chat automatically. Slack uses Connect → Allow with no token or channel-ID copying.",
       icon: MessageCircle,
       label: "Connect an external approval channel",
       onAction: onOpenConnections,
@@ -154,7 +154,7 @@ export function SetupGuide({
       complete: publisherReady,
       description: publisherReady
         ? `Ready publishers: ${publisherSummary}.`
-        : "Connect Telegram, WordPress, Facebook, Instagram, or LinkedIn with official API credentials.",
+        : "Connect Telegram, WordPress, Facebook, Instagram, or LinkedIn. Slack and LinkedIn Member use one-click provider consent.",
       detail: "Use app tokens or application passwords, never social account passwords or browser cookies. Save & test must succeed before remote publishing.",
       icon: RadioTower,
       label: "Connect where content will publish",

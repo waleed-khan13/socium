@@ -98,7 +98,13 @@ async def local_ai_status(base_url: str) -> dict[str, Any]:
     running = False
     error: str | None = None
     try:
-        payload = await _request_json(f"{normalized}/api/tags", timeout=4)
+        # Loopback either answers quickly or is unavailable. Interactive status
+        # checks must not inherit hosted-provider retries and backoff delays.
+        payload = await _request_json(
+            f"{normalized}/api/tags",
+            timeout=2,
+            max_attempts=1,
+        )
         raw_models = payload.get("models") if isinstance(payload.get("models"), list) else []
         models = [
             str(item.get("name")) for item in raw_models if isinstance(item, dict) and item.get("name")
@@ -129,7 +135,7 @@ def _event(payload: dict[str, Any]) -> bytes:
 async def stream_ollama_pull(base_url: str, model: str) -> AsyncIterator[bytes]:
     normalized = validate_base_url(base_url)
     # Fail before opening a long stream if this is not an Ollama endpoint.
-    await _request_json(f"{normalized}/api/tags", timeout=4)
+    await _request_json(f"{normalized}/api/tags", timeout=3, max_attempts=1)
     last_percentage = -1
     timeout = httpx.Timeout(connect=10, read=None, write=30, pool=10)
     try:

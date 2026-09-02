@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Any
 
+import httpx
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
 
@@ -55,7 +56,14 @@ def process_slack_interaction(
             for item in actions
             if isinstance(item, dict)
             and item.get("action_id")
-            in {"socium_approve", "socium_regenerate", "socium_edit", "socium_skip"}
+            in {
+                "socium_approve",
+                "socium_regenerate",
+                "socium_regenerate_post",
+                "socium_regenerate_image",
+                "socium_edit",
+                "socium_skip",
+            }
         ),
         None,
     )
@@ -70,9 +78,16 @@ def process_slack_interaction(
 
     raw_value = str(action.get("value") or "")
     parts = raw_value.split(":")
-    if len(parts) != 3 or parts[0] != "sa" or parts[1] not in {"a", "r", "e", "s"}:
+    if len(parts) != 3 or parts[0] != "sa" or parts[1] not in {"a", "r", "p", "i", "e", "s"}:
         return SlackInteractionResult(channel_id, user_id, "Unknown Socium approval action.")
-    action_names = {"a": "approve", "r": "regenerate", "e": "edit", "s": "skip"}
+    action_names = {
+        "a": "approve",
+        "r": "regenerate_post",
+        "p": "regenerate_post",
+        "i": "regenerate_image",
+        "e": "edit",
+        "s": "skip",
+    }
     return SlackInteractionResult(
         channel_id,
         user_id,
@@ -83,8 +98,9 @@ def process_slack_interaction(
 
 
 class SlackSocketListener:
-    def __init__(self, enabled: bool = True) -> None:
+    def __init__(self, enabled: bool = True, broker_url: str = "") -> None:
         self.enabled = enabled
+        self.broker_url = broker_url.rstrip("/")
         self._supervisor: asyncio.Task[None] | None = None
         self._workers: dict[str, tuple[str, asyncio.Task[None]]] = {}
         self._statuses: dict[str, dict[str, Any]] = {}
@@ -178,6 +194,9 @@ class SlackSocketListener:
         bot_token = str(secrets.get("bot_token") or "")
         app_token = str(secrets.get("app_token") or "")
         channel_id = str(config.get("approval_channel_id") or "")
+        if str(config.get("transport") or "") == "broker-relay":
+            await self._listen_relay(runtime, bot_token, channel_id)
+            return
         backoff = 2
         try:
             while True:
@@ -252,8 +271,99 @@ class SlackSocketListener:
         result = process_slack_interaction(payload, expected_channel_id)
         if result is None:
             return False
+        await self._apply_interaction(result, bot_token, expected_channel_id, account_id)
+        self._wake_event.set()
+        return False
+
+    async def _listen_relay(
+        self,
+        runtime: dict[str, Any],
+        bot_token: str,
+        expected_channel_id: str,
+    ) -> None:
+        account_id = str(runtime["id"])
+        relay_token = str(runtime["secrets"].get("relay_token") or "")
+        if not self.broker_url or not relay_token:
+            self._set_status(account_id, False, "retrying", "Slack one-click relay is not configured.")
+            return
+        backoff = 2
+        try:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+                while True:
+                    self._set_status(account_id, True, "listening", None)
+                    try:
+                        response = await client.post(
+                            f"{self.broker_url}/v1/slack/actions/poll",
+                            json={"relayToken": relay_token},
+                        )
+                        payload = response.json()
+                        if not response.is_success or not isinstance(payload, dict):
+                            raise ExternalServiceError("Slack approval relay rejected the local listener.")
+                        action = payload.get("action")
+                        if not isinstance(action, dict):
+                            await asyncio.sleep(3)
+                            backoff = 2
+                            continue
+                        interaction = action.get("payload")
+                        result = (
+                            process_slack_interaction(interaction, expected_channel_id)
+                            if isinstance(interaction, dict)
+                            else None
+                        )
+                        if result is not None:
+                            await self._apply_interaction(
+                                result,
+                                bot_token,
+                                expected_channel_id,
+                                account_id,
+                                relay_token,
+                            )
+                        acknowledged = await client.post(
+                            f"{self.broker_url}/v1/slack/actions/ack",
+                            json={
+                                "relayToken": relay_token,
+                                "actionId": action.get("id"),
+                                "leaseToken": action.get("leaseToken"),
+                            },
+                        )
+                        if not acknowledged.is_success:
+                            raise ExternalServiceError("Slack approval relay acknowledgement failed.")
+                        # Reconcile worker lifecycle only after the durable relay action is
+                        # acknowledged. Approve/skip may remove the final pending action and
+                        # otherwise cause the supervisor to cancel this worker before ACK.
+                        self._wake_event.set()
+                        backoff = 2
+                    except asyncio.CancelledError:
+                        raise
+                    except (httpx.HTTPError, ValueError, ExternalServiceError) as error:
+                        message = error.message if isinstance(error, ExternalServiceError) else "Slack approval relay is temporarily unavailable."
+                        self._set_status(account_id, False, "retrying", message)
+                        await asyncio.sleep(backoff)
+                        backoff = min(backoff * 2, 30)
+        except asyncio.CancelledError:
+            self._set_status(account_id, False, "stopped", None)
+            raise
+
+    async def _apply_interaction(
+        self,
+        result: SlackInteractionResult,
+        bot_token: str,
+        expected_channel_id: str,
+        account_id: str,
+        relay_token: str = "",
+    ) -> None:
+        broker_url = self.broker_url if relay_token else ""
         if result.action_id:
             try:
+                if result.action in {"regenerate", "regenerate_post", "regenerate_image"}:
+                    await send_decision_feedback(
+                        bot_token,
+                        result.channel_id,
+                        result.user_id,
+                        "Regeneration started. Socium is creating a fresh revision now.",
+                        broker_url=broker_url,
+                        relay_token=relay_token,
+                    )
                 applied = await apply_remote_approval_action(
                     result.action_id,
                     result.action,  # type: ignore[arg-type]
@@ -274,6 +384,8 @@ class SlackSocketListener:
                             expected_channel_id,
                             applied.post,
                             approval["id"],
+                            broker_url=broker_url,
+                            relay_token=relay_token,
                         )
                         record_approval_sent(approval["id"], message_ts)
                     except ExternalServiceError as error:
@@ -291,13 +403,13 @@ class SlackSocketListener:
                 result.channel_id,
                 result.user_id,
                 result.message,
+                broker_url=broker_url,
+                relay_token=relay_token,
             )
         except ExternalServiceError as error:
             self._set_status(account_id, True, "listening", error.message)
         else:
             self._set_status(account_id, True, "listening", None)
-        self._wake_event.set()
-        return False
 
     def _set_status(
         self,

@@ -3,15 +3,12 @@ import { chmod, copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { nativeHelperFileName } from "./platform.mjs";
 import { sociumPaths } from "./paths.mjs";
 import { loadInstallation } from "./state.mjs";
 
 async function exists(filePath) {
   try { await stat(filePath); return true; } catch { return false; }
-}
-
-function windowsQuote(value) {
-  return `'${String(value).replaceAll("'", "''")}'`;
 }
 
 function xmlEscape(value) {
@@ -56,19 +53,47 @@ child.unref();
   return { node: stableNode, script: scriptPath };
 }
 
-async function writeWindowsLauncher(paths, portable) {
-  const scriptPath = path.join(paths.launcherDirectory, "start-socium.ps1");
-  const script = `$ErrorActionPreference = 'Stop'\n$env:SOCIUM_HOME = ${windowsQuote(paths.root)}\nStart-Process -FilePath ${windowsQuote(portable.node)} -ArgumentList @(${windowsQuote(portable.script)}) -WorkingDirectory ${windowsQuote(paths.launcherDirectory)} -WindowStyle Hidden\n`;
-  await writeFile(scriptPath, script, "utf8");
-  return scriptPath;
+export function windowsNativeHelperPath(installation) {
+  return path.join(installation.runtimePath, "native", nativeHelperFileName("win32"));
 }
 
-async function createWindowsShortcut(shortcutPath, scriptPath) {
-  await mkdir(path.dirname(shortcutPath), { recursive: true });
-  const command = `$w=New-Object -ComObject WScript.Shell;$s=$w.CreateShortcut(${windowsQuote(shortcutPath)});$s.TargetPath='powershell.exe';$s.Arguments=${windowsQuote(`-NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`)};$s.WorkingDirectory=${windowsQuote(path.dirname(scriptPath))};$s.Description='Start Socium';$s.Save()`;
-  const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { windowsHide: true, stdio: "ignore" });
-  const code = await new Promise((resolve) => child.once("exit", resolve));
-  if (code !== 0) throw new Error("Windows could not create the Socium shortcut.");
+export function quoteWindowsArgument(value) {
+  return `"${String(value).replaceAll('"', '\\"')}"`;
+}
+
+async function runWindowsHelper(helper, arguments_) {
+  const child = spawn(helper, arguments_, {
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const code = await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (value) => resolve(value ?? 1));
+  });
+  if (code !== 0) throw new Error(stderr.trim() || "The Socium Windows helper failed.");
+  return stdout.trim();
+}
+
+async function createWindowsShortcut(helper, shortcutPath, portable) {
+  await runWindowsHelper(helper, [
+    "create-shortcut",
+    "--path",
+    shortcutPath,
+    "--target",
+    portable.node,
+    "--arguments",
+    quoteWindowsArgument(portable.script),
+    "--working-directory",
+    path.dirname(portable.script),
+    "--description",
+    "Start Socium",
+  ]);
 }
 
 export function nativePaths({
@@ -103,14 +128,15 @@ export async function installNativeIntegration({
     const result = await setAutostart({ paths, enabled: autostart, platform, portable, environment, homeDirectory });
     return { ...result, launcher: portable.script, shortcuts: false };
   }
-  const launcher = await writeWindowsLauncher(paths, portable);
+  const helper = windowsNativeHelperPath(installation);
+  if (!(await exists(helper))) throw new Error("The installed Windows native helper is missing. Run `socium update --force`.");
   const targets = nativePaths({ platform, environment, homeDirectory });
   if (shortcuts) {
-    await createWindowsShortcut(targets.desktop, launcher);
-    await createWindowsShortcut(targets.menu, launcher);
+    await createWindowsShortcut(helper, targets.desktop, portable);
+    await createWindowsShortcut(helper, targets.menu, portable);
   }
-  if (autostart) await createWindowsShortcut(targets.autostart, launcher);
-  return { launcher, shortcuts, autostart };
+  if (autostart) await createWindowsShortcut(helper, targets.autostart, portable);
+  return { launcher: portable.script, shortcuts, autostart };
 }
 
 export async function setAutostart({
@@ -130,8 +156,9 @@ export async function setAutostart({
   if (!installation) throw new Error("Socium is not installed.");
   const portable = suppliedPortable || await writePortableLauncher(paths, installation, platform);
   if (platform === "win32") {
-    const launcher = await writeWindowsLauncher(paths, portable);
-    await createWindowsShortcut(targets.autostart, launcher);
+    const helper = windowsNativeHelperPath(installation);
+    if (!(await exists(helper))) throw new Error("The installed Windows native helper is missing. Run `socium update --force`.");
+    await createWindowsShortcut(helper, targets.autostart, portable);
   } else if (platform === "darwin") {
     await mkdir(path.dirname(targets.autostart), { recursive: true });
     await writeFile(targets.autostart, `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>Label</key><string>com.socium.app</string><key>ProgramArguments</key><array><string>${xmlEscape(portable.node)}</string><string>${xmlEscape(portable.script)}</string></array><key>RunAtLoad</key><true/></dict></plist>`, "utf8");

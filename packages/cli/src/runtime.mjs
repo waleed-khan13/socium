@@ -2,14 +2,16 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { DEFAULT_API_PORT, DEFAULT_WEB_PORT } from "./constants.mjs";
 import { loadInstallation } from "./state.mjs";
-import { backendFileName } from "./platform.mjs";
+import { backendFileName, nativeHelperFileName } from "./platform.mjs";
 import { sociumPaths } from "./paths.mjs";
+import { findAvailablePort, isPortAvailable } from "./ports.mjs";
+
+export { findAvailablePort, isPortAvailable } from "./ports.mjs";
 
 async function exists(filePath) {
   try {
@@ -22,21 +24,14 @@ async function exists(filePath) {
 
 export function runtimeLayout(installation) {
   const platform = installation.target.split("-")[0];
+  const helperName = nativeHelperFileName(platform);
   return {
     apiExecutable: path.join(installation.runtimePath, "backend", backendFileName(platform)),
     webDirectory: path.join(installation.runtimePath, "web"),
     webServer: path.join(installation.runtimePath, "web", "server.js"),
     nodeExecutable: path.join(installation.runtimePath, "bin", platform === "win32" ? "node.exe" : "node"),
+    nativeHelper: helperName ? path.join(installation.runtimePath, "native", helperName) : null,
   };
-}
-
-export async function isPortAvailable(port, host = "127.0.0.1") {
-  return new Promise((resolve) => {
-    const server = net.createServer();
-    server.unref();
-    server.once("error", () => resolve(false));
-    server.listen({ host, port }, () => server.close(() => resolve(true)));
-  });
 }
 
 async function waitForHttp(url, child, timeoutMs = 90_000) {
@@ -97,6 +92,51 @@ function launchUpdateHelper({ manifestSource, restart, waitPid, rollback = false
   });
 }
 
+function launchStorageMoveHelper({ dataDirectory, modelsDirectory, waitPid, webPort, apiPort, trayMode }) {
+  const executable = process.execPath;
+  const controller = path.join(path.dirname(fileURLToPath(import.meta.url)), "controller.mjs");
+  const args = [
+    controller,
+    "storage-move",
+    "--wait-pid",
+    String(waitPid),
+    "--data-dir",
+    dataDirectory,
+    "--models-dir",
+    modelsDirectory,
+    "--port",
+    String(webPort),
+    "--api-port",
+    String(apiPort),
+    "--no-open",
+  ];
+  if (trayMode) args.push("--tray");
+  const child = spawn(executable, args, {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve(child.pid);
+    });
+  });
+}
+
+async function readJsonBody(request, maximumBytes = 16_384) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of request) {
+    total += chunk.length;
+    if (total > maximumBytes) throw new Error("Request is too large.");
+    chunks.push(chunk);
+  }
+  if (!chunks.length) return {};
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
 async function createControlServer({ token, state, onAction }) {
   const server = createServer(async (request, response) => {
     response.setHeader("content-type", "application/json");
@@ -108,10 +148,21 @@ async function createControlServer({ token, state, onAction }) {
       response.end(JSON.stringify({ ok: true, ...state() }));
       return;
     }
-    if (request.method === "POST" && ["/stop", "/restart", "/update", "/rollback"].includes(request.url)) {
+    if (request.method === "POST" && ["/stop", "/restart", "/update", "/rollback", "/storage-move"].includes(request.url)) {
       const action = request.url.slice(1);
-      response.end(JSON.stringify({ ok: true, action }));
-      setTimeout(() => Promise.resolve(onAction(action)).catch(() => undefined), 150).unref?.();
+      try {
+        const payload = action === "storage-move" ? await readJsonBody(request) : {};
+        if (action === "storage-move") await onAction(action, payload, { prepareOnly: true });
+        response.end(JSON.stringify({ ok: true, action, restarting: action === "storage-move" }));
+        setTimeout(
+          () => Promise.resolve(
+            onAction(action, payload, action === "storage-move" ? { prepared: true } : {}),
+          ).catch(() => undefined),
+          150,
+        ).unref?.();
+      } catch (error) {
+        response.writeHead(400).end(JSON.stringify({ ok: false, error: error?.message || "Invalid request" }));
+      }
       return;
     }
     response.writeHead(404).end(JSON.stringify({ ok: false, error: "Not found" }));
@@ -144,6 +195,7 @@ export async function startRuntime({
   shouldOpenBrowser = true,
   labsEnabled = false,
   updateManifest,
+  trayMode = false,
   log = console.log,
 } = {}) {
   if (!(await isPortAvailable(webPort))) {
@@ -153,10 +205,17 @@ export async function startRuntime({
       if (shouldOpenBrowser) openBrowser(url);
       return { alreadyRunning: true, url };
     }
-    throw new Error(`Port ${webPort} is already in use. Choose another port with --port.`);
+    const preferredWebPort = webPort;
+    webPort = await findAvailablePort(webPort, { exclude: [webPort, apiPort] });
+    log(`Port ${preferredWebPort} is busy; Socium selected web port ${webPort}.`);
   }
   if (!(await isPortAvailable(apiPort))) {
-    throw new Error(`Internal API port ${apiPort} is already in use. Choose another port with --api-port.`);
+    const preferredApiPort = apiPort;
+    apiPort = await findAvailablePort(apiPort, { exclude: [apiPort, webPort] });
+    log(`Internal API port ${preferredApiPort} is busy; Socium selected ${apiPort}.`);
+  }
+  if (apiPort === webPort) {
+    apiPort = await findAvailablePort(apiPort, { exclude: [apiPort, webPort] });
   }
 
   const installation = await loadInstallation(paths);
@@ -216,7 +275,27 @@ export async function startRuntime({
   const controlServer = await createControlServer({
     token: controlToken,
     state: () => ({ version: installation.version, webPort, apiPort, pid: process.pid }),
-    async onAction(action) {
+    async onAction(action, payload = {}, phase = {}) {
+      if (phase.prepareOnly) {
+        if (action === "storage-move") {
+          if (typeof payload.dataDir !== "string" || typeof payload.modelsDir !== "string") {
+            throw new Error("Data and model folders are required.");
+          }
+          await launchStorageMoveHelper({
+            dataDirectory: payload.dataDir,
+            modelsDirectory: payload.modelsDir,
+            waitPid: process.pid,
+            webPort,
+            apiPort,
+            trayMode,
+          });
+        }
+        return;
+      }
+      if (phase.prepared) {
+        stop(action);
+        return;
+      }
       if (action === "update") {
         const preparedManifest = path.join(installation.dataDirectory, ".updates", "prepared-manifest.json");
         await launchUpdateHelper({ manifestSource: await exists(preparedManifest) ? preparedManifest : updateManifest || installation.manifestSource, restart: true, waitPid: process.pid });
@@ -249,6 +328,7 @@ export async function startRuntime({
     SOCIUM_APP_VERSION: installation.version,
     SOCIUM_RELEASE_TARGET: installation.target,
     SOCIUM_RELEASE_MANIFEST: updateManifest || installation.manifestSource || "",
+    SOCIUM_WINDOWS_HELPER: layout.nativeHelper || "",
   };
 
   try {

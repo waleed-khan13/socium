@@ -66,7 +66,7 @@ def test_missed_publish_requires_run_now_reschedule_or_skip(client, monkeypatch)
         delivered.append("sent")
         return f"recovery-message-{len(delivered)}"
 
-    monkeypatch.setattr("app.main.generate_content", fake_generate)
+    monkeypatch.setattr("app.services.provider.generate_content", fake_generate)
     monkeypatch.setattr("app.services.publishing.publish_telegram_post", fake_publish)
     assert client.put(
         "/api/settings/provider",
