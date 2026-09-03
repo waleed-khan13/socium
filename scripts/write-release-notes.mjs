@@ -66,6 +66,10 @@ npx -y socium@${version} onboard
 
 Downloads are verified automatically against the SHA-256 checksums stored in the release manifest. You do not need to download a separate checksum file.
 
+## Code signing policy
+
+Socium has applied to the SignPath Foundation open-source program. If accepted, signed release artifacts will use **Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org)**. An artifact is unsigned unless these release notes explicitly identify it as signed. See the [Socium code signing policy](${serverUrl}/${repository}/blob/main/docs/CODE_SIGNING_POLICY.md).
+
 ## What's new
 
 ${notes}

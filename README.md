@@ -55,6 +55,10 @@ Publishing adapters for X; Instagram carousel/Reels processing; outreach deliver
 
 Download the latest Windows `.exe`, macOS `.dmg`, or Linux `.AppImage` from [GitHub Releases](https://github.com/waleed-khan13/socium/releases/latest). These native installers include the complete runtime: users do not need Node.js, Python, Rust, Docker, Git, pnpm, uv, or a source checkout.
 
+### Code signing policy
+
+Socium has applied to the SignPath Foundation open-source program. If accepted, future release artifacts will use **Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org)**. Current artifacts remain unsigned unless their release notes explicitly state otherwise. The artifact scope, maintainer roles, approval rule, verification process, and privacy reference are defined in the [Socium code signing policy](docs/CODE_SIGNING_POLICY.md).
+
 Terminal users can still use the command-line installer. This method needs Node.js 20.9+ for its first command:
 
 ```bash
@@ -300,6 +304,7 @@ pnpm check
 - `docs/ROADMAP.md` — milestones and acceptance criteria.
 - `docs/CREDENTIALS.md` — exact official credential portals, connector requirements, and token-safety steps.
 - `docs/COMPLIANCE.md` — discovery, publishing, outreach, and retention guardrails.
+- `docs/CODE_SIGNING_POLICY.md` — signing scope, maintainer roles, approval, release verification, and privacy references.
 - `docs/TERMS.md` and `docs/PRIVACY.md` — localhost product/provider terms and data-flow disclosure.
 - `design-system/socium/MASTER.md` — persisted visual system.
 - `Dockerfile`, `backend/Dockerfile`, and `compose.yaml` — loopback-only container packaging.
