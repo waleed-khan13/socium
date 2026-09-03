@@ -4,9 +4,17 @@ All notable user-facing changes are documented here.
 
 ## Unreleased
 
+## 1.3.0 - 2026-09-03
+
+### Added
+
+- Added dependency-free Windows `.exe`, macOS `.dmg`, and Linux `.AppImage` installers that embed the verified Socium runtime and open the localhost dashboard after installation.
+- Added native-installer smoke tests on every supported CPU architecture and checksum validation before installers are published.
+
 ### Changed
 
-- Simplified GitHub Releases to three prominent Windows, macOS, and Linux download choices while retaining automatic architecture selection in the one-command installer and SHA-256 verification through the release manifest.
+- Simplified GitHub Releases to three prominent native installer choices while retaining automatic architecture selection in the command-line installer and SHA-256 verification through the release manifest.
+- Made direct installers preserve existing data/model locations and refuse to replace a newer installed runtime when an older installer is opened.
 
 ## 1.2.0 - 2026-09-02
 

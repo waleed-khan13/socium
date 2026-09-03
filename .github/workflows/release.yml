@@ -135,11 +135,12 @@ jobs:
           pnpm backend:bundle
           pnpm backend:bundle:smoke
 
+      - name: Install the Rust toolchain for native launchers
+        run: rustup toolchain install stable --profile minimal
+
       - name: Build the native Windows helper
         if: startsWith(matrix.target, 'win32-')
-        run: |
-          rustup toolchain install stable --profile minimal
-          pnpm native:build
+        run: pnpm native:build
 
       - name: Build and smoke-test the installed application
         env:
@@ -147,6 +148,13 @@ jobs:
         run: |
           pnpm release:bundle -- --target ${{ matrix.target }}
           pnpm release:bundle:smoke
+
+      - name: Build and smoke-test the dependency-free installer
+        env:
+          SOCIUM_RELEASE_TARGET: ${{ matrix.target }}
+        run: |
+          pnpm native:installer -- --target ${{ matrix.target }}
+          pnpm native:installer:smoke -- --target ${{ matrix.target }}
 
       - name: Upload the native release asset
         uses: actions/upload-artifact@v7
@@ -156,6 +164,8 @@ jobs:
             release/socium-*-${{ matrix.target }}.tar.gz
             release/socium-*-${{ matrix.target }}.tar.gz.sha256
             release/socium-asset-${{ matrix.target }}.json
+            release/socium-installer-${{ matrix.target }}.json
+            release/Socium-*
           if-no-files-found: error
           compression-level: 0
 
@@ -189,6 +199,9 @@ jobs:
       - name: Assemble the checksummed release manifest
         run: pnpm --filter socium manifest release
 
+      - name: Verify the native installer matrix
+        run: pnpm native:installer:verify
+
       - name: Write the simple three-platform release page
         run: pnpm release:notes > release/socium-release-notes.md
 
@@ -197,10 +210,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" release/socium-*.tar.gz release/socium-manifest.json --clobber
+            gh release upload "$RELEASE_TAG" release/Socium-* release/socium-*.tar.gz release/socium-manifest.json --clobber
             gh release edit "$RELEASE_TAG" --notes-file release/socium-release-notes.md --title "Socium ${RELEASE_TAG#v}"
           else
-            gh release create "$RELEASE_TAG" release/socium-*.tar.gz release/socium-manifest.json --verify-tag --notes-file release/socium-release-notes.md --title "Socium ${RELEASE_TAG#v}"
+            gh release create "$RELEASE_TAG" release/Socium-* release/socium-*.tar.gz release/socium-manifest.json --verify-tag --notes-file release/socium-release-notes.md --title "Socium ${RELEASE_TAG#v}"
           fi
 
   npm-publish:

@@ -1,8 +1,20 @@
 # Installing Socium
 
-Socium runs entirely on your computer. The first `npx` installation needs Node.js 20.9 or newer; the installed release carries its own Node runtime for shortcuts and background starts. It does not need Docker, Python, uv, pnpm, or a source checkout.
+Socium runs entirely on your computer. The recommended native installers carry the application runtime and do not require Node.js, Python, Rust, Docker, Git, pnpm, uv, or a source checkout.
 
-## Install and start
+## Recommended graphical install
+
+Open the latest GitHub Release and choose the button for the current operating system:
+
+- Windows downloads `Socium-Setup-<version>.exe`. Open it to install Socium for the current user, create shortcuts, and launch the dashboard.
+- macOS downloads `Socium-<version>.dmg`. Open it, drag **Socium** to **Applications**, then open the app.
+- Linux downloads `Socium-<version>.AppImage`. Mark it executable if the desktop does not do so automatically, then open it.
+
+No administrator access is required because the replaceable runtime and durable state live in the current user's application-data directory. The operating system may show an unknown-publisher warning until the project configures maintainer-owned Windows and Apple signing certificates.
+
+## Optional command-line install
+
+The npm method remains available for terminal users and alternate CPU architectures. It requires Node.js 20.9 or newer for the first command; the installed release then uses its bundled Node runtime.
 
 Run the same command in PowerShell, Terminal, or a Linux shell:
 
@@ -130,6 +142,6 @@ Lead intelligence and Local SEO remain preview workspaces in v1. Start them expl
 
 ## Release verification
 
-Every GitHub Release shows three recommended Windows/macOS/Linux downloads and retains architecture-specific archives for the one-command installer. The archive checksums are stored in `socium-manifest.json`, so users do not need separate `.sha256` downloads. The CLI verifies the published archive checksum before extraction and validates the version/target metadata inside the archive. It refuses plain HTTP release downloads by default. The dashboard checks no more than once per day while idle and sends only the installed version, operating system, and CPU architecture needed to select a release.
+Every GitHub Release shows three recommended Windows/macOS/Linux native downloads and retains architecture-specific archives for the command-line installer and updater. Native-installer and archive checksums are stored in `socium-manifest.json`, so users do not need separate `.sha256` downloads. The CLI verifies the published archive checksum before extraction and validates the version/target metadata inside the archive. It refuses plain HTTP release downloads by default. The dashboard checks no more than once per day while idle and sends only the installed version, operating system, and CPU architecture needed to select a release.
 
-Docker Compose remains available as an optional advanced deployment path. It is not used by the one-command installer.
+Docker Compose remains available as an optional advanced deployment path. It is not used by the native or command-line installer.

@@ -123,7 +123,7 @@ export async function initializeStorageDirectory(dataDirectory, { allowExisting 
   return markerPath;
 }
 
-async function initializeModelsDirectory(modelsDirectory, { allowExisting = false } = {}) {
+export async function initializeModelsDirectory(modelsDirectory, { allowExisting = false } = {}) {
   const resolved = path.resolve(modelsDirectory);
   const markerPath = path.join(resolved, ".socium-models.json");
   if (await pathExists(markerPath)) return markerPath;
@@ -137,6 +137,104 @@ async function initializeModelsDirectory(modelsDirectory, { allowExisting = fals
     createdAt: new Date().toISOString(),
   });
   return markerPath;
+}
+
+function versionParts(value) {
+  const match = String(value).match(/^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/);
+  if (!match) throw new Error(`Invalid release version: ${value}`);
+  return match.slice(1).map(Number);
+}
+
+function compareReleaseVersions(left, right) {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
+  }
+  return 0;
+}
+
+export async function registerBundledRuntime({
+  runtimePath,
+  version,
+  target,
+  manifestSource,
+  paths = sociumPaths(),
+  dataDirectory,
+  modelsDirectory,
+} = {}) {
+  if (!runtimePath || !version || !target || !manifestSource) {
+    throw new Error("Runtime path, version, target, and manifest source are required.");
+  }
+  const resolvedRuntimePath = path.resolve(runtimePath);
+  if (!isPathInside(paths.runtimesDirectory, resolvedRuntimePath)) {
+    throw new Error("Bundled runtime resolves outside the managed runtime directory.");
+  }
+  await validateBundle(resolvedRuntimePath, version, target);
+
+  const previous = await loadInstallation(paths);
+  if (previous && compareReleaseVersions(previous.version, version) > 0) return previous;
+  if (previous && dataDirectory && path.resolve(dataDirectory) !== path.resolve(previous.dataDirectory)) {
+    throw new Error("Socium is already installed. Change the existing data location safely from the dashboard.");
+  }
+  if (previous && modelsDirectory && path.resolve(modelsDirectory) !== path.resolve(previous.modelsDirectory)) {
+    throw new Error("Socium is already installed. Change the existing model location safely from the dashboard.");
+  }
+
+  const selectedDataDirectory = assertSafeManagedDirectory(
+    dataDirectory || previous?.dataDirectory || paths.dataDirectory,
+    { label: "Data directory" },
+  );
+  const selectedModelsDirectory = assertSafeManagedDirectory(
+    modelsDirectory || previous?.modelsDirectory || paths.modelsDirectory,
+    { label: "Model directory" },
+  );
+  if (
+    selectedDataDirectory === selectedModelsDirectory ||
+    isPathInside(selectedDataDirectory, selectedModelsDirectory) ||
+    isPathInside(selectedModelsDirectory, selectedDataDirectory)
+  ) {
+    throw new Error("Data and local AI models must use separate directories.");
+  }
+  for (const selected of [selectedDataDirectory, selectedModelsDirectory]) {
+    if (
+      selected === paths.root ||
+      isPathInside(paths.runtimesDirectory, selected) ||
+      isPathInside(paths.downloadsDirectory, selected) ||
+      isPathInside(selected, paths.runtimesDirectory) ||
+      isPathInside(selected, paths.downloadsDirectory)
+    ) {
+      throw new Error("Durable data and models cannot be stored inside Socium's replaceable runtime directories.");
+    }
+  }
+
+  await initializeStorageDirectory(selectedDataDirectory, { allowExisting: Boolean(previous?.legacyInstallation) });
+  await initializeModelsDirectory(selectedModelsDirectory, { allowExisting: Boolean(previous?.legacyInstallation) });
+  await mkdir(path.join(selectedDataDirectory, "logs"), { recursive: true });
+
+  const sameRuntime = previous?.runtimePath === resolvedRuntimePath;
+  const installation = {
+    schemaVersion: INSTALLATION_SCHEMA_VERSION,
+    version,
+    target,
+    runtimePath: resolvedRuntimePath,
+    dataDirectory: selectedDataDirectory,
+    modelsDirectory: selectedModelsDirectory,
+    installedAt: new Date().toISOString(),
+    manifestSource,
+    previousRelease: sameRuntime
+      ? previous?.previousRelease || null
+      : previous
+        ? {
+            version: previous.version,
+            target: previous.target,
+            runtimePath: previous.runtimePath,
+            backupPath: null,
+          }
+        : null,
+  };
+  await writeJsonAtomically(paths.installationFile, installation);
+  return installation;
 }
 
 async function validateBundle(runtimePath, version, target) {

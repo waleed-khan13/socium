@@ -1,6 +1,7 @@
 # dependencies
 **/node_modules/
 /native/windows-helper/target/
+/native/installer/target/
 /.pnp
 .pnp.*
 

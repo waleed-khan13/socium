@@ -1,6 +1,6 @@
 # Socium
 
-Socium is an open-source, localhost-only control plane for AI-assisted social publishing. Version `1.2.0` runs a Next.js console and FastAPI service on the operator's own computer, stores application data in SQLite, and does not require a hosted Socium account or server.
+Socium is an open-source, localhost-only control plane for AI-assisted social publishing. Version `1.3.0` runs a Next.js console and FastAPI service on the operator's own computer, stores application data in SQLite, and does not require a hosted Socium account or server.
 
 ## Version 1.0 scope
 
@@ -51,13 +51,11 @@ See [docs/V1_RELEASE.md](docs/V1_RELEASE.md) for the original stable contract, [
 
 Publishing adapters for X; Instagram carousel/Reels processing; outreach delivery connectors; rendered-page crawling; Lighthouse/PageSpeed and Search Console adapters; keyword maps; and approved SEO fix proposals remain roadmap work. Channel names can already be used to generate social drafts, while verified Telegram, WordPress, Facebook Page, Instagram Professional, LinkedIn Member, and access-approved LinkedIn Company Page connections can publish or schedule exact approved revisions. Outreach is deliberately export-only and never pretends an email was sent.
 
-## One-command localhost install
+## Native localhost install
 
-Requirements:
+Download the latest Windows `.exe`, macOS `.dmg`, or Linux `.AppImage` from [GitHub Releases](https://github.com/waleed-khan13/socium/releases/latest). These native installers include the complete runtime: users do not need Node.js, Python, Rust, Docker, Git, pnpm, uv, or a source checkout.
 
-- Node.js 20.9+
-
-Windows, macOS, and Linux users do not need Docker, Python, uv, pnpm, or a source checkout:
+Terminal users can still use the command-line installer. This method needs Node.js 20.9+ for its first command:
 
 ```bash
 npx -y socium@latest onboard
@@ -80,6 +78,10 @@ npx socium storage move --data-dir "E:\Socium\data" --models-dir "E:\Socium\mode
 ```
 
 ### Start or run Socium later
+
+Native-install users can open **Socium** from the Windows desktop/Start menu, macOS Applications, or their Linux AppImage. No terminal is required.
+
+Command-line-install users can run:
 
 ```bash
 npx socium start

@@ -1,6 +1,6 @@
 {
   "name": "socium-app",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "Open-source, localhost-only AI social publishing with human approval.",
   "license": "MIT",
@@ -27,6 +27,9 @@
     "backend:bundle": "uv run --directory backend pyinstaller --clean --noconfirm socium-api.spec",
     "backend:bundle:smoke": "node scripts/smoke-bundled-api.mjs",
     "native:build": "node scripts/build-native-helper.mjs",
+    "native:installer": "node scripts/build-native-installer.mjs",
+    "native:installer:smoke": "node scripts/smoke-native-installer.mjs",
+    "native:installer:verify": "node scripts/verify-native-installers.mjs",
     "backend:test": "uv run --directory backend pytest",
     "backend:lint": "uv run --directory backend ruff check .",
     "lint": "eslint .",

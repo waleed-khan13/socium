@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
+import { nativeInstallerFileName } from "./native-installer-names.mjs";
+
 const projectRoot = process.cwd();
 const packageJson = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8"));
 const changelog = await readFile(path.join(projectRoot, "CHANGELOG.md"), "utf8");
@@ -30,17 +32,17 @@ const downloads = [
   {
     label: "Windows",
     detail: "Standard Intel or AMD PC",
-    file: `socium-${version}-win32-x64.tar.gz`,
+    file: nativeInstallerFileName(version, "win32-x64"),
   },
   {
     label: "macOS",
     detail: "Apple Silicon Mac",
-    file: `socium-${version}-darwin-arm64.tar.gz`,
+    file: nativeInstallerFileName(version, "darwin-arm64"),
   },
   {
     label: "Linux",
     detail: "Standard Intel or AMD PC",
-    file: `socium-${version}-linux-x64.tar.gz`,
+    file: nativeInstallerFileName(version, "linux-x64"),
   },
 ];
 
@@ -54,7 +56,9 @@ const output = `# Download Socium ${version}
 |:--:|:--:|:--:|
 | ${downloadCells} |
 
-Using Windows ARM, an Intel Mac, or Linux ARM? Run the one-command installer instead; it detects the correct build automatically:
+These installers include the Socium runtime. Users do not need Node.js, Python, Rust, Docker, Git, or pnpm.
+
+Using Windows ARM, an Intel Mac, or Linux ARM? Select the matching architecture from **Assets**, or use the command-line installer:
 
 \`\`\`bash
 npx -y socium@${version} onboard

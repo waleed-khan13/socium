@@ -15,12 +15,16 @@ const backendLock = await readFile(path.join(projectRoot, "backend", "uv.lock"),
 const backendInit = await readFile(path.join(projectRoot, "backend", "app", "__init__.py"), "utf8");
 const nativeProject = await readFile(path.join(projectRoot, "native", "windows-helper", "Cargo.toml"), "utf8");
 const nativeLock = await readFile(path.join(projectRoot, "native", "windows-helper", "Cargo.lock"), "utf8");
+const installerProject = await readFile(path.join(projectRoot, "native", "installer", "Cargo.toml"), "utf8");
+const installerLock = await readFile(path.join(projectRoot, "native", "installer", "Cargo.lock"), "utf8");
 const changelog = await readFile(path.join(projectRoot, "CHANGELOG.md"), "utf8");
 const backendVersion = backendProject.match(/^version = "([^"]+)"$/m)?.[1];
 const backendLockVersion = backendLock.match(/\[\[package\]\]\r?\nname = "socium-api"\r?\nversion = "([^"]+)"/)?.[1];
 const backendRuntimeVersion = backendInit.match(/^__version__ = "([^"]+)"$/m)?.[1];
 const nativeVersion = nativeProject.match(/^version = "([^"]+)"$/m)?.[1];
 const nativeLockVersion = nativeLock.match(/\[\[package\]\]\r?\nname = "socium-windows-helper"\r?\nversion = "([^"]+)"/)?.[1];
+const installerVersion = installerProject.match(/^version = "([^"]+)"$/m)?.[1];
+const installerLockVersion = installerLock.match(/\[\[package\]\]\r?\nname = "socium-native-installer"\r?\nversion = "([^"]+)"/)?.[1];
 const versions = {
   root: rootPackage.version,
   cli: cliPackage.version,
@@ -33,6 +37,8 @@ const versions = {
   backendRuntime: backendRuntimeVersion,
   native: nativeVersion,
   nativeLock: nativeLockVersion,
+  installer: installerVersion,
+  installerLock: installerLockVersion,
 };
 const expected = cliPackage.version;
 const mismatches = Object.entries(versions).filter(([, version]) => version !== expected);

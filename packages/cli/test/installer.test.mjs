@@ -15,7 +15,7 @@ import { createBackup, listBackups, restoreBackup } from "../src/backup.mjs";
 import { CLI_VERSION } from "../src/constants.mjs";
 import { createDownloadReporter, formatDownloadProgress } from "../src/download-progress.mjs";
 import { diagnose } from "../src/doctor.mjs";
-import { installRelease, loadInstallation } from "../src/installation.mjs";
+import { installRelease, loadInstallation, registerBundledRuntime } from "../src/installation.mjs";
 import { applyUpdate, compareVersions, terminateMigrationCheck } from "../src/lifecycle.mjs";
 import { resolveAssetSource, validateManifest } from "../src/manifest.mjs";
 import {
@@ -160,6 +160,47 @@ test("does not claim an existing non-empty model directory", async (context) => 
     }),
     /Model directory is not empty/,
   );
+});
+
+test("registers an embedded native-installer runtime without downloading it", async (context) => {
+  const current = await fixture();
+  context.after(() => rm(current.root, { recursive: true, force: true }));
+  const runtimePath = path.join(current.paths.runtimesDirectory, "1.3.0", current.target);
+  const platform = current.target.split("-")[0];
+  const backend = path.join(runtimePath, "backend", backendFileName(platform));
+  const node = path.join(runtimePath, "bin", platform === "win32" ? "node.exe" : "node");
+  await mkdir(path.join(runtimePath, "web"), { recursive: true });
+  await mkdir(path.join(runtimePath, "controller"), { recursive: true });
+  await mkdir(path.dirname(backend), { recursive: true });
+  await mkdir(path.dirname(node), { recursive: true });
+  await writeFile(path.join(runtimePath, "web", "server.js"), "// fixture\n");
+  await writeFile(path.join(runtimePath, "controller", "controller.mjs"), "// fixture\n");
+  await writeFile(path.join(runtimePath, "controller", "managed-cli.mjs"), "// fixture\n");
+  await writeFile(path.join(runtimePath, "controller", "offline-install.mjs"), "// fixture\n");
+  await writeFile(backend, "fixture\n");
+  await writeFile(node, "fixture\n");
+  if (platform === "win32") {
+    const helper = path.join(runtimePath, "native", "socium-windows-helper.exe");
+    await mkdir(path.dirname(helper), { recursive: true });
+    await writeFile(helper, "fixture\n");
+  }
+  await writeFile(
+    path.join(runtimePath, "bundle.json"),
+    JSON.stringify({ schemaVersion: 3, product: "socium", version: "1.3.0", target: current.target }),
+  );
+
+  const installation = await registerBundledRuntime({
+    runtimePath,
+    version: "1.3.0",
+    target: current.target,
+    manifestSource: "https://github.com/waleed-khan13/socium/releases/latest/download/socium-manifest.json",
+    paths: current.paths,
+  });
+
+  assert.equal(installation.runtimePath, runtimePath);
+  assert.equal((await loadInstallation(current.paths)).version, "1.3.0");
+  assert.match(await readFile(path.join(installation.dataDirectory, ".socium-storage.json"), "utf8"), /socium/);
+  assert.match(await readFile(path.join(installation.modelsDirectory, ".socium-models.json"), "utf8"), /socium-models/);
 });
 
 test("supports conventional version commands", async () => {
