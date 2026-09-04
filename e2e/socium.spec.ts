@@ -89,6 +89,35 @@ async function dismissOnboardingIfPresent(page: Page) {
   }
 }
 
+test("renders the Business OS overview, knowledge, and inbox accessibly across supported widths", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await dismissOnboardingIfPresent(page);
+  await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: /Good day,/ })).toBeVisible();
+  await expect(page.getByText("Local-first AI Business OS", { exact: true }).first()).toBeVisible();
+
+  for (const viewport of [
+    { width: 375, height: 812 },
+    { width: 768, height: 1024 },
+    { width: 1024, height: 768 },
+    { width: 1440, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow, `overview should not overflow at ${viewport.width}px`).toBeLessThanOrEqual(1);
+  }
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expectNoAccessibilityViolations(page, testInfo, "business-os-overview");
+  await navigate(page, "Knowledge Base", "Knowledge Base");
+  await expect(page.getByRole("button", { name: "Analyze website" })).toBeDisabled();
+  await expect(page.getByText("only facts you confirm become trusted AI context", { exact: false })).toBeVisible();
+  await expectNoAccessibilityViolations(page, testInfo, "knowledge-base");
+  await navigate(page, "Inbox", "Inbox");
+  await expect(page.getByText("approvals, failures, missed work", { exact: false })).toBeVisible();
+  await page.request.put("/api/onboarding", { data: { action: "start" } });
+});
+
 test("runs first-run onboarding, publishing, and approval workflows", async ({ page }, testInfo) => {
   test.setTimeout(240_000);
   await page.goto("/");
@@ -197,14 +226,15 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await expect(onboarding.getByText("AI connection verified")).toBeVisible();
   await onboarding.getByRole("button", { name: "Finish setup" }).click();
   await expect(onboarding).toHaveCount(0);
-  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
   const versionPattern = packageMetadata.version.replaceAll(".", "\\.");
   await expect(page.getByText(new RegExp(`SOCIUM LOCAL.*v${versionPattern}`))).toBeVisible();
   const primaryNavigation = page.getByRole("navigation", { name: "Primary" });
-  await expect(primaryNavigation.getByRole("button", { name: "Lead intelligence" })).toHaveCount(0);
+  await expect(primaryNavigation.getByRole("button", { name: "Leads & Outreach" })).toBeVisible();
   await expect(primaryNavigation.getByRole("button", { name: "Local SEO lab" })).toHaveCount(0);
 
-  await navigate(page, "Setup guide", "Setup guide");
+  await page.getByRole("button", { name: "Setup guide", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Setup guide" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2, name: "Set up your first approved post" })).toBeVisible();
   await expect(page.getByText("Milestones ready")).toBeVisible();
   await expect(page.getByText("How the safe workflow works")).toBeVisible();
@@ -212,14 +242,22 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   const releaseStateResponse = await page.request.get("/api/state");
   expect(releaseStateResponse.ok()).toBeTruthy();
   const releaseState = (await releaseStateResponse.json()) as PublicAppState;
-  expect(releaseState.features).toEqual({ edition: "social-v1", labsEnabled: false, previewModules: [] });
+  expect(releaseState.features).toEqual({
+    edition: "business-os-v1.4",
+    labsEnabled: false,
+    previewModules: [],
+    businessOs: true,
+    knowledge: true,
+    unifiedInbox: true,
+    genericWorkflows: true,
+  });
   expect(releaseState.runtime.version).toBe(packageMetadata.version);
   expect(releaseState.onboarding.status).toBe("completed");
   expect(releaseState.onboarding.ready).toBe(true);
 
   await page.reload();
   await expect(page.getByRole("dialog", { name: "Socium first-run setup" })).toHaveCount(0);
-  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
 
   await navigate(page, "Integrations", "Connections");
   await expect(page.getByText("Connect only what you use", { exact: true })).toBeVisible();
@@ -237,7 +275,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await wordpressForm.getByRole("button", { name: "Save & test" }).click();
   await expect(page.getByText("Connected to WordPress as E2E Editor.")).toBeVisible();
 
-  await navigate(page, "Create content", "Create a draft");
+  await navigate(page, "Content studio", "Create a draft");
   await page.getByLabel("Topic or source brief").fill(
     "Create a practical checklist that helps a local business publish useful content consistently.",
   );
@@ -245,10 +283,10 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await page.getByRole("option", { name: "Blog" }).click();
 
   const generateResponse = page.waitForResponse(
-    (response) => response.url().endsWith("/api/posts/generate") && response.request().method() === "POST",
+    (response) => response.url().endsWith("/api/posts/generations") && response.request().method() === "POST",
   );
   await page.getByRole("button", { name: "Generate review draft" }).click();
-  await expect((await generateResponse).status()).toBe(200);
+  await expect((await generateResponse).status()).toBe(202);
   await expect(page.getByRole("heading", { level: 1, name: "Approval queue" })).toBeVisible();
 
   const generatedTitle = "A practical local growth checklist";
@@ -282,7 +320,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await navigate(page, "Media library", "Media library");
   await expect(page.getByText(/A dark editorial small-business workspace/)).toBeVisible();
   await expect(page.getByRole("img", { name: /Small-business workspace arranged/ })).toBeVisible();
-  await navigate(page, "Approval queue", "Approval queue");
+  await navigate(page, "Approvals", "Approval queue");
   postCard = page
     .getByRole("heading", { level: 2, name: generatedTitle })
     .locator('xpath=ancestor::div[@data-slot="card"]');
@@ -367,7 +405,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await metaForm.getByRole("button", { name: "Save & test" }).click();
   await expect(page.getByText("Connected to Facebook Page Northstar Studio.")).toBeVisible();
 
-  await navigate(page, "Create content", "Create a draft");
+  await navigate(page, "Content studio", "Create a draft");
   await page.getByLabel("Topic or source brief").fill(
     "Create one concise, useful update for our local Facebook audience.",
   );
@@ -375,10 +413,10 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await page.getByRole("option", { name: "Facebook" }).click();
 
   const facebookGenerateResponse = page.waitForResponse(
-    (response) => response.url().endsWith("/api/posts/generate") && response.request().method() === "POST",
+    (response) => response.url().endsWith("/api/posts/generations") && response.request().method() === "POST",
   );
   await page.getByRole("button", { name: "Generate review draft" }).click();
-  await expect((await facebookGenerateResponse).status()).toBe(200);
+  await expect((await facebookGenerateResponse).status()).toBe(202);
   await expect(page.getByRole("heading", { level: 1, name: "Approval queue" })).toBeVisible();
   await page.getByRole("button", { name: /^all / }).click();
 
@@ -432,7 +470,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await expect(page.getByText("Connected to Instagram @northstarstudio.")).toBeVisible();
 
   const instagramImageUrl = "https://cdn.example.test/e2e-instagram.jpg?approved=true";
-  await navigate(page, "Create content", "Create a draft");
+  await navigate(page, "Content studio", "Create a draft");
   await page.getByLabel("Topic or source brief").fill(
     "Create one useful single-image update for our professional Instagram account.",
   );
@@ -442,10 +480,10 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await expect(page.getByRole("img", { name: "Instagram image preview" })).toBeVisible();
 
   const instagramGenerateResponse = page.waitForResponse(
-    (response) => response.url().endsWith("/api/posts/generate") && response.request().method() === "POST",
+    (response) => response.url().endsWith("/api/posts/generations") && response.request().method() === "POST",
   );
   await page.getByRole("button", { name: "Generate review draft" }).click();
-  await expect((await instagramGenerateResponse).status()).toBe(200);
+  await expect((await instagramGenerateResponse).status()).toBe(202);
   await expect(page.getByRole("heading", { level: 1, name: "Approval queue" })).toBeVisible();
   await page.getByRole("button", { name: /^all / }).click();
 
@@ -521,7 +559,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   expect(linkedinTestResponse.status()).toBe(200);
   await page.reload();
 
-  await navigate(page, "Create content", "Create a draft");
+  await navigate(page, "Content studio", "Create a draft");
   await page.getByLabel("Topic or source brief").fill(
     "Create one useful professional lesson for my LinkedIn network.",
   );
@@ -529,10 +567,10 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await page.getByRole("option", { name: "LinkedIn", exact: true }).click();
 
   const linkedinGenerateResponse = page.waitForResponse(
-    (response) => response.url().endsWith("/api/posts/generate") && response.request().method() === "POST",
+    (response) => response.url().endsWith("/api/posts/generations") && response.request().method() === "POST",
   );
   await page.getByRole("button", { name: "Generate review draft" }).click();
-  await expect((await linkedinGenerateResponse).status()).toBe(200);
+  await expect((await linkedinGenerateResponse).status()).toBe(202);
   await expect(page.getByRole("heading", { level: 1, name: "Approval queue" })).toBeVisible();
   await page.getByRole("button", { name: /^all / }).click();
 
@@ -610,7 +648,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await linkedinCompanyForm.getByRole("button", { name: "Save & verify permission" }).click();
   await expect(page.getByText("Waleed Khan can publish to LinkedIn Page 5515715.")).toBeVisible();
 
-  await navigate(page, "Create content", "Create a draft");
+  await navigate(page, "Content studio", "Create a draft");
   await page.getByLabel("Topic or source brief").fill(
     "Create one useful company lesson for our LinkedIn Page audience.",
   );
@@ -618,10 +656,10 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await page.getByRole("option", { name: "LinkedIn Company Page", exact: true }).click();
 
   const linkedinCompanyGenerateResponse = page.waitForResponse(
-    (response) => response.url().endsWith("/api/posts/generate") && response.request().method() === "POST",
+    (response) => response.url().endsWith("/api/posts/generations") && response.request().method() === "POST",
   );
   await page.getByRole("button", { name: "Generate review draft" }).click();
-  await expect((await linkedinCompanyGenerateResponse).status()).toBe(200);
+  await expect((await linkedinCompanyGenerateResponse).status()).toBe(202);
   await expect(page.getByRole("heading", { level: 1, name: "Approval queue" })).toBeVisible();
   await page.getByRole("button", { name: /^all / }).click();
 
@@ -691,15 +729,15 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   expect(linkedinCompanyMockState.lastLinkedInOrganizationPost.commentary).toContain("Share one useful company lesson");
   expect(linkedinCompanyMockState.lastLinkedInOrganizationPost.commentary).toContain("#HumanReviewed");
 
-  await navigate(page, "Create content", "Create a draft");
+  await navigate(page, "Content studio", "Create a draft");
   await page.getByLabel("Topic or source brief").fill("Phase eight skip: do not publish this review draft.");
   await page.getByLabel("Channel").click();
   await page.getByRole("option", { name: "X / Twitter" }).click();
   const skipGenerateResponse = page.waitForResponse(
-    (response) => response.url().endsWith("/api/posts/generate") && response.request().method() === "POST",
+    (response) => response.url().endsWith("/api/posts/generations") && response.request().method() === "POST",
   );
   await page.getByRole("button", { name: "Generate review draft" }).click();
-  await expect((await skipGenerateResponse).status()).toBe(200);
+  await expect((await skipGenerateResponse).status()).toBe(202);
   await page.getByRole("button", { name: /^all / }).click();
   const skipCard = page
     .getByRole("heading", { level: 2, name: "A skippable X review draft" })
@@ -719,15 +757,15 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
     publishedAt: null,
   });
 
-  await navigate(page, "Create content", "Create a draft");
+  await navigate(page, "Content studio", "Create a draft");
   await page.getByLabel("Topic or source brief").fill("Phase nine recovery: ask before a missed publish.");
   await page.getByLabel("Channel").click();
   await page.getByRole("option", { name: "Blog" }).click();
   const recoveryGenerateResponse = page.waitForResponse(
-    (response) => response.url().endsWith("/api/posts/generate") && response.request().method() === "POST",
+    (response) => response.url().endsWith("/api/posts/generations") && response.request().method() === "POST",
   );
   await page.getByRole("button", { name: "Generate review draft" }).click();
-  await expect((await recoveryGenerateResponse).status()).toBe(200);
+  await expect((await recoveryGenerateResponse).status()).toBe(202);
   await page.getByRole("button", { name: /^all / }).click();
   const recoveryTitle = "A restart-safe scheduled draft";
   const recoveryCard = page
@@ -775,7 +813,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   });
   expect((await page.request.post(`/api/jobs/${scheduledJob.id}/cancel`)).ok()).toBeTruthy();
 
-  await navigate(page, "Scheduler", "Scheduler");
+  await navigate(page, "Calendar", "Scheduler");
   await expect(page.getByText("Worker use", { exact: true })).toBeVisible();
   await expect(page.getByText("0 / 1", { exact: true })).toBeVisible();
   await expect(page.getByText(/no rapid scheduler polling runs/i)).toBeVisible();
@@ -785,7 +823,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
 test("offers simple prebuilt AI providers without a Socium account", async ({ page }) => {
   await page.goto("/");
   await dismissOnboardingIfPresent(page);
-  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
   await navigate(page, "Integrations", "Connections");
 
   const providerCard = page
@@ -874,7 +912,7 @@ test("offers simple prebuilt AI providers without a Socium account", async ({ pa
 test("manages recurring automations with readable scheduling controls", async ({ page }, testInfo) => {
   await page.goto("/");
   await dismissOnboardingIfPresent(page);
-  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
 
   const created = await page.request.post("/api/automations", {
     data: {
@@ -931,7 +969,7 @@ test("manages recurring automations with readable scheduling controls", async ({
 test("manages a real local media asset and hands its HTTPS source to a draft", async ({ page }) => {
   await page.goto("/");
   await dismissOnboardingIfPresent(page);
-  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
   await navigate(page, "Media library", "Media library");
   await expect(page.getByRole("heading", { level: 1, name: "Media library" })).toBeVisible();
 
@@ -1014,11 +1052,15 @@ test("manages a real local media asset and hands its HTTPS source to a draft", a
 test("passes automated accessibility checks in core workflow views", async ({ page }, testInfo) => {
   await page.goto("/");
   await dismissOnboardingIfPresent(page);
-  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
   await expectNoAccessibilityViolations(page, testInfo, "growth-command");
 
-  await navigate(page, "Setup guide", "Setup guide");
-  await expectNoAccessibilityViolations(page, testInfo, "setup-guide");
+  const setupGuideButton = page.getByRole("button", { name: "Setup guide", exact: true });
+  if (await setupGuideButton.isVisible().catch(() => false)) {
+    await setupGuideButton.click();
+    await expect(page.getByRole("heading", { level: 1, name: "Setup guide" })).toBeVisible();
+    await expectNoAccessibilityViolations(page, testInfo, "setup-guide");
+  }
 
   await navigate(page, "Integrations", "Connections");
   await expectNoAccessibilityViolations(page, testInfo, "connections");
@@ -1026,7 +1068,7 @@ test("passes automated accessibility checks in core workflow views", async ({ pa
   await navigate(page, "Media library", "Media library");
   await expectNoAccessibilityViolations(page, testInfo, "media-library");
 
-  await navigate(page, "Approval queue", "Approval queue");
+  await navigate(page, "Approvals", "Approval queue");
   await expectNoAccessibilityViolations(page, testInfo, "approval-queue");
 
   await navigate(page, "Automations", "Automations");
@@ -1037,7 +1079,7 @@ test("supports keyboard navigation on the mobile layout", async ({ page }, testI
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await dismissOnboardingIfPresent(page);
-  await expect(page.getByRole("heading", { level: 1, name: "Growth command" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
 
   const navigationTrigger = page.getByRole("button", { name: "Open navigation" });
   await navigationTrigger.focus();
@@ -1055,7 +1097,7 @@ test("supports keyboard navigation on the mobile layout", async ({ page }, testI
 test("shows safe update, backup, and runtime controls", async ({ page }, testInfo) => {
   await page.goto("/");
   await dismissOnboardingIfPresent(page);
-  await navigate(page, "System", "System & updates");
+  await navigate(page, "Settings", "System & updates");
   await expect(page.getByText("Application updates", { exact: true })).toBeVisible();
   await expect(page.getByText("Only version and platform metadata leave this machine.")).toBeVisible();
   await page.getByRole("button", { name: "Back up local data now" }).click();

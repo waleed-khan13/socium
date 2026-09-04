@@ -1,15 +1,22 @@
 # Socium
 
-Socium is an open-source, localhost-only control plane for AI-assisted social publishing. Version `1.3.1` runs a Next.js console and FastAPI service on the operator's own computer, stores application data in SQLite, and does not require a hosted Socium account or server.
+Socium is an open-source, local-first **AI Business Operating System**. Version `1.4.0` combines social publishing, confirmed business knowledge, approvals, inbox work, automations, and honest operational analytics in one Next.js console backed by a local FastAPI service and SQLite database. It does not require a hosted Socium account or server.
 
-## Version 1.0 scope
+## Version 1.4 scope
 
-The default v1.0 product surface focuses on one complete workflow: connect an AI model, create channel-aware drafts, obtain human approval, and publish or schedule the exact approved revision. Lead intelligence and Local SEO remain in the repository as opt-in previews so they can mature through later updates without weakening the first stable release. Set `SOCIUM_ENABLE_LABS=1` before launch to show those preview workspaces.
+Social publishing remains the stable starting module, now running on a reusable Business OS foundation: one confirmed business profile, source-attributed knowledge, deterministic workflow runs, shared approvals, a unified inbox, and durable background content jobs. AI proposes; explicit user decisions and deterministic workflows perform impactful actions. Lead intelligence and Local SEO remain opt-in previews. Set `SOCIUM_ENABLE_LABS=1` before launch to show those preview workspaces.
 
-See [docs/V1_RELEASE.md](docs/V1_RELEASE.md) for the original stable contract, [docs/V1_1_RELEASE.md](docs/V1_1_RELEASE.md) for the local-first foundation, [docs/V1_2_RELEASE.md](docs/V1_2_RELEASE.md) for this guided-automation release, and [docs/RELEASING.md](docs/RELEASING.md) for the maintainer dry-run, tagging, and publication procedure.
+See [docs/V1_4_RELEASE.md](docs/V1_4_RELEASE.md) for the current release contract and [docs/RELEASING.md](docs/RELEASING.md) for the maintainer dry-run, tagging, and publication procedure.
 
 ## What works today
 
+- Use the redesigned Business OS overview with real attention counts, AI health, connected channels, upcoming work, pending approvals, a real calendar, and honest unavailable states when analytics data is not connected.
+- Maintain a local Business Profile and Knowledge Base where every extracted fact retains its source URL, confidence, and proposed/confirmed/rejected state; only confirmed knowledge can enter AI prompts.
+- Analyze websites into editable knowledge proposals with safe public crawling and header/footer/metadata/structured-data logo discovery.
+- Run reusable workflow definitions with durable runs, steps, terminal approval records, notification deliveries, and AI decision provenance in SQLite.
+- Review Slack, Telegram, and dashboard decisions through a duplicate-safe approval boundary so the same revision cannot publish twice.
+- Triage local workflow and approval work in a unified inbox with searchable status controls.
+- Generate content in a bounded background worker: the browser receives an immediate job, displays live percentage progress, and can recover the durable result after navigation or restart.
 - Start with private local AI or select a ready-made OpenAI, Google Gemini, Anthropic Claude, OpenRouter, or NVIDIA NIM connection; safe custom OpenAI-compatible and Anthropic-compatible discovery remains available for advanced servers.
 - Confirm a durable brand profile with business facts, audience, voice, content rules, colors, logo, and reference media; every confirmed revision becomes reusable generation context.
 - Generate a channel-bounded brand content kit containing publish-ready copy, normalized hashtags, an explicit call to action, an image prompt, visual exclusions, and planned alt text; hand the visual brief to Media Studio with one click.

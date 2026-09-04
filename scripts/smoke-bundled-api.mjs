@@ -94,7 +94,7 @@ try {
   await access(path.join(dataDirectory, "master.key"));
 
   const expectedVersion = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8")).version;
-  if (health.version !== expectedVersion || state.features?.edition !== "social-v1") {
+  if (health.version !== expectedVersion || state.features?.edition !== "business-os-v1.4") {
     throw new Error("Bundled API returned the wrong release identity.");
   }
   console.log(

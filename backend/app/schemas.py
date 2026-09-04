@@ -594,6 +594,76 @@ class ProviderDiscoveryRequest(ApiModel):
         return self
 
 
+class KnowledgeSourceCreate(ApiModel):
+    workspace_id: int = Field(default=1, ge=1)
+    kind: Literal["website", "social", "document", "manual"]
+    locator: str = Field(min_length=1, max_length=2_048)
+    title: str = Field(default="", max_length=255)
+
+    @field_validator("locator")
+    @classmethod
+    def validate_locator(cls, value: str, info: ValidationInfo) -> str:
+        kind = str(info.data.get("kind") or "")
+        if kind not in {"website", "social"}:
+            return value
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("Website and social sources require a valid http or https URL.")
+        if parsed.username or parsed.password:
+            raise ValueError("Knowledge source URLs must not contain credentials.")
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), parsed.query, ""))
+
+
+class KnowledgeAnalyzeRequest(ApiModel):
+    workspace_id: int = Field(default=1, ge=1)
+    url: str = Field(min_length=4, max_length=2_048)
+
+
+class KnowledgeItemUpdate(ApiModel):
+    value: str | None = Field(default=None, max_length=12_000)
+    status: Literal["proposed", "confirmed", "rejected", "stale"] | None = None
+
+    @model_validator(mode="after")
+    def require_change(self) -> Self:
+        if self.value is None and self.status is None:
+            raise ValueError("Change the fact value or its review status.")
+        return self
+
+
+class WorkflowDefinitionCreate(ApiModel):
+    workspace_id: int = Field(default=1, ge=1)
+    name: str = Field(min_length=1, max_length=160)
+    kind: str = Field(min_length=2, max_length=80, pattern=r"^[a-z][a-z0-9._-]+$")
+    enabled: bool = True
+    approval_mode: Literal["draft_only", "approval_required", "auto_with_rules", "full_auto"] = (
+        "approval_required"
+    )
+    config: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("config")
+    @classmethod
+    def limit_config(cls, value: dict[str, Any]) -> dict[str, Any]:
+        encoded = json.dumps(value)
+        if len(encoded) > 32_000:
+            raise ValueError("Workflow configuration is too large.")
+        return value
+
+
+class WorkflowRunCreate(ApiModel):
+    trigger: Literal["manual", "schedule", "event", "recovery"] = "manual"
+    input_data: dict[str, Any] = Field(default_factory=dict)
+
+
+class GenericApprovalDecision(ApiModel):
+    action: Literal["approve", "edit", "regenerate_text", "regenerate_image", "reject", "skip", "reschedule"]
+    actor: str = Field(default="Local operator", min_length=1, max_length=160)
+    source: Literal["dashboard", "slack", "telegram", "email"] = "dashboard"
+
+
+class InboxItemUpdate(ApiModel):
+    status: Literal["open", "read", "resolved", "dismissed"]
+
+
 class LocalModelPullRequest(ApiModel):
     base_url: str = Field(min_length=1, max_length=2_048)
     model: str = Field(

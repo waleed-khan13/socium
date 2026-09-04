@@ -4,6 +4,7 @@ import asyncio
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from time import perf_counter
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
@@ -14,6 +15,26 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from app import __version__
 from app.approval_actions import regenerate_image_revision, regenerate_post_revision
 from app.backup_service import create_backup, list_backups
+from app.business_os_store import (
+    business_profile,
+    create_knowledge_source,
+    create_workflow,
+    dashboard_summary,
+    delete_knowledge_source,
+    knowledge_state,
+    list_ai_decisions,
+    list_approvals,
+    list_inbox,
+    list_workflows,
+    record_ai_decision,
+    record_knowledge_analysis,
+    run_workflow,
+    update_inbox_item,
+    update_knowledge_item,
+)
+from app.business_os_store import (
+    decide_approval as decide_generic_approval,
+)
 from app.config import get_settings
 from app.connector_store import (
     connector_runtime,
@@ -27,6 +48,13 @@ from app.connectors.service import (
     send_saved_slack_approval,
     test_saved_connector,
 )
+from app.content_job_store import (
+    cancel_content_generation,
+    get_content_generation,
+    list_content_generations,
+    schedule_content_generation,
+)
+from app.content_service import generate_content_draft
 from app.errors import AppError, ExternalServiceError
 from app.lead_store import (
     clear_lead_score_override,
@@ -93,11 +121,16 @@ from app.schemas import (
     DecisionRequest,
     EditPostRequest,
     GeneratePostRequest,
+    GenericApprovalDecision,
     GooglePlacesSearchRequest,
     IcpProfileUpdate,
     ImageGenerateRequest,
     ImageProviderUpdate,
+    InboxItemUpdate,
     JobRecoveryRequest,
+    KnowledgeAnalyzeRequest,
+    KnowledgeItemUpdate,
+    KnowledgeSourceCreate,
     LeadComplianceUpdate,
     LeadDeleteRequest,
     LeadImportRequest,
@@ -128,6 +161,8 @@ from app.schemas import (
     TelegramProxyTestRequest,
     TelegramUpdate,
     WebsiteCrawlRequest,
+    WorkflowDefinitionCreate,
+    WorkflowRunCreate,
     WorkspaceUpdate,
 )
 from app.seo_store import (
@@ -141,7 +176,6 @@ from app.seo_store import (
 from app.seo_store import (
     get_seo_audit as load_seo_audit,
 )
-from app.services.content_package import generate_post_package
 from app.services.crawler import crawl_brand_website, crawl_website, download_public_brand_image
 from app.services.google_places import search_google_places
 from app.services.image_generation import (
@@ -163,7 +197,6 @@ from app.services.telegram import (
     delete_webhook,
     discover_recent_chat,
     resolve_chat,
-    send_approval_request,
     test_connection,
     test_proxy_connection,
     validate_proxy_url,
@@ -176,7 +209,6 @@ from app.store import (
     complete_telegram_connection,
     create_approval_action,
     create_automation,
-    create_post,
     decide_post,
     delete_automation,
     delete_previous_brand_data,
@@ -278,9 +310,13 @@ async def validation_error_handler(_request: Request, error: RequestValidationEr
 def state_response() -> dict[str, Any]:
     state = public_state(telegram_poller.status(), local_scheduler.status())
     state["features"] = {
-        "edition": "social-v1",
+        "edition": "business-os-v1.4",
         "labsEnabled": settings.labs_enabled,
         "previewModules": ["lead-intelligence", "local-seo"] if settings.labs_enabled else [],
+        "businessOs": True,
+        "knowledge": True,
+        "unifiedInbox": True,
+        "genericWorkflows": True,
     }
     state["connectors"] = public_connector_state(slack_listener.statuses())
     state["connectors"]["oneClickConfigured"] = oauth_broker.configured()
@@ -441,6 +477,101 @@ def health() -> dict[str, Any]:
 @app.get("/api/state")
 def get_state() -> JSONResponse:
     return JSONResponse(state_response(), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/workspaces/{workspace_id}/business")
+def get_business_profile(workspace_id: int) -> dict[str, Any]:
+    return {"ok": True, "profile": business_profile(workspace_id)}
+
+
+@app.get("/api/workspaces/{workspace_id}/knowledge")
+def get_knowledge(
+    workspace_id: int,
+    status: str | None = None,
+    query: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "ok": True,
+        **knowledge_state(workspace_id, status=status, query=query),
+    }
+
+
+@app.post("/api/workspaces/{workspace_id}/knowledge/sources")
+def add_knowledge_source(workspace_id: int, payload: KnowledgeSourceCreate) -> dict[str, Any]:
+    normalized = payload.model_copy(update={"workspace_id": workspace_id})
+    return {"ok": True, "source": create_knowledge_source(normalized)}
+
+
+@app.patch("/api/workspaces/{workspace_id}/knowledge/items/{item_id}")
+def review_knowledge_item(
+    workspace_id: int,
+    item_id: str,
+    payload: KnowledgeItemUpdate,
+) -> dict[str, Any]:
+    current = knowledge_state(workspace_id)
+    if not any(item["id"] == item_id for item in current["items"]):
+        raise AppError("Knowledge fact not found in this workspace.", 404)
+    return {"ok": True, "item": update_knowledge_item(item_id, payload)}
+
+
+@app.delete("/api/workspaces/{workspace_id}/knowledge/sources/{source_id}")
+def remove_knowledge_source(workspace_id: int, source_id: str) -> dict[str, Any]:
+    current = knowledge_state(workspace_id)
+    if not any(source["id"] == source_id for source in current["sources"]):
+        raise AppError("Knowledge source not found in this workspace.", 404)
+    delete_knowledge_source(source_id)
+    return {"ok": True}
+
+
+@app.get("/api/workflows")
+def get_workflows(workspace_id: int = 1) -> dict[str, Any]:
+    return {"ok": True, "items": list_workflows(workspace_id)}
+
+
+@app.post("/api/workflows")
+def add_workflow(payload: WorkflowDefinitionCreate) -> dict[str, Any]:
+    return {"ok": True, "workflow": create_workflow(payload)}
+
+
+@app.post("/api/workflows/{workflow_id}/runs")
+def start_workflow(workflow_id: str, payload: WorkflowRunCreate) -> dict[str, Any]:
+    return {"ok": True, "run": run_workflow(workflow_id, payload)}
+
+
+@app.get("/api/approvals")
+def get_approvals(workspace_id: int = 1, status: str | None = None) -> dict[str, Any]:
+    return {"ok": True, "items": list_approvals(workspace_id, status)}
+
+
+@app.post("/api/approvals/{approval_id}/decision")
+def decide_approval_request(
+    approval_id: str,
+    payload: GenericApprovalDecision,
+) -> dict[str, Any]:
+    return {"ok": True, "approval": decide_generic_approval(approval_id, payload)}
+
+
+@app.get("/api/inbox")
+def get_inbox(workspace_id: int = 1, status: str | None = "open") -> dict[str, Any]:
+    return {"ok": True, "items": list_inbox(workspace_id, status)}
+
+
+@app.patch("/api/inbox/{item_id}")
+def change_inbox_item(item_id: str, payload: InboxItemUpdate) -> dict[str, Any]:
+    return {"ok": True, "item": update_inbox_item(item_id, payload)}
+
+
+@app.get("/api/dashboard/summary")
+def get_dashboard_summary(workspace_id: int = 1) -> JSONResponse:
+    return JSONResponse(
+        {"ok": True, "summary": dashboard_summary(workspace_id)},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/ai/decisions")
+def get_ai_decisions(workspace_id: int = 1, limit: int = 100) -> dict[str, Any]:
+    return {"ok": True, "items": list_ai_decisions(workspace_id, limit)}
 
 
 @app.get("/api/storage")
@@ -828,17 +959,36 @@ def remove_previous_brand_history(payload: PreviousBrandCleanupRequest) -> dict[
     return {"ok": True, "deleted": public_summary, "state": state_response()}
 
 
-@app.post("/api/settings/brand-profile/discover")
-async def discover_brand(payload: BrandDiscoveryRequest) -> JSONResponse:
-    evidence = await crawl_brand_website(payload.url)
+async def _analyze_brand_source(url: str, workspace_id: int = 1) -> dict[str, Any]:
+    evidence = await crawl_brand_website(url)
     runtime = provider_runtime()
     warnings: list[str] = []
     ai_enhanced = True
+    started = perf_counter()
     try:
         draft = await discover_brand_profile(runtime, evidence)
-    except ExternalServiceError:
+        record_ai_decision(
+            purpose="knowledge.extract",
+            provider_kind=str(runtime["kind"]),
+            model=str(runtime["model"]),
+            status="completed",
+            duration_ms=round((perf_counter() - started) * 1_000),
+            context_refs=[{"type": "website", "url": url}],
+            workspace_id=workspace_id,
+        )
+    except ExternalServiceError as error:
         ai_enhanced = False
         draft = _brand_draft_from_website_evidence(evidence)
+        record_ai_decision(
+            purpose="knowledge.extract",
+            provider_kind=str(runtime["kind"]),
+            model=str(runtime["model"]),
+            status="failed",
+            duration_ms=round((perf_counter() - started) * 1_000),
+            context_refs=[{"type": "website", "url": url}],
+            error=error.message,
+            workspace_id=workspace_id,
+        )
         warnings.append(
             "AI enhancement is temporarily unavailable. Socium filled website facts and editable "
             "fallback suggestions; review the draft or select Analyze & fill again later."
@@ -880,31 +1030,56 @@ async def discover_brand(payload: BrandDiscoveryRequest) -> JSONResponse:
             origins[key] = "ai-suggestion" if ai_enhanced else "website-suggestion"
         else:
             origins[key] = "not-found"
-    return JSONResponse(
-        {
-            "ok": True,
-            "draft": draft_data,
-            "fieldOrigins": origins,
-            "sources": [
-                {"url": page.get("url", ""), "title": page.get("title", "")}
-                for page in pages
-                if isinstance(page, dict)
-            ],
-            "signals": {
-                "colors": evidence.get("colors", []),
-                "fonts": evidence.get("fonts", []),
-                "logoCandidates": logo_candidates,
-                "socialLinks": evidence.get("socialLinks", []),
-            },
-            "logoAsset": logo_asset,
-            "provider": {
-                "kind": runtime["kind"],
-                "model": runtime["model"],
-                "local": runtime["kind"] == "ollama",
-            },
-            "warnings": warnings,
-            "storagePolicy": "editable-draft",
+    source_rows = [
+        {"url": str(page.get("url", "")), "title": str(page.get("title", ""))}
+        for page in pages
+        if isinstance(page, dict)
+    ]
+    knowledge = record_knowledge_analysis(
+        workspace_id=workspace_id,
+        url=url,
+        draft=draft_data,
+        field_origins=origins,
+        sources=source_rows,
+    )
+    return {
+        "ok": True,
+        "draft": draft_data,
+        "fieldOrigins": origins,
+        "sources": source_rows,
+        "signals": {
+            "colors": evidence.get("colors", []),
+            "fonts": evidence.get("fonts", []),
+            "logoCandidates": logo_candidates,
+            "socialLinks": evidence.get("socialLinks", []),
         },
+        "logoAsset": logo_asset,
+        "provider": {
+            "kind": runtime["kind"],
+            "model": runtime["model"],
+            "local": runtime["kind"] == "ollama",
+        },
+        "warnings": warnings,
+        "knowledge": knowledge,
+        "storagePolicy": "editable-draft",
+    }
+
+
+@app.post("/api/settings/brand-profile/discover")
+async def discover_brand(payload: BrandDiscoveryRequest) -> JSONResponse:
+    return JSONResponse(
+        await _analyze_brand_source(payload.url),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/workspaces/{workspace_id}/knowledge/analyze")
+async def analyze_knowledge_source(
+    workspace_id: int,
+    payload: KnowledgeAnalyzeRequest,
+) -> JSONResponse:
+    return JSONResponse(
+        await _analyze_brand_source(payload.url, workspace_id),
         headers={"Cache-Control": "no-store"},
     )
 
@@ -1115,67 +1290,56 @@ async def configure_polling(payload: PollingUpdate) -> dict[str, Any]:
 
 @app.post("/api/posts/generate")
 async def generate_post(payload: GeneratePostRequest) -> dict[str, Any]:
-    provider = provider_runtime()
-    if not provider["base_url"] or not provider["model"]:
-        raise AppError("Connect an AI provider and select a model first.")
-    request_data = payload.model_dump()
-    workspace = workspace_runtime()
-    generated = await generate_post_package(provider, request_data, workspace)
-    request_data["media_asset_id"] = generated.media_asset_id
-    post = create_post(
-        request=request_data,
-        content=generated.content.model_dump(),
-        provider=provider,
-        brand_profile_version=int(workspace.get("profile_version") or 0),
+    result = await generate_content_draft(
+        payload.model_dump(),
+        approval_wake=lambda: (telegram_poller.wake(), slack_listener.wake()),
     )
-
-    notifications: list[dict[str, Any]] = []
-    notification: dict[str, Any] | None = None
-    if payload.notify_telegram:
-        try:
-            telegram = telegram_runtime()
-            if not telegram["bot_token"] or not telegram["chat_id"]:
-                raise AppError("Telegram approval is not configured.")
-            approval = create_approval_action(post["id"], post["revision"], "telegram")
-            try:
-                message_id = await send_approval_request(
-                    str(telegram["bot_token"]),
-                    str(telegram["chat_id"]),
-                    post,
-                    approval["id"],
-                    str(telegram.get("proxy_url") or ""),
-                )
-                record_approval_sent(approval["id"], message_id)
-                telegram_poller.wake()
-            except AppError as error:
-                fail_approval_delivery(approval["id"], error.message)
-                raise
-            notification = {"ok": True, "message": "Approval request sent to Telegram."}
-        except AppError as error:
-            notification = {"ok": False, "message": error.message}
-        notifications.append({"channel": "telegram", **notification})
-    if payload.notify_slack:
-        try:
-            approval = create_approval_action(post["id"], post["revision"], "slack")
-            try:
-                delivery = await send_saved_slack_approval(post, approval["id"])
-                record_approval_sent(approval["id"], delivery["messageTs"])
-                slack_listener.wake()
-            except AppError as error:
-                fail_approval_delivery(approval["id"], error.message)
-                raise
-            notifications.append(
-                {"channel": "slack", "ok": True, "message": "Approval request sent to Slack."}
-            )
-        except AppError as error:
-            notifications.append({"channel": "slack", "ok": False, "message": error.message})
+    notifications = list(result["notifications"])
+    notification = next(
+        (item for item in notifications if item.get("channel") == "telegram"),
+        None,
+    )
     return {
         "ok": True,
-        "post": post,
+        "post": result["post"],
         "notification": notification,
         "notifications": notifications,
         "state": state_response(),
     }
+
+
+@app.get("/api/posts/generations")
+def content_generations(limit: int = 30) -> dict[str, Any]:
+    return {"ok": True, "items": list_content_generations(max(1, min(limit, 100)))}
+
+
+@app.post("/api/posts/generations", status_code=202)
+def queue_content_generation(payload: GeneratePostRequest) -> dict[str, Any]:
+    provider = provider_runtime()
+    if not provider["base_url"] or not provider["model"]:
+        raise AppError("Connect an AI provider and select a model first.")
+    job = schedule_content_generation(payload, provider)
+    local_scheduler.wake()
+    return {"ok": True, "job": job}
+
+
+@app.get("/api/posts/generations/{job_id}")
+def content_generation(job_id: str) -> dict[str, Any]:
+    job = get_content_generation(job_id)
+    response: dict[str, Any] = {"ok": True, "job": job}
+    if job["status"] == "completed" and job["resultRef"]:
+        state = state_response()
+        response["post"] = next(
+            (item for item in state["posts"] if item["id"] == job["resultRef"]),
+            None,
+        )
+        response["state"] = state
+    return response
+
+
+@app.post("/api/posts/generations/{job_id}/cancel")
+def cancel_queued_content_generation(job_id: str) -> dict[str, Any]:
+    return {"ok": True, "job": cancel_content_generation(job_id)}
 
 
 @app.patch("/api/posts/{post_id}")

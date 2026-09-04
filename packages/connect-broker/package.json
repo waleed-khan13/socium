@@ -1,6 +1,6 @@
 {
   "name": "@socium/connect-broker",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "private": true,
   "description": "Short-lived OAuth handoff and Slack interaction relay for Socium.",
   "type": "module",

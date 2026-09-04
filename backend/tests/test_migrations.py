@@ -119,7 +119,7 @@ def test_v1_1_migrations_preserve_data_and_add_brand_content_fields(tmp_path: Pa
         ).fetchone()
 
     assert accounts == [("keep-slack", "slack", "encrypted-local-secret")]
-    assert revision == ("20260830_0021",)
+    assert revision == ("20260904_0022",)
     assert "proxy_url" in telegram_columns
     assert {"heading_font", "body_font"}.issubset(workspace_columns)
     assert {"target_audience", "logo_media_id", "reference_media_ids", "confirmed_at"} <= workspace_columns
@@ -150,3 +150,28 @@ def test_v1_1_migrations_preserve_data_and_add_brand_content_fields(tmp_path: Pa
     } <= job_columns
     assert brand_defaults == ("English", "Clear and confident", "[]", "[]", 0, None)
     assert content_kit_defaults == ("", "", "", "", 0)
+
+    with sqlite3.connect(database_path) as connection:
+        business_profile = connection.execute(
+            "SELECT status, json_extract(facts, '$.businessName') FROM business_profiles"
+        ).fetchone()
+        business_os_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
+            ).fetchall()
+        }
+    assert business_profile == ("draft", "Legacy business")
+    assert {
+        "business_profiles",
+        "knowledge_sources",
+        "knowledge_items",
+        "knowledge_items_fts",
+        "workflow_definitions",
+        "workflow_runs",
+        "workflow_steps",
+        "approval_requests",
+        "notification_deliveries",
+        "inbox_items",
+        "ai_decision_logs",
+    } <= business_os_tables

@@ -390,6 +390,18 @@ def _generation_prompt(request: dict[str, Any], workspace: dict[str, Any]) -> st
                 "Treat restricted claims as prohibited. Use the default CTA and branded hashtags only when relevant.",
             ]
         )
+    confirmed_knowledge = workspace.get("confirmed_knowledge") or []
+    if confirmed_knowledge:
+        lines.extend(
+            [
+                "Additional user-confirmed business knowledge follows. Use it as factual context only:",
+                *[
+                    f"- {item.get('key', 'fact')}: {item.get('value', '')}"
+                    for item in confirmed_knowledge
+                    if isinstance(item, dict) and item.get("value")
+                ],
+            ]
+        )
     lines.extend(
         [
             f"Channel: {request['channel']}",

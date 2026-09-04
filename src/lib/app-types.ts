@@ -611,11 +611,105 @@ export interface WebsiteCrawlResult extends LeadImportRow {
   userAgent: string;
 }
 
+export interface DashboardSummary {
+  workspace: { id: number; name: string; businessName: string };
+  attention: {
+    total: number;
+    pendingApprovals: number;
+    failedWorkflows: number;
+    knowledgeReview: number;
+  };
+  metrics: {
+    postsPublished: number;
+    postsScheduled: number;
+    approvalsPending: number;
+    leadsCaptured: number;
+    failedWorkflows: number;
+  };
+  publishingTrend: Array<{ date: string; value: number }>;
+  engagement: { available: boolean; reason: string };
+  ai: { configured: boolean; kind: ProviderKind; model: string; local: boolean };
+  channels: Array<{
+    id: string;
+    adapterId: string;
+    name: string;
+    status: string;
+    connected: boolean;
+  }>;
+  upcoming: Array<{
+    id: string;
+    title: string;
+    channel: ContentChannel;
+    status: PostStatus;
+    publishAt: string | null;
+    mediaAssetId: string | null;
+  }>;
+  recentActivity: AuditEvent[];
+  generatedAt: string;
+}
+
+export type KnowledgeReviewStatus = "proposed" | "confirmed" | "rejected" | "stale";
+
+export interface KnowledgeSource {
+  id: string;
+  workspaceId: number;
+  kind: "website" | "social" | "document" | "manual";
+  locator: string;
+  title: string;
+  status: string;
+  checksum: string | null;
+  lastCheckedAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeItem {
+  id: string;
+  workspaceId: number;
+  sourceId: string | null;
+  factKey: string;
+  value: string;
+  confidence: number;
+  status: KnowledgeReviewStatus;
+  sourceExcerpt: string;
+  verifiedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeState {
+  sources: KnowledgeSource[];
+  items: KnowledgeItem[];
+  summary: { total: number; confirmed: number; needsReview: number };
+}
+
+export interface BusinessInboxItem {
+  id: string;
+  workspaceId: number;
+  kind: string;
+  priority: "normal" | "high" | "urgent";
+  status: "open" | "read" | "resolved" | "dismissed";
+  title: string;
+  body: string;
+  entityType: string | null;
+  entityId: string | null;
+  actionUrl: string | null;
+  metadata: Record<string, unknown>;
+  resolvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PublicAppState {
   features: {
-    edition: "social-v1";
+    edition: "business-os-v1.4";
     labsEnabled: boolean;
     previewModules: Array<"lead-intelligence" | "local-seo">;
+    businessOs: boolean;
+    knowledge: boolean;
+    unifiedInbox: boolean;
+    genericWorkflows: boolean;
   };
   workspace: WorkspaceSettings;
   provider: PublicProviderSettings;

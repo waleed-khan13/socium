@@ -8,6 +8,12 @@ from typing import Any
 
 from app.automation_service import generate_automation_draft
 from app.connectors.service import send_saved_slack_approval
+from app.content_job_store import (
+    complete_content_generation,
+    content_generation_cancel_requested,
+    update_content_generation_progress,
+)
+from app.content_service import generate_content_draft
 from app.errors import AppError
 from app.media_job_store import (
     complete_media_generation_job,
@@ -31,6 +37,7 @@ from app.store import (
     finish_publish,
     next_job_run_at,
     primary_image_runtime,
+    provider_runtime,
     publish_reservation_active,
     recover_stale_jobs,
     reserve_publish,
@@ -180,15 +187,6 @@ class LocalScheduler:
 
     async def _tick(self) -> None:
         self._loop_iterations += 1
-        if scheduler_paused():
-            self._active = False
-            self._status = "paused"
-            self._last_error = None
-            self._next_wake_at = None
-            self._idle_since = self._idle_since or datetime.now(UTC).isoformat()
-            await self._sleep()
-            return
-
         recover_stale_jobs(self.stale_minutes)
         job = claim_due_job(self.lease_seconds)
         if job is not None:
@@ -206,6 +204,15 @@ class LocalScheduler:
             finally:
                 self._worker_task = None
                 self._active = False
+            return
+
+        if scheduler_paused():
+            self._active = False
+            self._status = "paused"
+            self._last_error = None
+            self._next_wake_at = None
+            self._idle_since = self._idle_since or datetime.now(UTC).isoformat()
+            await self._sleep()
             return
 
         self._active = False
@@ -234,7 +241,7 @@ class LocalScheduler:
                 fail_job(
                     job_id,
                     message,
-                    retryable=job.get("kind") == "seo.audit",
+                    retryable=job.get("kind") in {"seo.audit", "content.generate"},
                     lease_token=lease_token,
                 )
             self._last_error = message
@@ -242,6 +249,46 @@ class LocalScheduler:
     async def _execute(self, job: dict[str, Any]) -> None:
         job_id = str(job["id"])
         lease_token = str(job.get("leaseToken") or "") or None
+        if job.get("kind") == "content.generate":
+            payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+            request_payload = payload.get("request") if isinstance(payload.get("request"), dict) else {}
+            provider_snapshot = (
+                payload.get("provider") if isinstance(payload.get("provider"), dict) else {}
+            )
+            try:
+                provider = provider_runtime()
+                if provider.get("updated_at") != provider_snapshot.get("updated_at"):
+                    raise AppError(
+                        "AI settings changed after this job was queued; start a fresh generation."
+                    )
+                if content_generation_cancel_requested(job_id):
+                    raise AppError("Content generation was cancelled before it started.")
+
+                def progress(percent: int, message: str) -> None:
+                    update_content_generation_progress(
+                        job_id,
+                        percent,
+                        message,
+                        lease_token=lease_token,
+                    )
+
+                result = await generate_content_draft(
+                    request_payload,
+                    progress=progress,
+                    approval_wake=self.approval_wake,
+                )
+                complete_content_generation(
+                    job_id,
+                    str(result["post"]["id"]),
+                    list(result.get("notifications") or []),
+                    lease_token,
+                )
+                self._last_error = None
+            except Exception as error:  # noqa: BLE001 - generation is safe to retry before publish.
+                message = error.message if isinstance(error, AppError) else str(error) or "Generation failed."
+                fail_job(job_id, message, retryable=True, lease_token=lease_token)
+                self._last_error = message
+            return
         if job.get("kind") == "automation.generate":
             payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
             automation_id = str(payload.get("automation_id") or "")

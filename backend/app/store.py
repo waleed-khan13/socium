@@ -23,6 +23,7 @@ from app.models import (
     AutomationRule,
     IcpProfile,
     ImageProviderSettings,
+    KnowledgeItem,
     LocalJob,
     MediaAsset,
     Post,
@@ -1207,6 +1208,7 @@ def provider_runtime() -> dict[str, str]:
             "base_url": provider.base_url,
             "model": provider.model,
             "api_key": decrypt_secret(provider.api_key),
+            "updated_at": provider.updated_at or "",
         }
 
 
@@ -1271,6 +1273,22 @@ def workspace_runtime() -> dict[str, Any]:
             "business_name": workspace.business_name,
             "business_description": workspace.description,
             "profile_confirmed": confirmed,
+            "confirmed_knowledge": [
+                {
+                    "key": item.fact_key,
+                    "value": item.value[:4_000],
+                    "source_id": item.source_id,
+                }
+                for item in session.scalars(
+                    select(KnowledgeItem)
+                    .where(
+                        KnowledgeItem.workspace_id == workspace.id,
+                        KnowledgeItem.status == "confirmed",
+                    )
+                    .order_by(KnowledgeItem.updated_at.desc())
+                    .limit(60)
+                ).all()
+            ],
         }
         if confirmed:
             runtime.update(
@@ -2645,14 +2663,15 @@ def next_job_run_at() -> str | None:
 def claim_due_job(lease_seconds: int = 360) -> dict[str, Any] | None:
     with write_session() as session:
         metadata = session.get(AppMetadata, "scheduler_paused")
-        if metadata is not None and metadata.value == "true":
-            return None
-        job = session.scalar(
+        query = (
             select(LocalJob)
             .where(LocalJob.status.in_({"queued", "retrying"}), LocalJob.run_at <= utc_now())
             .order_by(LocalJob.run_at.asc(), LocalJob.created_at.asc())
             .limit(1)
         )
+        if metadata is not None and metadata.value == "true":
+            query = query.where(LocalJob.kind.in_({"content.generate", "media.generate"}))
+        job = session.scalar(query)
         if job is None:
             return None
         now = utc_now()
@@ -2664,9 +2683,13 @@ def claim_due_job(lease_seconds: int = 360) -> dict[str, Any] | None:
         job.lease_expires_at = _utc_iso(datetime.now(UTC) + timedelta(seconds=lease_seconds))
         job.updated_at = now
         job.last_error = None
-        if job.kind == "media.generate":
+        if job.kind in {"media.generate", "content.generate"}:
             job.progress_percent = max(job.progress_percent, 5)
-            job.progress_message = "Local image worker started."
+            job.progress_message = (
+                "Local image worker started."
+                if job.kind == "media.generate"
+                else "Bounded local content worker started."
+            )
         session.flush()
         claimed = _job_dict(job)
         claimed["leaseToken"] = lease_token
@@ -2730,7 +2753,7 @@ def fail_job(
         job.lease_expires_at = None
         job.updated_at = _utc_iso(now)
         job.last_error = message[:2_000]
-        if job.kind == "media.generate":
+        if job.kind in {"media.generate", "content.generate"}:
             job.progress_message = (
                 "Generation will retry automatically."
                 if job.status == "retrying"

@@ -66,7 +66,7 @@ def generated_content(monkeypatch):
             image_model="test-image-model",
         )
 
-    monkeypatch.setattr("app.main.generate_post_package", fake_package)
+    monkeypatch.setattr("app.content_service.generate_post_package", fake_package)
     monkeypatch.setattr("app.approval_actions.generate_content", fake_generate)
     return fake_generate
 

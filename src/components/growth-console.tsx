@@ -7,6 +7,8 @@ import {
   ArrowRight,
   BookOpenCheck,
   Bot,
+  CalendarDays,
+  ChartNoAxesCombined,
   Check,
   ChevronRight,
   CircleDot,
@@ -49,6 +51,9 @@ import { toast } from "sonner";
 import { LeadsWorkspace } from "@/components/leads-workspace";
 import { AutomationsWorkspace } from "@/components/automations-workspace";
 import { BrandProfileCard } from "@/components/brand-profile-card";
+import { BusinessInbox } from "@/components/business-inbox";
+import { BusinessOsDashboard } from "@/components/business-os-dashboard";
+import { KnowledgeWorkspace } from "@/components/knowledge-workspace";
 import { MediaLibrary } from "@/components/media-library";
 import { OnboardingWizard } from "@/components/onboarding-wizard";
 import { CredentialHelp } from "@/components/credential-help";
@@ -136,12 +141,26 @@ import {
   type WordPressConnectorForm,
 } from "@/components/wordpress-connector-card";
 
-type ViewId = "command" | "guide" | "create" | "queue" | "media" | "leads" | "seo" | "automations" | "scheduler" | "integrations" | "system" | "activity";
+type ViewId = "command" | "legacy-command" | "guide" | "create" | "queue" | "media" | "knowledge" | "leads" | "inbox" | "seo" | "analytics" | "automations" | "scheduler" | "integrations" | "system" | "activity";
 type QueueFilter = "all" | PostStatus;
 
 type StateResponse = {
   ok: boolean;
   state: PublicAppState;
+};
+
+type ContentGenerationJob = {
+  id: string;
+  status: LocalJobStatus;
+  progressPercent: number;
+  progressMessage: string | null;
+  lastError: string | null;
+  resultRef: string | null;
+  notifications: Array<{
+    channel: "telegram" | "slack";
+    ok: boolean;
+    message: string;
+  }>;
 };
 
 type NavItem = {
@@ -152,25 +171,31 @@ type NavItem = {
 };
 
 const navigation: NavItem[] = [
-  { id: "command", label: "Command", icon: LayoutDashboard },
-  { id: "guide", label: "Setup guide", icon: BookOpenCheck },
-  { id: "create", label: "Create content", icon: Sparkles },
-  { id: "queue", label: "Approval queue", icon: Inbox },
+  { id: "command", label: "Overview", icon: LayoutDashboard },
+  { id: "scheduler", label: "Calendar", icon: CalendarDays },
+  { id: "queue", label: "Approvals", icon: FilePenLine },
+  { id: "knowledge", label: "Knowledge Base", icon: BookOpenCheck },
+  { id: "create", label: "Content studio", icon: Sparkles },
   { id: "media", label: "Media library", icon: Images },
-  { id: "leads", label: "Lead intelligence", icon: UsersRound, preview: true },
-  { id: "seo", label: "Local SEO lab", icon: SearchCheck, preview: true },
+  { id: "leads", label: "Leads & Outreach", icon: UsersRound },
+  { id: "inbox", label: "Inbox", icon: Inbox },
   { id: "automations", label: "Automations", icon: Zap },
-  { id: "scheduler", label: "Scheduler", icon: Clock3 },
-  { id: "integrations", label: "Integrations", icon: PlugZap },
-  { id: "system", label: "System", icon: Settings2 },
+  { id: "analytics", label: "Analytics", icon: ChartNoAxesCombined },
+  { id: "integrations", label: "AI & Integrations", icon: Bot },
+  { id: "system", label: "Settings", icon: Settings2 },
   { id: "activity", label: "Activity", icon: Activity },
 ];
 
 const pageMeta: Record<ViewId, { eyebrow: string; title: string; description: string }> = {
   command: {
-    eyebrow: "Personal social manager",
-    title: "Growth command",
-    description: "Live status for your AI content and human approval workflow.",
+    eyebrow: "Local-first AI Business OS",
+    title: "Overview",
+    description: "Real operational status across content, approvals, leads, knowledge, and connected services.",
+  },
+  "legacy-command": {
+    eyebrow: "Legacy overview",
+    title: "Previous command view",
+    description: "Compatibility view retained during the Business OS transition.",
   },
   guide: {
     eyebrow: "Guided local setup",
@@ -192,15 +217,30 @@ const pageMeta: Record<ViewId, { eyebrow: string; title: string; description: st
     title: "Media library",
     description: "Verify, store, transform, and reuse campaign images without uploading them to Socium cloud.",
   },
+  knowledge: {
+    eyebrow: "Verified business context",
+    title: "Knowledge Base",
+    description: "Review sourced business facts before Socium uses them for AI generation.",
+  },
   leads: {
     eyebrow: "Permission-aware intelligence",
     title: "Lead intelligence",
     description: "Import, deduplicate, qualify, and suppress business leads in your local database.",
   },
+  inbox: {
+    eyebrow: "Unified attention queue",
+    title: "Inbox",
+    description: "Handle approvals, failures, missed work, and knowledge changes in one place.",
+  },
   seo: {
     eyebrow: "Evidence-backed optimization",
     title: "Local SEO lab",
     description: "Audit public pages, inspect weighted findings, and keep restart-safe local snapshots.",
+  },
+  analytics: {
+    eyebrow: "Evidence, not estimates",
+    title: "Analytics",
+    description: "Real publishing performance now; engagement metrics appear when an official data source is connected.",
   },
   automations: {
     eyebrow: "Recurring social workflow",
@@ -350,9 +390,9 @@ function SidebarContent({
       <div className="flex h-[72px] items-center border-b border-zinc-900 px-5">
         <Brand />
       </div>
-      <nav aria-label="Primary" className="flex-1 space-y-1 px-3 py-5">
+      <nav aria-label="Primary" className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-4">
         <p className="mb-3 px-2 text-[10px] font-semibold tracking-[0.18em] text-zinc-700 uppercase">
-          Workspace
+          Business OS
         </p>
         {visibleNavigation.map((item) => {
           const Icon = item.icon;
@@ -361,16 +401,16 @@ function SidebarContent({
             <button
               aria-current={selected ? "page" : undefined}
               className={cn(
-                "group flex h-10 w-full items-center gap-3 rounded-md border px-3 text-left text-[13px] font-medium transition-colors",
+                "group flex min-h-10 w-full items-center gap-3 rounded-lg border px-3 text-left text-sm font-medium transition-colors",
                 selected
-                  ? "border-zinc-700 bg-zinc-900 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]"
-                  : "border-transparent text-zinc-500 hover:bg-zinc-950 hover:text-zinc-200",
+                  ? "border-fuchsia-400/20 bg-fuchsia-500/10 text-white shadow-[inset_3px_0_0_#f43f8f]"
+                  : "border-transparent text-zinc-400 hover:bg-white/[0.035] hover:text-zinc-100",
               )}
               key={item.id}
               onClick={() => onNavigate(item.id)}
               type="button"
             >
-              <Icon className={cn("size-4", selected ? "text-white" : "text-zinc-600 group-hover:text-zinc-300")} />
+              <Icon className={cn("size-4", selected ? "text-fuchsia-300" : "text-zinc-500 group-hover:text-zinc-300")} />
               <span>{item.label}</span>
               {item.preview ? (
                 <Badge className="ml-auto h-5 border-zinc-700 px-1.5 text-[9px] text-zinc-500" variant="outline">
@@ -378,7 +418,7 @@ function SidebarContent({
                 </Badge>
               ) : null}
               {item.id === "queue" && pending > 0 ? (
-                <span className="ml-auto grid min-w-5 place-items-center rounded-full bg-white px-1.5 py-0.5 text-[10px] font-bold text-black">
+                <span className="ml-auto grid min-w-5 place-items-center rounded-full bg-fuchsia-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
                   {pending}
                 </span>
               ) : null}
@@ -390,12 +430,16 @@ function SidebarContent({
         })}
       </nav>
       <div className="border-t border-zinc-900 p-3">
-        <div className="rounded-md border border-zinc-900 bg-black p-3">
-          <div className="flex items-center gap-2 text-xs font-medium text-zinc-300">
-            <Database className="size-3.5 text-zinc-500" />
-            Durable local store
+        <button className="mb-3 w-full rounded-xl border border-fuchsia-400/15 bg-gradient-to-br from-fuchsia-500/[0.08] to-orange-400/[0.04] p-3 text-left transition-colors hover:border-fuchsia-400/25" onClick={() => onNavigate("create")} type="button">
+          <div className="flex items-center gap-2 text-sm font-medium text-zinc-100"><Sparkles className="size-4 text-fuchsia-300" />Socium AI Copilot</div>
+          <p className="mt-1.5 text-xs leading-5 text-zinc-400">Create business content from your confirmed local knowledge.</p>
+        </button>
+        <div className="rounded-lg border border-zinc-800 bg-black/40 p-3">
+          <div className="flex items-center gap-2 text-xs font-medium text-zinc-200">
+            <Database className="size-3.5 text-emerald-400" />
+            {state?.workspace.name || "Local workspace"}
           </div>
-          <p className="mt-1.5 text-[11px] leading-4 text-zinc-600">Secrets encrypted at rest. Data stays on this host.</p>
+          <p className="mt-1.5 text-[11px] leading-4 text-zinc-500">Encrypted SQLite · data stays on this computer.</p>
         </div>
         <div className="mt-3 flex items-center justify-between px-1">
           <RuntimeBadge state={state} />
@@ -618,6 +662,10 @@ export function GrowthConsole() {
   const [initialError, setInitialError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [generationProgress, setGenerationProgress] = useState<{
+    percent: number;
+    message: string;
+  } | null>(null);
   const [queueFilter, setQueueFilter] = useState<QueueFilter>("all");
   const [editPost, setEditPost] = useState<GeneratedPost | null>(null);
   const [editForm, setEditForm] = useState({
@@ -1203,27 +1251,44 @@ export function GrowthConsole() {
   async function generatePost(event: FormEvent) {
     event.preventDefault();
     setBusy("generate");
+    setGenerationProgress({ percent: 0, message: "Queueing private generation…" });
     try {
-      const response = await requestJson<{
+      const queued = await requestJson<{
         ok: boolean;
-        post: GeneratedPost;
-        notification: { ok: boolean; message: string } | null;
-        notifications: Array<{
-          channel: "telegram" | "slack";
-          ok: boolean;
-          message: string;
-        }>;
-        state: PublicAppState;
-      }>("/api/posts/generate", {
+        job: ContentGenerationJob;
+      }>("/api/posts/generations", {
         method: "POST",
         body: JSON.stringify(generateForm),
+      });
+      let response: {
+        ok: boolean;
+        job: ContentGenerationJob;
+        post?: GeneratedPost | null;
+        state?: PublicAppState;
+      } = queued;
+      const deadline = Date.now() + 6 * 60 * 1000;
+      while (!["completed", "failed", "cancelled"].includes(response.job.status)) {
+        setGenerationProgress({
+          percent: response.job.progressPercent,
+          message: response.job.progressMessage ?? "Generating your content kit…",
+        });
+        if (Date.now() >= deadline) {
+          throw new Error("Generation is still running in the background. You can safely return to this page later.");
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 650));
+        response = await requestJson(`/api/posts/generations/${queued.job.id}`);
+      }
+      if (response.job.status !== "completed" || !response.post || !response.state) {
+        throw new Error(response.job.lastError ?? "Generation did not complete.");
+      }
+      setGenerationProgress({
+        percent: 100,
+        message: response.job.progressMessage ?? "Content kit ready for review.",
       });
       setAppState(response.state);
       setGenerateForm((current) => ({ ...current, topic: "", mediaUrl: "" }));
       toast.success("Draft generated", { description: `${channelLabels[response.post.channel]} · ${response.post.model}` });
-      const notifications = response.notifications ?? (
-        response.notification ? [{ channel: "telegram" as const, ...response.notification }] : []
-      );
+      const notifications = response.job.notifications;
       notifications.forEach((notification) => {
         if (notification.ok) {
           toast.success(notification.message);
@@ -1239,6 +1304,7 @@ export function GrowthConsole() {
       toast.error(error instanceof Error ? error.message : "Generation failed.");
     } finally {
       setBusy(null);
+      window.setTimeout(() => setGenerationProgress(null), 1_500);
     }
   }
 
@@ -1942,7 +2008,7 @@ export function GrowthConsole() {
   const meta = pageMeta[activeView];
 
   return (
-    <div className="min-h-screen bg-black text-zinc-100">
+    <div className="min-h-screen bg-background text-zinc-100">
       <div aria-hidden className="control-grid pointer-events-none fixed inset-x-0 top-0 h-[520px] opacity-80" />
 
       {appState ? (
@@ -1961,7 +2027,7 @@ export function GrowthConsole() {
         />
       ) : null}
 
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-zinc-900 bg-[#050505] lg:block">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-white/8 bg-[#09070b] lg:block">
         <SidebarContent active={activeView} onNavigate={navigate} state={appState} />
       </aside>
 
@@ -1975,8 +2041,8 @@ export function GrowthConsole() {
         </SheetContent>
       </Sheet>
 
-      <div className="relative lg:pl-60">
-        <header className="sticky top-0 z-20 flex h-16 items-center border-b border-zinc-900 bg-black/90 px-4 backdrop-blur-xl sm:px-6 lg:h-[72px] lg:px-8">
+      <div className="relative lg:pl-64">
+        <header className="sticky top-0 z-20 flex h-16 items-center border-b border-white/8 bg-[#08070a]/90 px-4 backdrop-blur-xl sm:px-6 lg:h-[72px] lg:px-8">
           <Button aria-label="Open navigation" className="mr-3 lg:hidden" onClick={() => setMobileOpen(true)} size="icon" variant="ghost">
             <Menu className="size-4" />
           </Button>
@@ -2034,6 +2100,19 @@ export function GrowthConsole() {
           ) : null}
 
           {!loading && appState && activeView === "command" ? (
+            <BusinessOsDashboard
+              onNavigate={(view) => {
+                const aliases: Record<string, ViewId> = {
+                  calendar: "scheduler",
+                  approvals: "queue",
+                  "ai-settings": "integrations",
+                };
+                navigate(aliases[view] ?? (view as ViewId));
+              }}
+            />
+          ) : null}
+
+          {!loading && appState && activeView === "legacy-command" ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <MetricCard active={counts.pending > 0} detail="Needs a human decision" icon={Clock3} label="Awaiting approval" value={counts.pending} />
@@ -2223,11 +2302,22 @@ export function GrowthConsole() {
                         <span>Connect an AI provider and choose a model before generating.</span>
                       </div>
                     ) : null}
-                    <div className="flex justify-end border-t border-zinc-900 pt-5">
-                      <Button disabled={!appState.provider.configured || !generateForm.topic.trim() || (generateForm.channel === "instagram" && !generateForm.mediaUrl.trim()) || busy === "generate"} size="lg" type="submit">
-                        {busy === "generate" ? <Loader2 className="animate-spin" /> : <Sparkles />}
-                        {busy === "generate" ? "Generating…" : "Generate review draft"}
-                      </Button>
+                    <div className="space-y-3 border-t border-zinc-900 pt-5">
+                      {generationProgress ? (
+                        <div aria-live="polite" className="space-y-2 rounded-md border border-fuchsia-500/20 bg-fuchsia-500/5 p-3" role="status">
+                          <div className="flex items-center justify-between gap-3 text-xs">
+                            <span className="text-zinc-200">{generationProgress.message}</span>
+                            <span className="shrink-0 font-mono text-fuchsia-300">{generationProgress.percent}%</span>
+                          </div>
+                          <Progress aria-label="Content generation progress" value={generationProgress.percent} />
+                        </div>
+                      ) : null}
+                      <div className="flex justify-end">
+                        <Button disabled={!appState.provider.configured || !generateForm.topic.trim() || (generateForm.channel === "instagram" && !generateForm.mediaUrl.trim()) || busy === "generate"} size="lg" type="submit">
+                          {busy === "generate" ? <Loader2 className="animate-spin" /> : <Sparkles />}
+                          {busy === "generate" ? `${generationProgress?.percent ?? 0}% generating` : "Generate review draft"}
+                        </Button>
+                      </div>
                     </div>
                   </form>
                 </CardContent>
@@ -2426,8 +2516,19 @@ export function GrowthConsole() {
             </div>
           ) : null}
 
+          {!loading && appState && activeView === "knowledge" ? (
+            <KnowledgeWorkspace />
+          ) : null}
+
           {!loading && appState && activeView === "leads" ? (
             <LeadsWorkspace onStateChange={setAppState} state={appState} />
+          ) : null}
+
+          {!loading && appState && activeView === "inbox" ? (
+            <BusinessInbox onNavigate={(view) => {
+              const aliases: Record<string, ViewId> = { calendar: "scheduler", approvals: "queue" };
+              navigate(aliases[view] ?? (view as ViewId));
+            }} />
           ) : null}
 
           {!loading && appState && activeView === "media" ? (
@@ -2452,6 +2553,32 @@ export function GrowthConsole() {
 
           {!loading && appState && activeView === "seo" ? (
             <SeoWorkspace schedulerPaused={appState.scheduler.paused} />
+          ) : null}
+
+          {!loading && appState && activeView === "analytics" ? (
+            <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
+              <Card className="business-panel">
+                <CardHeader className="border-b border-white/7">
+                  <CardTitle>Publishing analytics</CardTitle>
+                  <CardDescription>Socium reports only measurements available from your local records or an official analytics connector.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <EmptyState
+                    action={<Button onClick={() => navigate("integrations")} variant="outline"><PlugZap /> Review integrations</Button>}
+                    description="Publishing totals are available on Overview. Reach, engagement, profile visits and conversions will appear here after a supported analytics source is connected."
+                    icon={ChartNoAxesCombined}
+                    title="No engagement data source"
+                  />
+                </CardContent>
+              </Card>
+              <Card className="business-panel">
+                <CardHeader className="border-b border-white/7"><CardTitle>Local SEO</CardTitle><CardDescription>Evidence-backed website checks remain available.</CardDescription></CardHeader>
+                <CardContent className="space-y-3">
+                  <p className="text-sm leading-6 text-zinc-400">Run robots-aware technical and on-page audits without inventing performance data.</p>
+                  <Button className="w-full" onClick={() => navigate("seo")} variant="outline"><SearchCheck /> Open SEO lab</Button>
+                </CardContent>
+              </Card>
+            </div>
           ) : null}
 
           {!loading && appState && activeView === "automations" ? (

@@ -361,3 +361,226 @@ class SeoAuditSnapshot(Base):
     user_agent: Mapped[str] = mapped_column(String(255), nullable=False)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+
+
+class BusinessProfile(Base):
+    __tablename__ = "business_profiles"
+    __table_args__ = (UniqueConstraint("workspace_id", name="uq_business_profile_workspace"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="draft", index=True)
+    facts: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    visual_profile: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    confirmed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class KnowledgeSource(Base):
+    __tablename__ = "knowledge_sources"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "kind", "locator", name="uq_knowledge_source_locator"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    locator: Mapped[str] = mapped_column(String(2048), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
+    checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_checked_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class KnowledgeItem(Base):
+    __tablename__ = "knowledge_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("knowledge_sources.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    fact_key: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="proposed", index=True)
+    source_excerpt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    verified_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class PreferenceMemory(Base):
+    __tablename__ = "preference_memories"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "category", "key", name="uq_preference_memory_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    category: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
+    key: Mapped[str] = mapped_column(String(120), nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="active", index=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class WorkflowDefinition(Base):
+    __tablename__ = "workflow_definitions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    kind: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    approval_mode: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="approval_required", index=True
+    )
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class WorkflowRun(Base):
+    __tablename__ = "workflow_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    workflow_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("workflow_definitions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    trigger: Mapped[str] = mapped_column(String(40), nullable=False, default="manual", index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="queued", index=True)
+    input_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    output_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    completed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class WorkflowStep(Base):
+    __tablename__ = "workflow_steps"
+    __table_args__ = (UniqueConstraint("run_id", "position", name="uq_workflow_step_position"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="queued", index=True)
+    input_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    output_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    completed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class ApprovalRequestRecord(Base):
+    __tablename__ = "approval_requests"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "subject_type", "subject_id", "subject_revision",
+            name="uq_approval_request_subject_revision",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    subject_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    subject_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    subject_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
+    allowed_actions: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    decided_action: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    decided_by: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    decision_source: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    decided_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class NotificationDelivery(Base):
+    __tablename__ = "notification_deliveries"
+    __table_args__ = (
+        UniqueConstraint("approval_request_id", "transport", name="uq_notification_delivery_transport"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    approval_request_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("approval_requests.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    transport: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
+    remote_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    delivered_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class InboxItem(Base):
+    __tablename__ = "inbox_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
+    priority: Mapped[str] = mapped_column(String(20), nullable=False, default="normal", index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="open", index=True)
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    entity_type: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    entity_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    action_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, index=True)
+    resolved_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class AIDecisionLog(Base):
+    __tablename__ = "ai_decision_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    purpose: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    provider_kind: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    model: Mapped[str] = mapped_column(String(180), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(80), nullable=False, default="v1")
+    context_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    estimated_cost_micros: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)

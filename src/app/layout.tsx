@@ -5,18 +5,18 @@ import { AppProviders } from "@/components/app-providers";
 export const metadata: Metadata = {
   metadataBase: new URL("http://localhost:3000"),
   applicationName: "Socium",
-  title: "Socium — Personal Social Manager",
-  description: "Local-first, approval-first AI social publishing automation.",
+  title: "Socium — Local-First AI Business OS",
+  description: "Private AI business operations for content, approvals, leads, outreach, and growth.",
   openGraph: {
-    title: "Socium — Personal Social Manager",
-    description: "Local-first, approval-first AI social publishing automation.",
+    title: "Socium — Local-First AI Business OS",
+    description: "Private AI business operations for content, approvals, leads, outreach, and growth.",
     type: "website",
     images: [
       {
         url: "/brand/socium-og-image-1200x630.png",
         width: 1200,
         height: 630,
-        alt: "Socium — Personal Social Manager",
+        alt: "Socium — Local-First AI Business OS",
       },
     ],
   },
@@ -26,7 +26,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   colorScheme: "dark",
-  themeColor: "#000000",
+  themeColor: "#09090b",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

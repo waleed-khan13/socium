@@ -29,7 +29,7 @@ os.environ["SOCIUM_AUTO_UPDATE_CHECKS"] = "0"
 @pytest.fixture(autouse=True)
 def stub_post_package_images(monkeypatch):
     """Keep existing content-flow tests deterministic and free of paid image calls."""
-    from app import main as app_main
+    from app import content_service
     from app.services import provider as provider_service
     from app.services.content_package import GeneratedPostPackage
 
@@ -42,7 +42,7 @@ def stub_post_package_images(monkeypatch):
             image_model="test-image-model",
         )
 
-    monkeypatch.setattr(app_main, "generate_post_package", fake_package)
+    monkeypatch.setattr(content_service, "generate_post_package", fake_package)
 
 
 @pytest.fixture(scope="session")

@@ -38,9 +38,13 @@ def test_health_state_and_encrypted_settings(client) -> None:
     assert storage["usage"]["categories"]["database"] >= 0
     assert storage["moveCommand"].startswith("socium storage move")
     assert initial.json()["features"] == {
-        "edition": "social-v1",
+        "edition": "business-os-v1.4",
         "labsEnabled": False,
         "previewModules": [],
+        "businessOs": True,
+        "knowledge": True,
+        "unifiedInbox": True,
+        "genericWorkflows": True,
     }
     assert initial.json()["onboarding"] == {
         "version": 1,

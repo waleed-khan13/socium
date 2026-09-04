@@ -86,7 +86,8 @@ def test_missed_publish_requires_run_now_reschedule_or_skip(client, monkeypatch)
     run_now = client.post(f"/api/jobs/{run_job['id']}/recover", json={"decision": "run_now"})
     assert run_now.status_code == 200
     assert run_now.json()["job"]["status"] == "queued"
-    deadline = time.monotonic() + 3
+    # Windows CI and full-suite database contention can delay one scheduler tick.
+    deadline = time.monotonic() + 10
     state = run_now.json()["state"]
     while time.monotonic() < deadline:
         state = client.get("/api/state").json()

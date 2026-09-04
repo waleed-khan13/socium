@@ -4,6 +4,29 @@ All notable user-facing changes are documented here.
 
 ## Unreleased
 
+## 1.4.0 - 2026-09-05
+
+### Added
+
+- Added the local-first Business OS foundation: business profiles, source-attributed knowledge, reusable workflows and runs, shared approvals, notification deliveries, unified inbox items, preference memory, and AI decision logs.
+- Added a redesigned operational dashboard with real attention counts, AI and connector health, upcoming work, approval queue, current-month calendar, recent activity, and honest analytics empty states.
+- Added Knowledge Base and Inbox workspaces with accessible tables, search, review states, source evidence, and keyboard-friendly controls.
+- Added durable background content-generation jobs with immediate `202` responses, live percentage progress, bounded retries, restart-safe records, and result references.
+- Added local official SVG assets for supported social platforms and responsive Business OS coverage at 375, 768, 1024, and 1440 pixels.
+
+### Changed
+
+- Extended the central AI context with confirmed knowledge only; proposed or rejected facts never enter generation prompts.
+- Kept manual content and image generation available while scheduled publishing is paused.
+- Updated the interface to a higher-contrast charcoal, pink, and orange design system with a 16px body baseline and WCAG AA controls.
+- Preserved all v1.3.1 workspace data through an additive Alembic migration and seeded the Business OS profile from the existing workspace.
+
+### Security and reliability
+
+- Added SQLite FTS5 search, foreign-key enforcement, indexed workflow state, and auditable source/confidence metadata.
+- Kept provider secrets out of background job payloads, browser responses, and AI decision logs.
+- Retained revision-bound, idempotent approvals across dashboard, Slack, and Telegram to prevent duplicate publication.
+
 ## 1.3.1 - 2026-09-04
 
 ### Changed
