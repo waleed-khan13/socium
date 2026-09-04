@@ -89,8 +89,17 @@ if (target.startsWith("win32-")) {
   const contents = path.join(appRoot, "Contents");
   await rm(path.dirname(appRoot), { recursive: true, force: true });
   await mkdir(path.join(contents, "MacOS"), { recursive: true });
+  await mkdir(path.join(contents, "Resources"), { recursive: true });
   await cp(binary, path.join(contents, "MacOS", "Socium"));
   await chmod(path.join(contents, "MacOS", "Socium"), 0o755);
+  const iconset = path.join(releaseDirectory, "installer-staging", target, "Socium.iconset");
+  await mkdir(iconset, { recursive: true });
+  const appIcon = path.join(projectRoot, "public", "brand", "socium-app-icon.png");
+  for (const size of [16, 32, 128, 256, 512]) {
+    await run("sips", ["-z", String(size), String(size), appIcon, "--out", path.join(iconset, `icon_${size}x${size}.png`)]);
+    await run("sips", ["-z", String(size * 2), String(size * 2), appIcon, "--out", path.join(iconset, `icon_${size}x${size}@2x.png`)]);
+  }
+  await run("iconutil", ["-c", "icns", iconset, "-o", path.join(contents, "Resources", "Socium.icns")]);
   await writeFile(path.join(contents, "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -99,6 +108,7 @@ if (target.startsWith("win32-")) {
 <key>CFBundleExecutable</key><string>Socium</string>
 <key>CFBundleIdentifier</key><string>dev.socium.app</string>
 <key>CFBundleName</key><string>Socium</string>
+<key>CFBundleIconFile</key><string>Socium</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>${version}</string>
 <key>CFBundleVersion</key><string>${version}</string>
@@ -116,7 +126,7 @@ if (target.startsWith("win32-")) {
   await mkdir(path.join(appDir, "usr", "bin"), { recursive: true });
   await cp(binary, path.join(appDir, "AppRun"));
   await chmod(path.join(appDir, "AppRun"), 0o755);
-  await cp(path.join(projectRoot, "public", "brand", "socium-app-icon.svg"), path.join(appDir, "socium.svg"));
+  await cp(path.join(projectRoot, "public", "brand", "socium-app-icon.png"), path.join(appDir, "socium.png"));
   await writeFile(path.join(appDir, "socium.desktop"), `[Desktop Entry]\nType=Application\nName=Socium\nComment=Local-first AI social publishing\nExec=Socium\nIcon=socium\nCategories=Office;Network;\nTerminal=false\n`);
   const architecture = target.endsWith("arm64") ? "aarch64" : "x86_64";
   const expectedToolSha = architecture === "aarch64"

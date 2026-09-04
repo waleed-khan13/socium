@@ -50,7 +50,11 @@ const child = spawn(node, [controller, "start", "--tray"], {
 child.unref();
 `;
   await writeFile(scriptPath, script, "utf8");
-  return { node: stableNode, script: scriptPath };
+  return {
+    node: stableNode,
+    script: scriptPath,
+    icon: platform === "win32" ? path.join(installation.runtimePath, "native", "socium.ico") : null,
+  };
 }
 
 export function windowsNativeHelperPath(installation) {
@@ -81,7 +85,7 @@ async function runWindowsHelper(helper, arguments_) {
 }
 
 async function createWindowsShortcut(helper, shortcutPath, portable) {
-  await runWindowsHelper(helper, [
+  const arguments_ = [
     "create-shortcut",
     "--path",
     shortcutPath,
@@ -93,7 +97,9 @@ async function createWindowsShortcut(helper, shortcutPath, portable) {
     path.dirname(portable.script),
     "--description",
     "Start Socium",
-  ]);
+  ];
+  if (portable.icon) arguments_.push("--icon", portable.icon);
+  await runWindowsHelper(helper, arguments_);
 }
 
 export function nativePaths({

@@ -81,7 +81,7 @@ fn help() -> String {
         "Commands:",
         "  tray --state-file <path>",
         "  pick-folder --title <title> --initial <path>",
-        "  create-shortcut --path <lnk> --target <exe> --arguments <args> --working-directory <path> [--description <text>]",
+        "  create-shortcut --path <lnk> --target <exe> --arguments <args> --working-directory <path> [--description <text>] [--icon <ico>]",
         "  remove-shortcut --path <lnk>",
         "  version",
     ]
@@ -158,7 +158,7 @@ fn send_control_action(state_file: &Path, action: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn helper_icon() -> Result<Icon, String> {
+fn fallback_helper_icon() -> Result<Icon, String> {
     const SIZE: u32 = 32;
     let mut rgba = vec![0_u8; (SIZE * SIZE * 4) as usize];
     for y in 0..SIZE {
@@ -181,6 +181,16 @@ fn helper_icon() -> Result<Icon, String> {
         }
     }
     Icon::from_rgba(rgba, SIZE, SIZE).map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn helper_icon() -> Result<Icon, String> {
+    let icon_path = env::current_exe()
+        .map_err(|error| format!("Could not locate the Socium helper: {error}"))?
+        .parent()
+        .ok_or_else(|| "Could not locate the Socium helper directory.".to_string())?
+        .join("socium.ico");
+    Icon::from_path(&icon_path, Some((32, 32))).or_else(|_| fallback_helper_icon())
 }
 
 #[cfg(target_os = "windows")]
@@ -261,6 +271,7 @@ fn create_shortcut(
     arguments: &str,
     working_directory: &Path,
     description: &str,
+    icon: Option<&Path>,
 ) -> Result<(), String> {
     if let Some(parent) = shortcut.parent() {
         fs::create_dir_all(parent)
@@ -281,6 +292,11 @@ fn create_shortcut(
             .map_err(|error| error.to_string())?;
         link.SetDescription(PCWSTR(description.as_ptr()))
             .map_err(|error| error.to_string())?;
+        if let Some(icon) = icon {
+            let icon = HSTRING::from(icon.as_os_str());
+            link.SetIconLocation(PCWSTR(icon.as_ptr()), 0)
+                .map_err(|error| error.to_string())?;
+        }
         let persist: IPersistFile = link
             .cast()
             .map_err(|error| format!("Could not persist Windows shortcut: {error}"))?;
@@ -301,6 +317,7 @@ fn create_shortcut(
     _arguments: &str,
     _working_directory: &Path,
     _description: &str,
+    _icon: Option<&Path>,
 ) -> Result<(), String> {
     Err("This helper only supports Windows.".to_string())
 }
@@ -316,15 +333,19 @@ fn run(arguments: Arguments) -> Result<(), String> {
             &arguments.value("--title")?,
             Path::new(&arguments.value("--initial")?),
         ),
-        "create-shortcut" => create_shortcut(
-            Path::new(&arguments.value("--path")?),
-            Path::new(&arguments.value("--target")?),
-            &arguments.value("--arguments")?,
-            Path::new(&arguments.value("--working-directory")?),
-            &arguments
-                .optional("--description")
-                .unwrap_or_else(|| "Start Socium".to_string()),
-        ),
+        "create-shortcut" => {
+            let icon = arguments.optional("--icon").map(PathBuf::from);
+            create_shortcut(
+                Path::new(&arguments.value("--path")?),
+                Path::new(&arguments.value("--target")?),
+                &arguments.value("--arguments")?,
+                Path::new(&arguments.value("--working-directory")?),
+                &arguments
+                    .optional("--description")
+                    .unwrap_or_else(|| "Start Socium".to_string()),
+                icon.as_deref(),
+            )
+        }
         "remove-shortcut" => {
             let path = PathBuf::from(arguments.value("--path")?);
             match fs::remove_file(&path) {

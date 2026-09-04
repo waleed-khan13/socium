@@ -322,6 +322,18 @@ test("creates a stable launcher that resolves the active runtime after updates",
   assert.doesNotMatch(script, new RegExp(installed.runtimePath.replaceAll("\\", "\\\\")));
 });
 
+test("uses the bundled Socium icon for Windows shortcuts", async (context) => {
+  const current = await fixture();
+  context.after(() => rm(current.root, { recursive: true, force: true }));
+  const installed = await installRelease({ manifestSource: current.manifest, paths: current.paths, target: current.target, log() {} });
+  const bundledNode = path.join(installed.runtimePath, "bin", "node.exe");
+  await mkdir(path.dirname(bundledNode), { recursive: true });
+  await writeFile(bundledNode, "fixture node");
+
+  const launcher = await writePortableLauncher(current.paths, installed, "win32");
+  assert.equal(launcher.icon, path.join(installed.runtimePath, "native", "socium.ico"));
+});
+
 test("macOS and Linux autostart records follow the stable active-runtime launcher", async (context) => {
   const current = await fixture();
   context.after(() => rm(current.root, { recursive: true, force: true }));

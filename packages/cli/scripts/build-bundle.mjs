@@ -98,6 +98,7 @@ if (platform !== "win32") await chmod(path.join(runtimeRoot, "backend", executab
 if (nativeHelperBinary && helperName) {
   await mkdir(path.join(runtimeRoot, "native"), { recursive: true });
   await cp(nativeHelperBinary, path.join(runtimeRoot, "native", helperName));
+  await cp(path.join(projectRoot, "src", "app", "favicon.ico"), path.join(runtimeRoot, "native", "socium.ico"));
 }
 await mkdir(path.join(runtimeRoot, "bin"), { recursive: true });
 const nodeName = platform === "win32" ? "node.exe" : "node";
