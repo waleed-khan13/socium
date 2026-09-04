@@ -1,6 +1,6 @@
 # Socium v1.3 native installer release
 
-Release readiness: complete for v1.3.0.
+Release readiness: complete for v1.3.1.
 
 ## User promise
 
@@ -8,12 +8,12 @@ A non-technical user can download one normal installer for their operating syste
 
 ## Release artifacts
 
-- Windows x64: `Socium-Setup-1.3.0.exe`
-- Windows ARM64: `Socium-Setup-1.3.0-arm64.exe`
-- macOS Apple silicon: `Socium-1.3.0.dmg`
-- macOS Intel: `Socium-1.3.0-intel.dmg`
-- Linux x64: `Socium-1.3.0.AppImage`
-- Linux ARM64: `Socium-1.3.0-arm64.AppImage`
+- Windows x64: `Socium-Setup-1.3.1.exe`
+- Windows ARM64: `Socium-Setup-1.3.1-arm64.exe`
+- macOS Apple silicon: `Socium-1.3.1.dmg`
+- macOS Intel: `Socium-1.3.1-intel.dmg`
+- Linux x64: `Socium-1.3.1.AppImage`
+- Linux ARM64: `Socium-1.3.1-arm64.AppImage`
 
 The three prominent release links select Windows x64, macOS Apple silicon, and Linux x64. Alternate architectures remain visible under Assets. Runtime `.tar.gz` files remain updater inputs and advanced command-line installer assets; they are not presented as the normal direct download.
 

@@ -51,8 +51,8 @@ Do not continue until all six matrix jobs are green.
 Create one annotated tag after the candidate commit and version are final:
 
 ```bash
-git tag -a v1.3.0 -m "Socium 1.3.0"
-git push origin v1.3.0
+git tag -a v1.3.1 -m "Socium 1.3.1"
+git push origin v1.3.1
 ```
 
 The tag-triggered workflow repeats all native builds rather than trusting dry-run artifacts. It then creates a three-choice Windows/macOS/Linux release page, uploads six dependency-free native installers, six architecture-specific updater archives, and `socium-manifest.json`, and publishes the CLI to npm. SHA-256 values remain inside the manifest, while sidecar files stay in internal workflow artifacts. Never move or reuse a published version tag. If publication fails after npm accepts the version, fix the issue and release a new patch version.
@@ -64,8 +64,8 @@ For the first-ever `socium` publication, the npm job is expected to remain unaut
 Check that the workflow is green and that the GitHub Release contains six native installers, six updater archives, and one manifest beneath the three recommended download choices. Then use a clean temporary application home on a supported machine:
 
 ```bash
-npx -y socium@1.3.0 onboard
-npx -y socium@1.3.0 doctor
+npx -y socium@1.3.1 onboard
+npx -y socium@1.3.1 doctor
 ```
 
-Also download the Windows `.exe`, macOS `.dmg`, and Linux `.AppImage` from the public release and confirm that each primary link points to the native installer rather than a runtime archive. Confirm that the browser opens on loopback, `/api/health` reports version `1.3.0` and edition `social-v1`, and normal uninstall preserves the data directory. Announce the release only after this public-download verification passes.
+Also download the Windows `.exe`, macOS `.dmg`, and Linux `.AppImage` from the public release and confirm that each primary link points to the native installer rather than a runtime archive. Confirm that the browser opens on loopback, `/api/health` reports version `1.3.1` and edition `social-v1`, and normal uninstall preserves the data directory. Announce the release only after this public-download verification passes.

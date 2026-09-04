@@ -1,6 +1,6 @@
 {
   "name": "socium-web-runtime",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "private": true,
   "description": "Flattened production dependencies copied into Socium release bundles.",
   "dependencies": {

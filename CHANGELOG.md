@@ -4,6 +4,13 @@ All notable user-facing changes are documented here.
 
 ## Unreleased
 
+## 1.3.1 - 2026-09-04
+
+### Changed
+
+- Applied the official Socium artwork consistently to the web app, Windows installer, desktop and Start-menu shortcuts, system tray, macOS application, and Linux package.
+- Added release smoke coverage that verifies Windows shortcuts use the bundled Socium icon instead of the generic runtime icon.
+
 ## 1.3.0 - 2026-09-03
 
 ### Added
