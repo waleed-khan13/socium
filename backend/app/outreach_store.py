@@ -10,8 +10,9 @@ from sqlalchemy import select
 
 from app.database import read_session, write_session
 from app.errors import AppError
+from app.growth_store import advance_campaign_after_export_in_session
 from app.lead_store import _lead_dict, outreach_state
-from app.models import Lead, OutreachDraft
+from app.models import Company, Contact, Lead, OutreachDraft
 from app.schemas import (
     GeneratedOutreach,
     LeadDeleteRequest,
@@ -210,6 +211,7 @@ def export_outreach_draft(draft_id: str, revision: int) -> dict[str, object]:
         draft.status = "exported"
         draft.exported_at = now
         draft.updated_at = now
+        advance_campaign_after_export_in_session(session, draft.id)
         append_audit(
             session,
             action="outreach.draft_exported",
@@ -261,8 +263,22 @@ def delete_lead_data(lead_id: str, payload: LeadDeleteRequest) -> dict[str, Any]
         lead = session.get(Lead, lead_id)
         if lead is None:
             raise AppError("Lead not found.", 404)
+        contact_id = lead.contact_id
+        company_id = lead.company_id
         session.delete(lead)
         session.flush()
+        if contact_id and session.scalar(select(Lead.id).where(Lead.contact_id == contact_id)) is None:
+            contact = session.get(Contact, contact_id)
+            if contact is not None:
+                session.delete(contact)
+                session.flush()
+        if company_id:
+            has_lead = session.scalar(select(Lead.id).where(Lead.company_id == company_id)) is not None
+            has_contact = session.scalar(select(Contact.id).where(Contact.company_id == company_id)) is not None
+            if not has_lead and not has_contact:
+                company = session.get(Company, company_id)
+                if company is not None:
+                    session.delete(company)
         append_audit(
             session,
             action="lead.data_deleted",

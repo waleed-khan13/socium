@@ -24,6 +24,7 @@ import { toast } from "sonner";
 
 import { LeadDiscoveryPanel } from "@/components/lead-discovery-panel";
 import { LeadOutreachDialog } from "@/components/lead-outreach-dialog";
+import { GrowthCampaignsPanel } from "@/components/growth-campaigns-panel";
 import { IcpScoringPanel } from "@/components/icp-scoring-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -354,6 +355,8 @@ export function LeadsWorkspace({
         state={state}
       />
 
+      <GrowthCampaignsPanel leads={list.items} />
+
       <div className="grid gap-4 xl:grid-cols-[minmax(0,0.85fr)_minmax(500px,1.15fr)]">
         <Card>
           <CardHeader className="border-b border-zinc-900">
@@ -439,7 +442,7 @@ export function LeadsWorkspace({
                   <Input className="pl-9" maxLength={200} onChange={(event) => setQuery(event.target.value)} placeholder="Search company, email, domain…" value={query} />
                 </div>
                 <Select onValueChange={(value) => value && setFilter(value as LeadFilter)} value={filter}>
-                  <SelectTrigger className="h-9 w-full rounded-md border-input bg-[#080808]"><SelectValue>{filters.find((item) => item.value === filter)?.label}</SelectValue></SelectTrigger>
+                  <SelectTrigger aria-label="Filter leads" className="h-9 w-full rounded-md border-input bg-[#080808]"><SelectValue>{filters.find((item) => item.value === filter)?.label}</SelectValue></SelectTrigger>
                   <SelectContent className="border border-zinc-700 bg-[#0c0c0c]">{filters.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
@@ -477,7 +480,7 @@ export function LeadsWorkspace({
                                 <div className="inline-flex items-center gap-2">
                                   <Button aria-label={`Open reviewed outreach for ${lead.businessName || "lead"}`} onClick={() => setOutreachTarget(lead)} size="icon-sm" variant="ghost"><MailCheck /></Button>
                                   <Select disabled={busy === `status-${lead.id}`} onValueChange={(value) => value && void changeStatus(lead, value as LeadStatus)} value={lead.status}>
-                                    <SelectTrigger className="h-7 w-28 rounded-md border-zinc-800 bg-black text-[11px]"><SelectValue>{lead.status.charAt(0).toUpperCase() + lead.status.slice(1)}</SelectValue></SelectTrigger>
+                                    <SelectTrigger aria-label={`Change status for ${lead.businessName || lead.email || "lead"}`} className="h-7 w-28 rounded-md border-zinc-800 bg-black text-[11px]"><SelectValue>{lead.status.charAt(0).toUpperCase() + lead.status.slice(1)}</SelectValue></SelectTrigger>
                                     <SelectContent className="border border-zinc-700 bg-[#0c0c0c]"><SelectItem value="new">New</SelectItem><SelectItem value="qualified">Qualified</SelectItem><SelectItem value="contacted">Contacted</SelectItem><SelectItem value="archived">Archived</SelectItem></SelectContent>
                                   </Select>
                                   <Button aria-label={`Suppress ${lead.businessName || "lead"}`} onClick={() => setSuppressionTarget(lead)} size="icon-sm" variant="ghost"><ShieldAlert /></Button>
@@ -501,7 +504,7 @@ export function LeadsWorkspace({
                             <span className="text-[11px] text-zinc-600">Blocked from re-import activation</span>
                           ) : (
                             <Select disabled={busy === `status-${lead.id}`} onValueChange={(value) => value && void changeStatus(lead, value as LeadStatus)} value={lead.status}>
-                              <SelectTrigger className="h-7 w-28 rounded-md border-zinc-800 bg-black text-[11px]"><SelectValue>{lead.status.charAt(0).toUpperCase() + lead.status.slice(1)}</SelectValue></SelectTrigger>
+                              <SelectTrigger aria-label={`Change status for ${lead.businessName || lead.email || "lead"}`} className="h-7 w-28 rounded-md border-zinc-800 bg-black text-[11px]"><SelectValue>{lead.status.charAt(0).toUpperCase() + lead.status.slice(1)}</SelectValue></SelectTrigger>
                               <SelectContent className="border border-zinc-700 bg-[#0c0c0c]"><SelectItem value="new">New</SelectItem><SelectItem value="qualified">Qualified</SelectItem><SelectItem value="contacted">Contacted</SelectItem><SelectItem value="archived">Archived</SelectItem></SelectContent>
                             </Select>
                           )}

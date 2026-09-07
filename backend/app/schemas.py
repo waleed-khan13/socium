@@ -520,6 +520,35 @@ class LeadDeleteRequest(ApiModel):
     confirmation: Literal["DELETE"]
 
 
+class CampaignStepCreate(ApiModel):
+    wait_days: int = Field(default=0, ge=0, le=365)
+    subject_template: str = Field(min_length=1, max_length=200)
+    body_template: str = Field(min_length=1, max_length=12_000)
+
+
+class LeadCampaignCreate(ApiModel):
+    name: str = Field(min_length=2, max_length=160)
+    objective: str = Field(min_length=3, max_length=500)
+    tone: str = Field(default="Clear, relevant, and respectful", min_length=2, max_length=160)
+    lead_ids: list[str] = Field(min_length=1, max_length=1_000)
+    steps: list[CampaignStepCreate] = Field(min_length=1, max_length=12)
+    stop_on_reply: bool = True
+    stop_on_consent_change: bool = True
+
+    @field_validator("lead_ids")
+    @classmethod
+    def unique_lead_ids(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(values))
+
+
+class CampaignMemberStop(ApiModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class LeadCampaignStatusUpdate(ApiModel):
+    status: Literal["active", "paused", "archived"]
+
+
 class ConnectorAccountUpsert(ApiModel):
     adapter_id: str = Field(pattern=r"^[a-z][a-z0-9-]{1,79}$")
     name: str = Field(min_length=1, max_length=120)

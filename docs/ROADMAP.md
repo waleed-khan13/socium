@@ -90,6 +90,6 @@ The implementation order, fixed boundaries, storage and recovery rules, and rele
 - [x] Duplicate-safe immediate Gmail delivery and durable scheduled follow-ups.
 - [x] Explicit Run now, Reschedule, or Skip recovery for missed email sends.
 - [x] CSV/manual lead imports plus consent, suppression, retention, and approved outreach-draft controls.
-- [ ] Separate company and contact records with migration from the current lead rows.
-- [ ] Lead campaign definitions, membership, sequencing, and per-recipient stop rules.
-- [ ] Optional licensed lead-provider plugin contracts and connector test fixtures.
+- [x] Separate company and contact records with migration from the current lead rows.
+- [x] Lead campaign definitions, membership, approval-gated sequencing, and per-recipient stop rules.
+- [x] Optional licensed lead-provider import-manifest contract and connector test fixtures.

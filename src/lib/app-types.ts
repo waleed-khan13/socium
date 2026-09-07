@@ -6,7 +6,8 @@ export type ProviderKind =
   | "anthropic-compatible"
   | "openrouter"
   | "nvidia"
-  | "openai-compatible";
+  | "openai-compatible"
+  | "campaign-template";
 export type ImageProviderKind = "openai-images" | "gemini-images" | "automatic1111" | "comfyui";
 export type ContentChannel = "linkedin" | "linkedin-company" | "instagram" | "facebook" | "x" | "telegram" | "blog";
 export type PostStatus = "pending" | "approved" | "skipped" | "rejected" | "publishing" | "published" | "failed";
@@ -15,6 +16,7 @@ export type ConnectorCapability = "approval" | "notification" | "publish" | "lea
 export type ConnectorAvailability = "available" | "planned" | "access-gated" | "notification-only" | "built-in";
 export type LeadSource = "csv" | "linkedin-export" | "crm-export" | "manual" | "website-crawl";
 export type LeadStatus = "new" | "qualified" | "contacted" | "archived";
+export type LeadCampaignStatus = "draft" | "active" | "paused" | "archived";
 export type ConsentStatus = "unknown" | "granted" | "not_applicable" | "denied" | "withdrawn";
 export type LegalBasis = "consent" | "legitimate_interest" | "existing_customer" | "contract" | "other";
 export type OutreachDraftStatus = "draft" | "approved" | "rejected" | "exported";
@@ -402,6 +404,8 @@ export interface IcpProfile {
 
 export interface Lead {
   id: string;
+  companyId: string | null;
+  contactId: string | null;
   businessName: string;
   website: string | null;
   email: string | null;
@@ -609,6 +613,93 @@ export interface WebsiteCrawlResult extends LeadImportRow {
   pages: Array<{ url: string; title: string }>;
   robotsRespected: boolean;
   userAgent: string;
+}
+
+export interface GrowthCompany {
+  id: string;
+  name: string;
+  domain: string | null;
+  website: string | null;
+  location: string | null;
+  source: LeadSource;
+  sourceRef: string | null;
+  evidence: LeadEvidence[];
+  contactCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GrowthContact {
+  id: string;
+  companyId: string | null;
+  companyName: string;
+  fullName: string;
+  jobTitle: string;
+  email: string | null;
+  phone: string | null;
+  source: LeadSource;
+  sourceRef: string | null;
+  status: LeadStatus;
+  suppressed: boolean;
+  suppressionReason: string | null;
+  consentStatus: ConsentStatus;
+  legalBasis: LegalBasis | null;
+  retentionUntil: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CampaignMemberStatus = "pending" | "blocked" | "waiting" | "awaiting_approval" | "stopped" | "completed";
+
+export interface CampaignStep {
+  id: string;
+  position: number;
+  waitDays: number;
+  subjectTemplate: string;
+  bodyTemplate: string;
+}
+
+export interface CampaignMember {
+  id: string;
+  leadId: string | null;
+  contactId: string;
+  label: string;
+  email: string | null;
+  status: CampaignMemberStatus;
+  currentStep: number;
+  stopReason: string | null;
+  lastDraftId: string | null;
+  nextActionAt: string | null;
+  updatedAt: string;
+}
+
+export interface LeadCampaign {
+  id: string;
+  name: string;
+  objective: string;
+  tone: string;
+  status: LeadCampaignStatus;
+  approvalRequired: true;
+  stopOnReply: boolean;
+  stopOnConsentChange: boolean;
+  steps: CampaignStep[];
+  members: CampaignMember[];
+  memberCounts: Partial<Record<CampaignMemberStatus, number>>;
+  createdAt: string;
+  updatedAt: string;
+  activatedAt: string | null;
+}
+
+export interface GrowthState {
+  companies: GrowthCompany[];
+  contacts: GrowthContact[];
+  campaigns: LeadCampaign[];
+  summary: {
+    companies: number;
+    contacts: number;
+    campaigns: number;
+    activeCampaigns: number;
+  };
 }
 
 export interface DashboardSummary {

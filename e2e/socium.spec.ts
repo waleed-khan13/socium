@@ -1073,6 +1073,13 @@ test("passes automated accessibility checks in core workflow views", async ({ pa
 
   await navigate(page, "Automations", "Automations");
   await expectNoAccessibilityViolations(page, testInfo, "automations-empty");
+
+  await navigate(page, "Leads & Outreach", "Lead intelligence");
+  await expect(page.getByRole("heading", { name: "Growth workspace" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "New campaign" })).toBeDisabled();
+  await expect(page.getByRole("tab", { name: "Companies" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Contacts" })).toBeVisible();
+  await expectNoAccessibilityViolations(page, testInfo, "growth-workspace");
 });
 
 test("supports keyboard navigation on the mobile layout", async ({ page }, testInfo) => {

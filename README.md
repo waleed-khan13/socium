@@ -45,6 +45,7 @@ See [docs/V1_4_RELEASE.md](docs/V1_4_RELEASE.md) for the current release contrac
 - Publish or schedule an exact approved public text revision as the verified organization through the official Posts API.
 - Import allowed CSV, CRM, and LinkedIn exports into a durable local lead vault with source evidence.
 - Deduplicate leads by email, domain, phone, or business and location without silently overwriting existing values.
+- Preserve the existing lead API while normalizing every record into separate local company and contact rows, including a lossless migration for existing databases.
 - Search and qualify leads, preserve an audited suppression list, and block suppressed records from reactivation during import.
 - Connect the official Google Places API with an encrypted local key and search attributed, no-store results without scraping Google Maps HTML.
 - Scan up to four robots-allowed public website pages with SSRF, redirect, content-type, size, timeout, and crawl-delay controls, then explicitly add independently extracted contact evidence to the vault.
@@ -52,6 +53,8 @@ See [docs/V1_4_RELEASE.md](docs/V1_4_RELEASE.md) for the current release contrac
 - Inspect point-by-point reason codes, filter leads at the 70+ high-intent threshold, and record auditable human score corrections without erasing the rule-based result.
 - Record a lead's legal basis, consent state, purpose/evidence note, and retention review date before AI outreach is enabled.
 - Generate editable email drafts with exact revision approval, then export only an approved current revision as CSV; the core never sends outreach.
+- Create local lead campaigns with explicit membership and multi-step templates. Activation prepares only review-required drafts; exporting an approved step schedules the next draft, while suppression, consent changes, retention expiry, or a newer Gmail reply stop that recipient.
+- Discover declarative manifests for optional licensed lead-provider exports without loading provider code, passwords, session cookies, or vendor credentials into Socium's API process.
 - Export a lead and its outreach history as local JSON, filter expired retention reviews, and permanently delete lead data only with a reason plus typed confirmation.
 - Run a robots-aware, SSRF-protected SEO audit with 18 deterministic technical, on-page, content, and social checks.
 - Save derived SEO snapshots and score deltas in SQLite, export a selected report as JSON, and schedule one-off restart-safe audits with the local job worker.
@@ -224,6 +227,8 @@ With Labs enabled, open **Lead intelligence** to upload or paste CSV data. Recog
 Before qualification, configure the **Ideal customer profile** in Lead intelligence. Saving it deterministically rescales every local lead from 0–100 and new imports are scored immediately. Open any score to see its reason codes and point changes. A manual correction requires a written reason, remains visibly separate from the underlying ICP score, and can be cleared at any time.
 
 Open a lead's **Reviewed outreach** control to record the legal basis, consent state, supporting purpose, and retention review date. Only a non-suppressed lead with an email and a current, internally consistent review can generate an AI email draft. Editing increments the revision and clears approval. An exact approved revision can be downloaded as CSV, while **Data controls** exports the complete lead package as JSON or permanently deletes the local lead and its drafts after typed confirmation. No outreach send connector is included in v1.0.
+
+The **Growth workspace** in Lead intelligence keeps Companies, Contacts, and Campaigns together. Create a campaign from contacts that already pass the compliance gate, review its deterministic first-touch draft, and export only the approved revision. If another step exists, the bounded scheduler prepares it after the configured wait; it still returns to review instead of sending. Gmail replies received after campaign activation, suppression, and incompatible consent or retention changes stop that contact. Licensed provider support is an import-only manifest contract documented in [docs/lead-provider-plugins.md](docs/lead-provider-plugins.md); it is not a scraping bypass.
 
 With Labs enabled, open **Local SEO lab** and enter a public website URL to create a deterministic baseline. Socium checks the HTTP response, indexing directives, mobile viewport, canonical, encoding, response time, title, description, headings, visible copy, image alt coverage, internal links, structured data, and Open Graph fields. It stores only derived metrics, weighted checks, and recommendations—not the page HTML. A future-dated one-off snapshot can be placed in the same restart-safe SQLite worker used by publishing jobs; the SEO screen keeps those read-only jobs separate from publication jobs.
 

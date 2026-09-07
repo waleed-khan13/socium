@@ -293,6 +293,12 @@ class Lead(Base):
     compliance_reviewed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     updated_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    company_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    contact_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
 
 class LeadIdentity(Base):
@@ -305,6 +311,117 @@ class LeadIdentity(Base):
     )
     kind: Mapped[str] = mapped_column(String(30), nullable=False)
     value: Mapped[str] = mapped_column(String(512), nullable=False)
+
+
+class Company(Base):
+    __tablename__ = "companies"
+    __table_args__ = (UniqueConstraint("workspace_id", "normalized_key", name="uq_company_workspace_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, index=True, default=1
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    normalized_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    domain: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    website: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="manual", index=True)
+    source_ref: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    evidence: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+
+
+class Contact(Base):
+    __tablename__ = "contacts"
+    __table_args__ = (UniqueConstraint("workspace_id", "normalized_key", name="uq_contact_workspace_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, index=True, default=1
+    )
+    company_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    normalized_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    full_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    job_title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True, index=True)
+    phone: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="manual", index=True)
+    source_ref: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    evidence: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="new", index=True)
+    suppressed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    suppression_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    suppressed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    consent_status: Mapped[str] = mapped_column(String(40), nullable=False, default="unknown", index=True)
+    legal_basis: Mapped[str | None] = mapped_column(String(60), nullable=True, index=True)
+    legal_basis_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    retention_until: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
+    compliance_reviewed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+
+
+class LeadCampaign(Base):
+    __tablename__ = "lead_campaigns"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, index=True, default=1
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    objective: Mapped[str] = mapped_column(String(500), nullable=False)
+    tone: Mapped[str] = mapped_column(String(160), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="draft", index=True)
+    approval_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    stop_on_reply: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    stop_on_consent_change: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    activated_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class CampaignStep(Base):
+    __tablename__ = "campaign_steps"
+    __table_args__ = (UniqueConstraint("campaign_id", "position", name="uq_campaign_step_position"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    campaign_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("lead_campaigns.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    wait_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    subject_template: Mapped[str] = mapped_column(String(200), nullable=False)
+    body_template: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class CampaignMember(Base):
+    __tablename__ = "campaign_members"
+    __table_args__ = (UniqueConstraint("campaign_id", "contact_id", name="uq_campaign_member_contact"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    campaign_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("lead_campaigns.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    contact_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    lead_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("leads.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
+    current_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stop_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    last_draft_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("outreach_drafts.id", ondelete="SET NULL"), nullable=True
+    )
+    next_action_at: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
 
 
 class IcpProfile(Base):

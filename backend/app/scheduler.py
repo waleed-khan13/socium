@@ -24,6 +24,7 @@ from app.gmail_store import (
     prepare_email_reply_send,
     update_email_job_progress,
 )
+from app.growth_store import prepare_due_campaign_step
 from app.media_job_store import (
     complete_media_generation_job,
     finish_cancelled_media_generation,
@@ -261,6 +262,7 @@ class LocalScheduler:
                         "seo.audit",
                         "content.generate",
                         "email.reply.generate",
+                        "campaign.prepare",
                     },
                     lease_token=lease_token,
                 )
@@ -269,6 +271,17 @@ class LocalScheduler:
     async def _execute(self, job: dict[str, Any]) -> None:
         job_id = str(job["id"])
         lease_token = str(job.get("leaseToken") or "") or None
+        if job.get("kind") == "campaign.prepare":
+            payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+            try:
+                prepare_due_campaign_step(str(payload.get("member_id") or ""))
+                complete_job(job_id, lease_token)
+                self._last_error = None
+            except Exception as error:  # noqa: BLE001 - deterministic preparation can be retried safely.
+                message = error.message if isinstance(error, AppError) else str(error) or "Campaign step preparation failed."
+                fail_job(job_id, message, retryable=True, lease_token=lease_token)
+                self._last_error = message
+            return
         if job.get("kind") == "email.reply.generate":
             payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
             thread_id = str(payload.get("thread_id") or "")

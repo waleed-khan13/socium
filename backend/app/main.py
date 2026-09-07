@@ -69,6 +69,8 @@ from app.gmail_store import (
     schedule_email_reply_generation,
     upsert_gmail_threads,
 )
+from app.growth_store import create_campaign, growth_state, stop_campaign_member, update_campaign_status
+from app.lead_provider_plugins import lead_provider_state
 from app.lead_store import (
     clear_lead_score_override,
     icp_profile_state,
@@ -130,6 +132,7 @@ from app.schemas import (
     BrandDiscoveryDraft,
     BrandDiscoveryRequest,
     BrandProfileUpdate,
+    CampaignMemberStop,
     ConnectorAccountUpsert,
     DecisionRequest,
     EditPostRequest,
@@ -148,6 +151,8 @@ from app.schemas import (
     KnowledgeAnalyzeRequest,
     KnowledgeItemUpdate,
     KnowledgeSourceCreate,
+    LeadCampaignCreate,
+    LeadCampaignStatusUpdate,
     LeadComplianceUpdate,
     LeadDeleteRequest,
     LeadImportRequest,
@@ -1038,7 +1043,9 @@ def save_outreach_decision(draft_id: str, payload: OutreachDecisionRequest) -> d
 
 @app.post("/api/outreach-drafts/{draft_id}/export")
 def create_outreach_export(draft_id: str, payload: OutreachExportRequest) -> dict[str, object]:
-    return {"ok": True, **export_outreach_draft(draft_id, payload.revision)}
+    result = export_outreach_draft(draft_id, payload.revision)
+    local_scheduler.wake()
+    return {"ok": True, **result}
 
 
 @app.post("/api/leads/{lead_id}/data-export")
@@ -1050,6 +1057,36 @@ def create_lead_data_export(lead_id: str) -> dict[str, object]:
 def delete_lead(lead_id: str, payload: LeadDeleteRequest) -> dict[str, object]:
     result = delete_lead_data(lead_id, payload)
     return {"ok": True, **result, "state": state_response()}
+
+
+@app.get("/api/growth")
+def get_growth_state() -> JSONResponse:
+    return JSONResponse(growth_state(), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/growth/campaigns")
+def create_lead_campaign(payload: LeadCampaignCreate) -> dict[str, object]:
+    return {"ok": True, "campaign": create_campaign(payload)}
+
+
+@app.patch("/api/growth/campaigns/{campaign_id}")
+def change_lead_campaign(campaign_id: str, payload: LeadCampaignStatusUpdate) -> dict[str, object]:
+    campaign = update_campaign_status(campaign_id, payload)
+    if payload.status == "active":
+        local_scheduler.wake()
+    return {"ok": True, "campaign": campaign}
+
+
+@app.post("/api/growth/campaigns/{campaign_id}/members/{member_id}/stop")
+def stop_lead_campaign_member(
+    campaign_id: str, member_id: str, payload: CampaignMemberStop
+) -> dict[str, object]:
+    return {"ok": True, "campaign": stop_campaign_member(campaign_id, member_id, payload)}
+
+
+@app.get("/api/lead-providers")
+def get_lead_providers() -> JSONResponse:
+    return JSONResponse(lead_provider_state(), headers={"Cache-Control": "no-store"})
 
 
 @app.put("/api/settings/workspace")

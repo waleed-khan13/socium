@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.database import read_session, write_session
 from app.errors import AppError
+from app.growth_store import stop_campaign_members_for_reply_in_session
 from app.models import (
     ApprovalRequestRecord,
     EmailMessage,
@@ -150,6 +151,11 @@ def upsert_gmail_threads(
             thread.updated_at = now
             if previous_history and previous_history != thread.history_id:
                 thread.status = "open"
+
+            if thread.sender_email:
+                stop_campaign_members_for_reply_in_session(
+                    session, thread.sender_email, thread.last_message_at
+                )
 
             for raw_message in raw.get("messages") or []:
                 provider_message_id = str(raw_message.get("providerMessageId") or "")

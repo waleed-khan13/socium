@@ -11,7 +11,7 @@ from sqlalchemy import func, or_, select
 
 from app.database import read_session, write_session
 from app.errors import AppError
-from app.models import IcpProfile, Lead, LeadIdentity
+from app.models import CampaignMember, Company, Contact, IcpProfile, Lead, LeadCampaign, LeadIdentity
 from app.schemas import (
     IcpProfileUpdate,
     LeadComplianceUpdate,
@@ -82,6 +82,8 @@ def _lead_dict(lead: Lead) -> dict[str, object]:
     outreach = outreach_state(lead)
     return {
         "id": lead.id,
+        "companyId": lead.company_id,
+        "contactId": lead.contact_id,
         "businessName": lead.business_name,
         "website": lead.website,
         "email": lead.email,
@@ -113,6 +115,132 @@ def _lead_dict(lead: Lead) -> dict[str, object]:
         "createdAt": lead.created_at,
         "updatedAt": lead.updated_at,
     }
+
+
+def _company_key(lead: Lead) -> tuple[str, str | None]:
+    domain = _normalized_domain(lead.website or "")
+    if domain:
+        return f"domain:{domain}", domain
+    name = _normalized_text(lead.business_name)
+    location = _normalized_text(lead.location or "")
+    return (f"name:{name}|{location}" if name else f"lead:{lead.id}"), None
+
+
+def _contact_key(lead: Lead) -> str:
+    email = _normalized_email(lead.email or "")
+    phone = _normalized_phone(lead.phone or "")
+    if email:
+        return f"email:{email}"
+    if phone:
+        return f"phone:{phone}"
+    return f"lead:{lead.id}"
+
+
+def _sync_normalized_records(session, lead: Lead) -> None:  # type: ignore[no-untyped-def]
+    """Maintain the normalized growth records while Lead remains the compatibility row."""
+    company_key, domain = _company_key(lead)
+    company = session.get(Company, lead.company_id) if lead.company_id else None
+    if company is None:
+        company = session.scalar(
+            select(Company).where(Company.workspace_id == 1, Company.normalized_key == company_key)
+        )
+    if company is None:
+        company = Company(
+            id=str(uuid4()),
+            workspace_id=1,
+            name=lead.business_name,
+            normalized_key=company_key,
+            domain=domain,
+            website=lead.website,
+            location=lead.location,
+            source=lead.source,
+            source_ref=lead.source_ref,
+            evidence=list(lead.evidence or []),
+            created_at=lead.created_at,
+            updated_at=lead.updated_at,
+        )
+        session.add(company)
+        session.flush()
+    else:
+        company.name = company.name or lead.business_name
+        company.domain = company.domain or domain
+        company.website = company.website or lead.website
+        company.location = company.location or lead.location
+        company.source_ref = company.source_ref or lead.source_ref
+        company.evidence = list(lead.evidence or company.evidence or [])
+        company.updated_at = lead.updated_at
+    lead.company_id = company.id
+
+    contact_key = _contact_key(lead)
+    contact = session.get(Contact, lead.contact_id) if lead.contact_id else None
+    if contact is None:
+        contact = session.scalar(
+            select(Contact).where(Contact.workspace_id == 1, Contact.normalized_key == contact_key)
+        )
+    if contact is None:
+        contact = Contact(
+            id=str(uuid4()),
+            workspace_id=1,
+            company_id=company.id,
+            normalized_key=contact_key,
+            full_name="",
+            job_title="",
+            email=lead.email,
+            phone=lead.phone,
+            source=lead.source,
+            source_ref=lead.source_ref,
+            evidence=list(lead.evidence or []),
+            status=lead.status,
+            suppressed=lead.suppressed,
+            suppression_reason=lead.suppression_reason,
+            suppressed_at=lead.suppressed_at,
+            consent_status=lead.consent_status,
+            legal_basis=lead.legal_basis,
+            legal_basis_note=lead.legal_basis_note,
+            retention_until=lead.retention_until,
+            compliance_reviewed_at=lead.compliance_reviewed_at,
+            created_at=lead.created_at,
+            updated_at=lead.updated_at,
+        )
+        session.add(contact)
+        session.flush()
+    else:
+        contact.company_id = contact.company_id or company.id
+        contact.email = contact.email or lead.email
+        contact.phone = contact.phone or lead.phone
+        contact.source_ref = contact.source_ref or lead.source_ref
+        contact.evidence = list(lead.evidence or contact.evidence or [])
+        contact.status = lead.status
+        contact.suppressed = lead.suppressed
+        contact.suppression_reason = lead.suppression_reason
+        contact.suppressed_at = lead.suppressed_at
+        contact.consent_status = lead.consent_status
+        contact.legal_basis = lead.legal_basis
+        contact.legal_basis_note = lead.legal_basis_note
+        contact.retention_until = lead.retention_until
+        contact.compliance_reviewed_at = lead.compliance_reviewed_at
+        contact.updated_at = lead.updated_at
+    lead.contact_id = contact.id
+
+    readiness = outreach_state(lead)
+    if not readiness["outreachReady"]:
+        campaign_ids = select(LeadCampaign.id).where(LeadCampaign.stop_on_consent_change.is_(True))
+        members = list(
+            session.scalars(
+                select(CampaignMember).where(
+                    CampaignMember.contact_id == contact.id,
+                    CampaignMember.campaign_id.in_(campaign_ids),
+                    CampaignMember.status.not_in(["stopped", "completed"]),
+                )
+            ).all()
+        )
+        blockers = readiness["outreachBlockers"]
+        reason = str(blockers[0]) if isinstance(blockers, list) and blockers else "Compliance gate changed."
+        for member in members:
+            member.status = "stopped"
+            member.stop_reason = reason
+            member.next_action_at = None
+            member.updated_at = lead.updated_at
 
 
 def outreach_state(lead: Lead) -> dict[str, object]:
@@ -425,6 +553,7 @@ def import_leads(payload: LeadImportRequest) -> dict[str, int]:
                 _add_missing_identities(session, lead, identities)
                 if profile is not None and profile.version > 0:
                     _score_lead(lead, profile, now)
+                _sync_normalized_records(session, lead)
                 created += 1
                 continue
             if _merge_lead(lead, row, payload.source, now):
@@ -434,6 +563,7 @@ def import_leads(payload: LeadImportRequest) -> dict[str, int]:
             _add_missing_identities(session, lead, identities)
             if profile is not None and profile.version > 0:
                 _score_lead(lead, profile, now)
+            _sync_normalized_records(session, lead)
         append_audit(
             session,
             action="leads.imported",
@@ -576,6 +706,7 @@ def update_lead_compliance(lead_id: str, payload: LeadComplianceUpdate) -> dict[
         lead.retention_until = payload.retention_until.isoformat()
         lead.compliance_reviewed_at = now
         lead.updated_at = now
+        _sync_normalized_records(session, lead)
         append_audit(
             session,
             action="lead.compliance_reviewed",
@@ -598,6 +729,7 @@ def update_lead_status(lead_id: str, payload: LeadStatusUpdate) -> dict[str, obj
             raise AppError("Restore this lead before changing its pipeline status.")
         lead.status = payload.status
         lead.updated_at = utc_now()
+        _sync_normalized_records(session, lead)
         append_audit(
             session,
             action="lead.status_changed",
@@ -618,6 +750,7 @@ def suppress_lead(lead_id: str, payload: LeadSuppressionUpdate) -> dict[str, obj
         lead.suppression_reason = payload.reason
         lead.suppressed_at = now
         lead.updated_at = now
+        _sync_normalized_records(session, lead)
         append_audit(
             session,
             action="lead.suppressed",
@@ -637,6 +770,7 @@ def restore_lead(lead_id: str) -> dict[str, object]:
         lead.suppression_reason = None
         lead.suppressed_at = None
         lead.updated_at = utc_now()
+        _sync_normalized_records(session, lead)
         append_audit(
             session,
             action="lead.restored",

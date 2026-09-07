@@ -119,7 +119,7 @@ def test_v1_1_migrations_preserve_data_and_add_brand_content_fields(tmp_path: Pa
         ).fetchone()
 
     assert accounts == [("keep-slack", "slack", "encrypted-local-secret")]
-    assert revision == ("20260907_0023",)
+    assert revision == ("20260908_0024",)
     assert "proxy_url" in telegram_columns
     assert {"heading_font", "body_font"}.issubset(workspace_columns)
     assert {"target_audience", "logo_media_id", "reference_media_ids", "confirmed_at"} <= workspace_columns
@@ -150,7 +150,6 @@ def test_v1_1_migrations_preserve_data_and_add_brand_content_fields(tmp_path: Pa
     } <= job_columns
     assert brand_defaults == ("English", "Clear and confident", "[]", "[]", 0, None)
     assert content_kit_defaults == ("", "", "", "", 0)
-
     with sqlite3.connect(database_path) as connection:
         business_profile = connection.execute(
             "SELECT status, json_extract(facts, '$.businessName') FROM business_profiles"
@@ -175,3 +174,69 @@ def test_v1_1_migrations_preserve_data_and_add_brand_content_fields(tmp_path: Pa
         "inbox_items",
         "ai_decision_logs",
     } <= business_os_tables
+
+
+def test_growth_migration_backfills_existing_leads_without_data_loss(tmp_path: Path) -> None:
+    database_path = tmp_path / "socium-growth.db"
+    config = _alembic_config(database_path)
+    command.upgrade(config, "20260907_0023")
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO workspace (id, name, business_name, description, timezone)
+            VALUES (1, 'Existing workspace', 'Existing business', '', 'Asia/Karachi')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO leads (
+                id, business_name, website, email, phone, location, source, source_ref,
+                notes, evidence, status, suppressed, created_at, updated_at, icp_reasons,
+                consent_status, legal_basis, legal_basis_note, retention_until
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-growth-lead",
+                "Legacy Growth Company",
+                "https://legacy-growth.example/about",
+                "person@legacy-growth.example",
+                "+92 300 555 0199",
+                "Karachi",
+                "crm-export",
+                "legacy-row-19",
+                "Must remain intact.",
+                '[{"source":"crm-export"}]',
+                "qualified",
+                0,
+                "2026-09-01T00:00:00Z",
+                "2026-09-02T00:00:00Z",
+                "[]",
+                "not_applicable",
+                "existing_customer",
+                "Existing customer relationship.",
+                "2027-01-01",
+            ),
+        )
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(database_path) as connection:
+        lead = connection.execute(
+            "SELECT business_name, email, notes, company_id, contact_id FROM leads WHERE id = ?",
+            ("legacy-growth-lead",),
+        ).fetchone()
+        company = connection.execute(
+            "SELECT name, domain FROM companies WHERE id = ?", (lead[3],)
+        ).fetchone()
+        contact = connection.execute(
+            "SELECT email, legal_basis, retention_until FROM contacts WHERE id = ?", (lead[4],)
+        ).fetchone()
+
+    assert lead[:3] == (
+        "Legacy Growth Company",
+        "person@legacy-growth.example",
+        "Must remain intact.",
+    )
+    assert company == ("Legacy Growth Company", "legacy-growth.example")
+    assert contact == ("person@legacy-growth.example", "existing_customer", "2027-01-01")

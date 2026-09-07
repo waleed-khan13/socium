@@ -68,6 +68,8 @@ Version 0.8 keeps local deterministic ICP profiles, full-vault rescoring, explan
 
 Version 0.8 requires an operator-recorded legal basis, compatible consent state, supporting purpose/evidence note, current retention review date, deliverable email, and suppression check before generation. AI output is an editable plain-text email draft. Edits increment the revision and invalidate approval; only the exact approved revision can be exported as CSV. The core has no outreach send endpoint. Retention expiry blocks generation/export and surfaces a review filter, but never silently deletes data. Permanent deletion requires a written reason and the exact typed confirmation `DELETE`; a non-personal audit event remains.
 
+Campaigns use the same gate for every recipient and every step. Activation and scheduled follow-ups create drafts only. A step cannot advance until its exact approved revision is exported, and the next step returns to review. Gmail replies newer than campaign activation, suppression, withdrawn or denied consent, incompatible legal-basis state, and retention expiry stop the recipient. Deleting the last compatibility lead also removes its normalized contact; an otherwise empty normalized company is removed in the same transaction.
+
 ## AI-generated content
 
 - Display provenance and require review for factual claims, testimonials, prices, guarantees, and regulated topics.
