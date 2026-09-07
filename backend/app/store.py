@@ -2011,7 +2011,7 @@ def _mark_overdue_jobs_for_recovery(session: Session, reason: str) -> int:
     jobs = list(
         session.scalars(
             select(LocalJob).where(
-                LocalJob.kind == "post.publish",
+                LocalJob.kind.in_({"post.publish", "email.send"}),
                 LocalJob.status.in_({"queued", "retrying"}),
                 LocalJob.run_at < now,
             )
@@ -2047,7 +2047,7 @@ def recovery_pending_count() -> int:
         return len(
             session.scalars(
                 select(LocalJob.id).where(
-                    LocalJob.kind == "post.publish",
+                    LocalJob.kind.in_({"post.publish", "email.send"}),
                     LocalJob.status == "missed",
                     LocalJob.recovery_required_at.is_not(None),
                 )
@@ -2536,21 +2536,38 @@ def retry_job(job_id: str) -> dict[str, Any]:
 def recover_missed_job(job_id: str, payload: JobRecoveryRequest) -> dict[str, Any]:
     with write_session() as session:
         job = session.get(LocalJob, job_id)
-        if job is None or job.kind != "post.publish":
-            raise AppError("Scheduled publish not found.", 404)
+        if job is None or job.kind not in {"post.publish", "email.send"}:
+            raise AppError("Scheduled action not found.", 404)
         if job.status != "missed" or not job.recovery_required_at:
             raise AppError(f"This job does not require recovery. Current status: {job.status}.")
 
-        post_id = str((job.payload or {}).get("post_id") or "")
+        post = None
+        email_draft = None
         revision = int((job.payload or {}).get("revision") or 0)
-        post = session.get(Post, post_id)
-        if payload.decision != "skip":
-            if post is None or post.revision != revision:
-                raise AppError("The scheduled draft changed or no longer exists. Skip this stale job.")
-            if post.status == "published":
-                raise AppError("This exact draft is already published; duplicate recovery was blocked.")
-            if post.status not in {"approved", "failed"}:
-                raise AppError(f"Draft must still be approved. Current status: {post.status}.")
+        if job.kind == "post.publish":
+            post_id = str((job.payload or {}).get("post_id") or "")
+            post = session.get(Post, post_id)
+            if payload.decision != "skip":
+                if post is None or post.revision != revision:
+                    raise AppError("The scheduled draft changed or no longer exists. Skip this stale job.")
+                if post.status == "published":
+                    raise AppError("This exact draft is already published; duplicate recovery was blocked.")
+                if post.status not in {"approved", "failed"}:
+                    raise AppError(f"Draft must still be approved. Current status: {post.status}.")
+        else:
+            from app.models import EmailReplyDraft
+
+            draft_id = str((job.payload or {}).get("draft_id") or "")
+            email_draft = session.get(EmailReplyDraft, draft_id)
+            if payload.decision != "skip":
+                if email_draft is None or email_draft.revision != revision:
+                    raise AppError("The scheduled email changed or no longer exists. Skip this stale job.")
+                if email_draft.status == "sent":
+                    raise AppError("This exact email reply was already sent; duplicate recovery was blocked.")
+                if email_draft.status not in {"scheduled", "approved"}:
+                    raise AppError(
+                        f"Email reply must still be approved. Current status: {email_draft.status}."
+                    )
 
         now_dt = datetime.now(UTC)
         now = _utc_iso(now_dt)
@@ -2563,17 +2580,17 @@ def recover_missed_job(job_id: str, payload: JobRecoveryRequest) -> dict[str, An
             job.status = "queued"
             job.run_at = _utc_iso(payload.run_at)
             action = "job.recovery_rescheduled"
-            summary = f"Missed publish rescheduled for {job.run_at}."
+            summary = f"Missed scheduled action rescheduled for {job.run_at}."
         elif payload.decision == "run_now":
             job.status = "queued"
             job.run_at = now
             action = "job.recovery_run_now"
-            summary = "Operator confirmed that the missed publish should run now."
+            summary = "Operator confirmed that the missed scheduled action should run now."
         else:
             job.status = "skipped"
             job.completed_at = now
             action = "job.recovery_skipped"
-            summary = "Operator skipped the missed publish; nothing was sent."
+            summary = "Operator skipped the missed scheduled action; nothing was sent."
 
         if payload.decision != "skip":
             job.completed_at = None
@@ -2582,8 +2599,17 @@ def recover_missed_job(job_id: str, payload: JobRecoveryRequest) -> dict[str, An
                 post.status = "approved"
                 post.last_error = None
                 post.updated_at = now
+            if email_draft is not None:
+                email_draft.status = "scheduled"
+                email_draft.scheduled_for = job.run_at
+                email_draft.last_error = None
+                email_draft.updated_at = now
         else:
             job.last_error = "Skipped by the local operator after restart recovery."
+            if email_draft is not None:
+                email_draft.status = "skipped"
+                email_draft.scheduled_for = None
+                email_draft.updated_at = now
         job.locked_at = None
         job.lease_token = None
         job.lease_expires_at = None
@@ -2670,7 +2696,9 @@ def claim_due_job(lease_seconds: int = 360) -> dict[str, Any] | None:
             .limit(1)
         )
         if metadata is not None and metadata.value == "true":
-            query = query.where(LocalJob.kind.in_({"content.generate", "media.generate"}))
+            query = query.where(
+                LocalJob.kind.in_({"content.generate", "media.generate", "email.reply.generate"})
+            )
         job = session.scalar(query)
         if job is None:
             return None
@@ -2683,11 +2711,13 @@ def claim_due_job(lease_seconds: int = 360) -> dict[str, Any] | None:
         job.lease_expires_at = _utc_iso(datetime.now(UTC) + timedelta(seconds=lease_seconds))
         job.updated_at = now
         job.last_error = None
-        if job.kind in {"media.generate", "content.generate"}:
+        if job.kind in {"media.generate", "content.generate", "email.reply.generate"}:
             job.progress_percent = max(job.progress_percent, 5)
             job.progress_message = (
                 "Local image worker started."
                 if job.kind == "media.generate"
+                else "Bounded local email worker started."
+                if job.kind == "email.reply.generate"
                 else "Bounded local content worker started."
             )
         session.flush()
@@ -2753,7 +2783,7 @@ def fail_job(
         job.lease_expires_at = None
         job.updated_at = _utc_iso(now)
         job.last_error = message[:2_000]
-        if job.kind in {"media.generate", "content.generate"}:
+        if job.kind in {"media.generate", "content.generate", "email.reply.generate"}:
             job.progress_message = (
                 "Generation will retry automatically."
                 if job.status == "retrying"

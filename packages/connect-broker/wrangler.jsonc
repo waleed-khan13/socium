@@ -2,7 +2,7 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "socium-connect",
 	"main": "src/worker.mjs",
-	"compatibility_date": "2026-08-30",
+	"compatibility_date": "2026-09-07",
 	"workers_dev": true,
 	"observability": {
 		"enabled": true
@@ -18,7 +18,11 @@
 			"HANDOFF_ENCRYPTION_KEY",
 			"SLACK_CLIENT_ID",
 			"SLACK_CLIENT_SECRET",
-			"SLACK_SIGNING_SECRET"
+			"SLACK_SIGNING_SECRET",
+			"LINKEDIN_CLIENT_ID",
+			"LINKEDIN_CLIENT_SECRET",
+			"GOOGLE_CLIENT_ID",
+			"GOOGLE_CLIENT_SECRET"
 		]
 	},
 	"triggers": {

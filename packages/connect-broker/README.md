@@ -16,7 +16,7 @@ This Cloudflare Worker is the small shared OAuth edge required for a Buffer-styl
 
 ## One-time maintainer setup
 
-End users do **not** perform these steps. The Socium maintainer deploys one broker and registers one distributed Slack app plus one LinkedIn app.
+End users do **not** perform these steps. The Socium maintainer deploys one broker and registers distributed Slack, LinkedIn, and Google OAuth apps.
 
 1. Install dependencies from the repository root:
 
@@ -30,7 +30,7 @@ End users do **not** perform these steps. The Socium maintainer deploys one brok
    pnpm --filter @socium/connect-broker exec wrangler login
    ```
 
-3. Create the six values listed in `.dev.vars.example`. Generate `HANDOFF_ENCRYPTION_KEY` with:
+3. Create the eight values listed in `.dev.vars.example`. Generate `HANDOFF_ENCRYPTION_KEY` with:
 
    ```bash
    node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
@@ -70,6 +70,15 @@ Create one LinkedIn developer app, request the **Share on LinkedIn** product, an
 
 LinkedIn must approve the required product/scopes before public member publishing works. Put the Client ID and Client Secret in Cloudflare secrets; never add them to this repository or paste them into an issue/chat.
 
+## Gmail app
+
+Create one Google Cloud OAuth web application and enable the Gmail API. Configure this exact redirect:
+
+- OAuth redirect: `https://socium-connect.socium-connect-broker.workers.dev/v1/oauth/gmail/callback`
+- Scopes: `openid`, `email`, `https://www.googleapis.com/auth/gmail.readonly`, `https://www.googleapis.com/auth/gmail.send`
+
+Add the Google Client ID and Client Secret to the Worker secrets. Gmail read access is a restricted scope, so public distribution must complete Google's OAuth consent-screen verification and any applicable restricted-scope assessment. End users then select **Connect Gmail** and approve the Google consent screen; they never create or paste a token. Access and refresh tokens cross a five-minute encrypted handoff and are stored only in Socium's local vault.
+
 ## Local development
 
 Copy `.dev.vars.example` to `.dev.vars`, use test provider credentials, then run:
@@ -84,10 +93,11 @@ pnpm --filter @socium/connect-broker test
 
 ## API contract
 
-- `POST /v1/sessions` — creates a ten-minute Slack or LinkedIn session from a loopback callback, local state, and PKCE challenge.
+- `POST /v1/sessions` — creates a ten-minute Slack, LinkedIn, or Gmail session from a loopback callback, local state, and PKCE challenge.
 - `GET /v1/oauth/{provider}/callback` — claims the provider code and redirects a one-time handoff code to localhost.
 - `POST /v1/handoffs/exchange` — validates state/PKCE and returns the connector payload once.
 - `POST /v1/slack/interactions` — verifies and queues Slack button actions.
 - `POST /v1/slack/actions/poll` — leases the next action using the locally encrypted relay token.
 - `POST /v1/slack/actions/ack` — acknowledges a processed lease.
 - `POST /v1/slack/disconnect` — removes the broker relay mapping and queued actions.
+- `POST /v1/gmail/token/refresh` — exchanges a locally held Google refresh token for a short-lived access token; refresh credentials are not retained by the broker.

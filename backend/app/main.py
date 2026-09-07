@@ -56,6 +56,19 @@ from app.content_job_store import (
 )
 from app.content_service import generate_content_draft
 from app.errors import AppError, ExternalServiceError
+from app.gmail_store import (
+    fail_email_reply_send,
+    finish_email_reply_send,
+    get_email_job,
+    get_email_thread,
+    list_email_jobs,
+    list_email_threads,
+    prepare_email_reply_send,
+    revise_email_reply,
+    schedule_email_reply,
+    schedule_email_reply_generation,
+    upsert_gmail_threads,
+)
 from app.lead_store import (
     clear_lead_score_override,
     icp_profile_state,
@@ -120,8 +133,12 @@ from app.schemas import (
     ConnectorAccountUpsert,
     DecisionRequest,
     EditPostRequest,
+    EmailReplyGenerateRequest,
+    EmailReplyScheduleRequest,
+    EmailReplyUpdate,
     GeneratePostRequest,
     GenericApprovalDecision,
+    GmailSyncRequest,
     GooglePlacesSearchRequest,
     IcpProfileUpdate,
     ImageGenerateRequest,
@@ -177,6 +194,7 @@ from app.seo_store import (
     get_seo_audit as load_seo_audit,
 )
 from app.services.crawler import crawl_brand_website, crawl_website, download_public_brand_image
+from app.services.gmail import fetch_gmail_threads, send_gmail_reply
 from app.services.google_places import search_google_places
 from app.services.image_generation import (
     generate_image,
@@ -559,6 +577,107 @@ def get_inbox(workspace_id: int = 1, status: str | None = "open") -> dict[str, A
 @app.patch("/api/inbox/{item_id}")
 def change_inbox_item(item_id: str, payload: InboxItemUpdate) -> dict[str, Any]:
     return {"ok": True, "item": update_inbox_item(item_id, payload)}
+
+
+@app.post("/api/gmail/sync")
+async def sync_gmail(payload: GmailSyncRequest) -> dict[str, Any]:
+    runtime, threads = await fetch_gmail_threads(payload.account_id, payload.limit)
+    result = upsert_gmail_threads(payload.account_id, threads)
+    return {
+        "ok": True,
+        "account": str(runtime["config"].get("email_address") or "Gmail"),
+        "sync": result,
+        "items": list_email_threads(),
+    }
+
+
+@app.get("/api/email/threads")
+def email_threads(
+    workspace_id: int = 1,
+    status: str | None = "open",
+    query: str = "",
+    limit: int = 100,
+) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "items": list_email_threads(workspace_id, status=status, query=query, limit=limit),
+    }
+
+
+@app.get("/api/email/threads/{thread_id}")
+def email_thread(thread_id: str, workspace_id: int = 1) -> dict[str, Any]:
+    return {"ok": True, "thread": get_email_thread(thread_id, workspace_id)}
+
+
+@app.post("/api/email/threads/{thread_id}/reply-drafts", status_code=202)
+def queue_email_reply(thread_id: str, payload: EmailReplyGenerateRequest) -> dict[str, Any]:
+    if not provider_runtime().get("model"):
+        raise AppError("Connect an AI provider before drafting an email reply.")
+    job = schedule_email_reply_generation(thread_id, payload.instruction)
+    local_scheduler.wake()
+    return {"ok": True, "job": job}
+
+
+@app.get("/api/email/jobs/{job_id}")
+def email_job(job_id: str) -> dict[str, Any]:
+    job = get_email_job(job_id)
+    response: dict[str, Any] = {"ok": True, "job": job}
+    if job["status"] == "completed" and job.get("resultRef"):
+        matched = next(
+            (
+                item
+                for item in list_email_threads(status=None)
+                if item.get("draft") and item["draft"].get("id") == job["resultRef"]
+            ),
+            None,
+        )
+        if matched is not None:
+            response["thread"] = get_email_thread(str(matched["id"]))
+    return response
+
+
+@app.get("/api/email/jobs")
+def email_jobs(status: str | None = None, limit: int = 50) -> dict[str, Any]:
+    if status and status not in {"queued", "retrying", "running", "completed", "failed", "missed", "skipped"}:
+        raise AppError("Unknown email job status filter.")
+    return {"ok": True, "items": list_email_jobs(status=status, limit=limit)}
+
+
+@app.put("/api/email/reply-drafts/{draft_id}")
+def update_email_reply(draft_id: str, payload: EmailReplyUpdate) -> dict[str, Any]:
+    return {"ok": True, "draft": revise_email_reply(draft_id, payload)}
+
+
+@app.post("/api/email/reply-drafts/{draft_id}/send")
+async def send_email_reply_now(draft_id: str) -> dict[str, Any]:
+    prepared = prepare_email_reply_send(draft_id)
+    try:
+        result = await send_gmail_reply(
+            prepared["connectorAccountId"],
+            prepared["providerThreadId"],
+            to_address=prepared["toAddress"],
+            subject=prepared["subject"],
+            body=prepared["body"],
+            internet_message_id=prepared["internetMessageId"],
+            references=prepared["references"],
+            message_id=prepared["messageId"],
+        )
+        draft = finish_email_reply_send(draft_id, str(result.get("id") or ""))
+    except Exception as error:
+        message = error.message if isinstance(error, AppError) else "Gmail delivery could not be confirmed."
+        fail_email_reply_send(draft_id, message)
+        raise
+    return {"ok": True, "draft": draft}
+
+
+@app.post("/api/email/reply-drafts/{draft_id}/schedule")
+def schedule_email_reply_send(
+    draft_id: str,
+    payload: EmailReplyScheduleRequest,
+) -> dict[str, Any]:
+    job, created = schedule_email_reply(draft_id, payload)
+    local_scheduler.wake()
+    return {"ok": True, "created": created, "job": job}
 
 
 @app.get("/api/dashboard/summary")
@@ -1515,7 +1634,7 @@ def get_connectors() -> dict[str, Any]:
 
 @app.post("/api/connectors/oauth/{provider}/start")
 async def start_oauth_connector(provider: str) -> dict[str, Any]:
-    if provider not in {"slack", "linkedin"}:
+    if provider not in {"slack", "linkedin", "gmail"}:
         raise AppError("This connector does not support one-click OAuth.", 404)
     connection = await oauth_broker.start(provider)  # type: ignore[arg-type]
     return {"ok": True, "connection": connection}

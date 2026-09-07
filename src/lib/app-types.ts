@@ -701,6 +701,86 @@ export interface BusinessInboxItem {
   updatedAt: string;
 }
 
+export type EmailReplyStatus =
+  | "pending"
+  | "approved"
+  | "scheduled"
+  | "sending"
+  | "sent"
+  | "failed_uncertain"
+  | "superseded"
+  | "regenerate_text"
+  | "rejected"
+  | "skip";
+
+export interface EmailReplyDraft {
+  id: string;
+  threadId: string;
+  approvalRequestId: string | null;
+  revision: number;
+  subject: string;
+  body: string;
+  rationale: string;
+  classification: string;
+  status: EmailReplyStatus;
+  scheduledFor: string | null;
+  providerMessageId: string | null;
+  sentAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmailMessage {
+  id: string;
+  providerMessageId: string;
+  internetMessageId: string;
+  direction: "inbound" | "outbound";
+  sender: string;
+  recipients: string[];
+  subject: string;
+  bodyText: string;
+  snippet: string;
+  references: string;
+  sentAt: string;
+}
+
+export interface EmailThread {
+  id: string;
+  workspaceId: number;
+  connectorAccountId: string;
+  providerThreadId: string;
+  subject: string;
+  snippet: string;
+  senderName: string;
+  senderEmail: string;
+  participants: string[];
+  classification: string;
+  priority: "normal" | "high" | "urgent";
+  status: string;
+  unread: boolean;
+  lastMessageAt: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: EmailMessage[] | null;
+  draft: EmailReplyDraft | null;
+}
+
+export interface EmailJob {
+  id: string;
+  kind: "email.reply.generate" | "email.send";
+  status: LocalJobStatus;
+  progressPercent: number;
+  progressMessage: string | null;
+  resultRef: string | null;
+  lastError: string | null;
+  runAt: string;
+  recoveryRequiredAt: string | null;
+  recoveryReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PublicAppState {
   features: {
     edition: "business-os-v1.4";

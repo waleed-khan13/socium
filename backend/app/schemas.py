@@ -575,6 +575,33 @@ class GeneratedOutreach(ApiModel):
     rationale: str = ""
 
 
+class GeneratedEmailReply(ApiModel):
+    subject: str
+    body: str
+    classification: Literal[
+        "needs_reply", "waiting", "newsletter", "receipt", "support", "sales", "other"
+    ] = "needs_reply"
+    rationale: str = ""
+
+
+class GmailSyncRequest(ApiModel):
+    account_id: str = Field(min_length=1, max_length=36)
+    limit: int = Field(default=25, ge=1, le=50)
+
+
+class EmailReplyGenerateRequest(ApiModel):
+    instruction: str = Field(default="Reply helpfully using confirmed business facts.", max_length=2_000)
+
+
+class EmailReplyUpdate(ApiModel):
+    subject: str = Field(min_length=1, max_length=998)
+    body: str = Field(min_length=1, max_length=50_000)
+
+
+class EmailReplyScheduleRequest(ApiModel):
+    run_at: datetime
+
+
 class ProviderConnectionResult(ApiModel):
     ok: bool
     message: str

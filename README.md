@@ -16,6 +16,7 @@ See [docs/V1_4_RELEASE.md](docs/V1_4_RELEASE.md) for the current release contrac
 - Run reusable workflow definitions with durable runs, steps, terminal approval records, notification deliveries, and AI decision provenance in SQLite.
 - Review Slack, Telegram, and dashboard decisions through a duplicate-safe approval boundary so the same revision cannot publish twice.
 - Triage local workflow and approval work in a unified inbox with searchable status controls.
+- Connect Gmail through one Google consent screen, sync a bounded set of real threads into the local Unified Inbox, create an AI reply draft, approve its exact revision, and send now or schedule through the durable worker.
 - Generate content in a bounded background worker: the browser receives an immediate job, displays live percentage progress, and can recover the durable result after navigation or restart.
 - Start with private local AI or select a ready-made OpenAI, Google Gemini, Anthropic Claude, OpenRouter, or NVIDIA NIM connection; safe custom OpenAI-compatible and Anthropic-compatible discovery remains available for advanced servers.
 - Confirm a durable brand profile with business facts, audience, voice, content rules, colors, logo, and reference media; every confirmed revision becomes reusable generation context.
@@ -56,7 +57,7 @@ See [docs/V1_4_RELEASE.md](docs/V1_4_RELEASE.md) for the current release contrac
 - Save derived SEO snapshots and score deltas in SQLite, export a selected report as JSON, and schedule one-off restart-safe audits with the local job worker.
 - Run the browser through one same-origin surface at `127.0.0.1:3000`; the API remains internal.
 
-Publishing adapters for X; Instagram carousel/Reels processing; outreach delivery connectors; rendered-page crawling; Lighthouse/PageSpeed and Search Console adapters; keyword maps; and approved SEO fix proposals remain roadmap work. Channel names can already be used to generate social drafts, while verified Telegram, WordPress, Facebook Page, Instagram Professional, LinkedIn Member, and access-approved LinkedIn Company Page connections can publish or schedule exact approved revisions. Outreach is deliberately export-only and never pretends an email was sent.
+Publishing adapters for X; Instagram carousel/Reels processing; lead-campaign delivery; rendered-page crawling; Lighthouse/PageSpeed and Search Console adapters; keyword maps; and approved SEO fix proposals remain roadmap work. Channel names can already be used to generate social drafts, while verified Telegram, WordPress, Facebook Page, Instagram Professional, LinkedIn Member, and access-approved LinkedIn Company Page connections can publish or schedule exact approved revisions. Gmail replies use a separate exact-revision approval boundary.
 
 ## Native localhost install
 

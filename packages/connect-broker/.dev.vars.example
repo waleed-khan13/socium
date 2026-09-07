@@ -1,0 +1,8 @@
+HANDOFF_ENCRYPTION_KEY=replace-with-base64url-encoded-32-byte-key
+SLACK_CLIENT_ID=replace-with-slack-client-id
+SLACK_CLIENT_SECRET=replace-with-slack-client-secret
+SLACK_SIGNING_SECRET=replace-with-slack-signing-secret
+LINKEDIN_CLIENT_ID=replace-with-linkedin-client-id
+LINKEDIN_CLIENT_SECRET=replace-with-linkedin-client-secret
+GOOGLE_CLIENT_ID=replace-with-google-oauth-client-id
+GOOGLE_CLIENT_SECRET=replace-with-google-oauth-client-secret

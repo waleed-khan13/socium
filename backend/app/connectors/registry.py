@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.connectors.base import ConnectorAdapter, ConnectorManifest
+from app.connectors.gmail import GmailAdapter
 from app.connectors.google_places import GooglePlacesAdapter
 from app.connectors.instagram import InstagramAdapter
 from app.connectors.linkedin import LinkedInMemberAdapter, LinkedInOrganizationAdapter
@@ -14,6 +15,7 @@ from app.errors import AppError
 _slack = SlackAdapter()
 _wordpress = WordPressAdapter()
 _google_places = GooglePlacesAdapter()
+_gmail = GmailAdapter()
 _meta = MetaPagesAdapter()
 _instagram = InstagramAdapter()
 _linkedin = LinkedInMemberAdapter()
@@ -22,6 +24,7 @@ _adapters: dict[str, ConnectorAdapter] = {
     "slack": _slack,
     "wordpress": _wordpress,
     "google-places": _google_places,
+    "gmail": _gmail,
     "meta": _meta,
     "instagram": _instagram,
     "linkedin": _linkedin,
@@ -39,6 +42,7 @@ _catalog: tuple[ConnectorManifest, ...] = (
     _slack.manifest,
     _wordpress.manifest,
     _google_places.manifest,
+    _gmail.manifest,
     _meta.manifest,
     _instagram.manifest,
     _linkedin.manifest,

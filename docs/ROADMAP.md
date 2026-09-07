@@ -81,3 +81,15 @@ The implementation order, fixed boundaries, storage and recovery rules, and rele
 - [x] Cross-platform CLI installer, isolated upgrades, data-preserving uninstall, diagnostics, and native release automation.
 - [ ] Signed desktop installers and background-service integration.
 - [ ] Contributor documentation and connector test harness.
+
+## v1.5 — growth and email
+
+- [x] Gmail one-click OAuth with locally encrypted renewable credentials.
+- [x] Bounded real-thread sync into the Unified Inbox.
+- [x] Background AI reply drafting from confirmed knowledge, with editable exact-revision approval.
+- [x] Duplicate-safe immediate Gmail delivery and durable scheduled follow-ups.
+- [x] Explicit Run now, Reschedule, or Skip recovery for missed email sends.
+- [x] CSV/manual lead imports plus consent, suppression, retention, and approved outreach-draft controls.
+- [ ] Separate company and contact records with migration from the current lead rows.
+- [ ] Lead campaign definitions, membership, sequencing, and per-recipient stop rules.
+- [ ] Optional licensed lead-provider plugin contracts and connector test fixtures.

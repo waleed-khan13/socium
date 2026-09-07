@@ -565,6 +565,89 @@ class InboxItem(Base):
     updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
 
 
+class EmailThread(Base):
+    __tablename__ = "email_threads"
+    __table_args__ = (
+        UniqueConstraint(
+            "connector_account_id",
+            "provider_thread_id",
+            name="uq_email_thread_provider_identity",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("workspace.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    connector_account_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("connector_accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider_thread_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    history_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    subject: Mapped[str] = mapped_column(String(998), nullable=False, default="")
+    snippet: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    sender_name: Mapped[str] = mapped_column(String(320), nullable=False, default="")
+    sender_email: Mapped[str] = mapped_column(String(320), nullable=False, default="")
+    participants: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    classification: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="needs_review", index=True
+    )
+    priority: Mapped[str] = mapped_column(String(20), nullable=False, default="normal", index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="open", index=True)
+    unread: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    last_message_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class EmailMessage(Base):
+    __tablename__ = "email_messages"
+    __table_args__ = (
+        UniqueConstraint("thread_id", "provider_message_id", name="uq_email_message_provider_identity"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("email_threads.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider_message_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    internet_message_id: Mapped[str] = mapped_column(String(998), nullable=False, default="")
+    direction: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    sender: Mapped[str] = mapped_column(String(998), nullable=False, default="")
+    recipients: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    subject: Mapped[str] = mapped_column(String(998), nullable=False, default="")
+    body_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    snippet: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    references: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    sent_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class EmailReplyDraft(Base):
+    __tablename__ = "email_reply_drafts"
+    __table_args__ = (UniqueConstraint("thread_id", "revision", name="uq_email_reply_revision"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("email_threads.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    approval_request_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("approval_requests.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    subject: Mapped[str] = mapped_column(String(998), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    classification: Mapped[str] = mapped_column(String(40), nullable=False, default="needs_reply")
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
+    scheduled_for: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    provider_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sent_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
 class AIDecisionLog(Base):
     __tablename__ = "ai_decision_logs"
 

@@ -19,6 +19,7 @@ from app.models import (
     AutomationRule,
     BusinessProfile,
     ConnectorAccount,
+    EmailReplyDraft,
     InboxItem,
     KnowledgeItem,
     KnowledgeSource,
@@ -636,6 +637,12 @@ def decide_approval(approval_id: str, payload: GenericApprovalDecision) -> dict[
                 run.status = "approved" if payload.action == "approve" else payload.action
                 run.completed_at = now
                 run.updated_at = now
+        elif approval.subject_type == "email_reply":
+            draft = session.get(EmailReplyDraft, approval.subject_id)
+            if draft is not None and draft.revision == approval.subject_revision:
+                draft.status = "approved" if payload.action == "approve" else payload.action
+                draft.last_error = None
+                draft.updated_at = now
         inbox = session.scalar(
             select(InboxItem).where(InboxItem.dedupe_key == f"approval:{approval.id}")
         )

@@ -119,7 +119,7 @@ def test_v1_1_migrations_preserve_data_and_add_brand_content_fields(tmp_path: Pa
         ).fetchone()
 
     assert accounts == [("keep-slack", "slack", "encrypted-local-secret")]
-    assert revision == ("20260904_0022",)
+    assert revision == ("20260907_0023",)
     assert "proxy_url" in telegram_columns
     assert {"heading_font", "body_font"}.issubset(workspace_columns)
     assert {"target_audience", "logo_media_id", "reference_media_ids", "confirmed_at"} <= workspace_columns

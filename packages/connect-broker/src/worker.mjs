@@ -6,7 +6,7 @@ const ACTION_TTL_SECONDS = 72 * 60 * 60;
 const ACTION_LEASE_SECONDS = 4 * 60;
 const MAX_BODY_BYTES = 24_000;
 const LOCAL_CALLBACK_PATH = "/oauth/callback";
-const PROVIDERS = new Set(["slack", "linkedin"]);
+const PROVIDERS = new Set(["slack", "linkedin", "gmail"]);
 const SLACK_RELAY_METHODS = new Set([
   "auth.test",
   "chat.postMessage",
@@ -38,13 +38,19 @@ function bytesToHex(bytes) {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function timingSafeTextEqual(left, right) {
-  const leftBytes = encoder.encode(left);
-  const rightBytes = encoder.encode(right);
-  if (leftBytes.length !== rightBytes.length) return false;
-  let difference = 0;
+async function timingSafeTextEqual(left, right) {
+  const [leftHash, rightHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(left)),
+    crypto.subtle.digest("SHA-256", encoder.encode(right)),
+  ]);
+  if (typeof crypto.subtle.timingSafeEqual === "function") {
+    return crypto.subtle.timingSafeEqual(leftHash, rightHash);
+  }
+  const leftBytes = new Uint8Array(leftHash);
+  const rightBytes = new Uint8Array(rightHash);
+  let difference = leftBytes.length ^ rightBytes.length;
   for (let index = 0; index < leftBytes.length; index += 1) {
-    difference |= leftBytes[index] ^ rightBytes[index];
+    difference |= leftBytes[index] ^ (rightBytes[index] ?? 0);
   }
   return difference === 0;
 }
@@ -144,13 +150,28 @@ function oauthRedirectUri(request, provider) {
   return new URL(`/v1/oauth/${provider}/callback`, request.url).toString();
 }
 
-function authorizationUrl(provider, env, redirectUri, state) {
+export function authorizationUrl(provider, env, redirectUri, state) {
   if (provider === "slack") {
     const url = new URL("https://slack.com/oauth/v2/authorize");
     url.searchParams.set("client_id", env.SLACK_CLIENT_ID);
     url.searchParams.set("scope", "chat:write,im:write,files:write");
     url.searchParams.set("redirect_uri", redirectUri);
     url.searchParams.set("state", state);
+    return url.toString();
+  }
+  if (provider === "gmail") {
+    const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("client_id", env.GOOGLE_CLIENT_ID);
+    url.searchParams.set("redirect_uri", redirectUri);
+    url.searchParams.set("state", state);
+    url.searchParams.set("access_type", "offline");
+    url.searchParams.set("include_granted_scopes", "true");
+    url.searchParams.set("prompt", "consent");
+    url.searchParams.set(
+      "scope",
+      "openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send",
+    );
     return url.toString();
   }
   const url = new URL("https://www.linkedin.com/oauth/v2/authorization");
@@ -165,6 +186,7 @@ function authorizationUrl(provider, env, redirectUri, state) {
 const PROVIDER_SECRETS = {
   slack: ["SLACK_CLIENT_ID", "SLACK_CLIENT_SECRET", "SLACK_SIGNING_SECRET"],
   linkedin: ["LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET"],
+  gmail: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
 };
 
 function secretIsConfigured(env, name) {
@@ -337,6 +359,85 @@ async function exchangeLinkedIn(env, code, redirectUri) {
   };
 }
 
+async function exchangeGmail(env, code, redirectUri) {
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    client_id: env.GOOGLE_CLIENT_ID,
+    client_secret: env.GOOGLE_CLIENT_SECRET,
+    redirect_uri: redirectUri,
+  });
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+    body,
+  });
+  const token = await providerJson(tokenResponse, "Google OAuth");
+  const accessToken = String(token.access_token || "");
+  const refreshToken = String(token.refresh_token || "");
+  if (!accessToken || !refreshToken) {
+    throw new Error("Google OAuth response did not include renewable Gmail access.");
+  }
+  const profileResponse = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+    headers: { accept: "application/json", authorization: `Bearer ${accessToken}` },
+  });
+  const profile = await providerJson(profileResponse, "Gmail profile");
+  const emailAddress = String(profile.emailAddress || "").trim();
+  if (!emailAddress.includes("@")) throw new Error("Gmail profile did not include an email address.");
+  const expiresIn = Math.max(60, Number(token.expires_in || 3600));
+  const expiresAt = new Date(Date.now() + expiresIn * 1_000).toISOString();
+  const grantedScopes = String(token.scope || "")
+    .split(/\s+/u)
+    .filter(Boolean);
+  const requiredScopes = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+  ];
+  if (requiredScopes.some((scope) => !grantedScopes.includes(scope))) {
+    throw new Error("Google did not grant the required Gmail read and send permissions.");
+  }
+  return {
+    version: 1,
+    provider: "gmail",
+    connector: {
+      adapterId: "gmail",
+      name: `Gmail · ${emailAddress}`,
+      config: { email_address: emailAddress, expires_at: expiresAt },
+      secrets: { access_token: accessToken, refresh_token: refreshToken },
+      scopes: ["openid", "email", ...requiredScopes],
+      enabled: true,
+    },
+    remote: { emailAddress, expiresAt },
+  };
+}
+
+async function refreshGmailToken(request, env) {
+  const payload = await readJson(request);
+  const refreshToken = String(payload.refreshToken || "");
+  if (refreshToken.length < 20 || refreshToken.length > 8_000 || /\s/u.test(refreshToken)) {
+    throw new Error("Gmail refresh credential is invalid.");
+  }
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+    }),
+  });
+  const token = await providerJson(response, "Google token refresh");
+  const accessToken = String(token.access_token || "");
+  if (!accessToken) throw new Error("Google token refresh did not return access.");
+  const expiresIn = Math.max(60, Number(token.expires_in || 3600));
+  return jsonResponse({
+    ok: true,
+    accessToken,
+    expiresAt: new Date(Date.now() + expiresIn * 1_000).toISOString(),
+  });
+}
+
 async function createHandoff(env, session, payload) {
   const handoffCode = randomToken();
   const encrypted = await encryptHandoff(env.HANDOFF_ENCRYPTION_KEY, payload);
@@ -424,11 +525,17 @@ async function oauthCallback(request, env, provider) {
   try {
     const payload = provider === "slack"
       ? await exchangeSlack(env, code, session.redirect_uri)
-      : await exchangeLinkedIn(env, code, session.redirect_uri);
+      : provider === "linkedin"
+        ? await exchangeLinkedIn(env, code, session.redirect_uri)
+        : await exchangeGmail(env, code, session.redirect_uri);
     const handoffCode = await createHandoff(env, session, payload);
     return localRedirect(session, { code: handoffCode });
   } catch (error) {
-    console.error("OAuth callback failed", { provider, error: error instanceof Error ? error.message : String(error) });
+    console.error(JSON.stringify({
+      event: "oauth_callback_failed",
+      provider,
+      error: error instanceof Error ? error.message : String(error),
+    }));
     return localRedirect(session, { error: "provider_exchange_failed" });
   }
 }
@@ -452,7 +559,7 @@ async function exchangeHandoff(request, env) {
     || handoff.local_state !== localState
     || handoff.consumed_at
     || Number(handoff.expires_at) <= now
-    || !timingSafeTextEqual(await pkceChallenge(verifier), String(handoff.code_challenge))
+    || !await timingSafeTextEqual(await pkceChallenge(verifier), String(handoff.code_challenge))
   ) {
     return jsonResponse({ ok: false, error: "Handoff is invalid, expired, or already used." }, 400);
   }
@@ -724,6 +831,13 @@ async function route(request, env) {
   if (request.method === "GET" && url.pathname === "/v1/oauth/linkedin/callback") {
     return oauthCallback(request, env, "linkedin");
   }
+  if (request.method === "GET" && url.pathname === "/v1/oauth/gmail/callback") {
+    return oauthCallback(request, env, "gmail");
+  }
+  if (request.method === "POST" && url.pathname === "/v1/gmail/token/refresh") {
+    requireProviderEnvironment("gmail", env);
+    return refreshGmailToken(request, env);
+  }
   if (request.method === "POST" && url.pathname === "/v1/slack/interactions") {
     requireProviderEnvironment("slack", env);
     return slackInteraction(request, env);
@@ -754,7 +868,12 @@ const worker = {
       return await route(request, env);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unexpected broker error.";
-      console.error("Broker request failed", { requestId, path: new URL(request.url).pathname, message });
+      console.error(JSON.stringify({
+        event: "broker.request_failed",
+        requestId,
+        path: new URL(request.url).pathname,
+        message,
+      }));
       const clientError = /invalid|unsupported|required|too large|only return/iu.test(message);
       return jsonResponse(
         { ok: false, error: clientError ? message : "Connection broker failed.", requestId },

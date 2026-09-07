@@ -18,7 +18,7 @@ from app.connectors.service import test_saved_connector
 from app.errors import AppError
 from app.schemas import ConnectorAccountUpsert
 
-OAuthProvider = Literal["slack", "linkedin"]
+OAuthProvider = Literal["slack", "linkedin", "gmail"]
 SESSION_TTL_SECONDS = 10 * 60
 
 

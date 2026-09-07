@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  authorizationUrl,
   decryptHandoff,
   encryptHandoff,
   pkceChallenge,
@@ -93,9 +94,26 @@ test("reports provider readiness independently", () => {
     SLACK_CLIENT_SECRET: "client-secret",
     SLACK_SIGNING_SECRET: "signing-secret",
   }), {
+    gmail: false,
     slack: true,
     linkedin: false,
   });
+});
+
+test("requests Gmail offline access with the minimum Socium scopes", () => {
+  const value = authorizationUrl(
+    "gmail",
+    { GOOGLE_CLIENT_ID: "google-client" },
+    "https://connect.socium.dev/v1/oauth/gmail/callback",
+    "opaque-state",
+  );
+  const url = new URL(value);
+
+  assert.equal(url.origin, "https://accounts.google.com");
+  assert.equal(url.searchParams.get("access_type"), "offline");
+  assert.equal(url.searchParams.get("prompt"), "consent");
+  assert.match(url.searchParams.get("scope"), /gmail\.readonly/u);
+  assert.match(url.searchParams.get("scope"), /gmail\.send/u);
 });
 
 test("limits relayed Slack API calls to the installed approval channel", () => {

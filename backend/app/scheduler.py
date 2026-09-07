@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -15,6 +16,14 @@ from app.content_job_store import (
 )
 from app.content_service import generate_content_draft
 from app.errors import AppError
+from app.gmail_store import (
+    complete_email_reply_generation,
+    fail_email_reply_send,
+    finish_email_reply_send,
+    get_email_thread,
+    prepare_email_reply_send,
+    update_email_job_progress,
+)
 from app.media_job_store import (
     complete_media_generation_job,
     finish_cancelled_media_generation,
@@ -24,7 +33,9 @@ from app.media_job_store import (
 from app.media_store import create_generated_media_asset
 from app.schemas import ImageGenerateRequest
 from app.seo_store import save_seo_audit
+from app.services.gmail import send_gmail_reply
 from app.services.image_generation import GenerationCancelled, generate_image
+from app.services.provider import generate_email_reply
 from app.services.publishing import publish_to_target, resolve_publish_target
 from app.services.seo_audit import audit_website
 from app.store import (
@@ -42,6 +53,7 @@ from app.store import (
     recover_stale_jobs,
     reserve_publish,
     scheduler_paused,
+    workspace_runtime,
 )
 
 
@@ -237,11 +249,19 @@ class LocalScheduler:
                 if reserved:
                     fail_publish_uncertain(post_id, revision, message)
                 fail_job(job_id, message, retryable=not reserved, lease_token=lease_token)
+            elif job.get("kind") == "email.send":
+                payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+                fail_email_reply_send(str(payload.get("draft_id") or ""), message)
+                fail_job(job_id, message, retryable=False, lease_token=lease_token)
             else:
                 fail_job(
                     job_id,
                     message,
-                    retryable=job.get("kind") in {"seo.audit", "content.generate"},
+                    retryable=job.get("kind") in {
+                        "seo.audit",
+                        "content.generate",
+                        "email.reply.generate",
+                    },
                     lease_token=lease_token,
                 )
             self._last_error = message
@@ -249,6 +269,88 @@ class LocalScheduler:
     async def _execute(self, job: dict[str, Any]) -> None:
         job_id = str(job["id"])
         lease_token = str(job.get("leaseToken") or "") or None
+        if job.get("kind") == "email.reply.generate":
+            payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+            thread_id = str(payload.get("thread_id") or "")
+            started = time.monotonic()
+            try:
+                update_email_job_progress(
+                    job_id,
+                    15,
+                    "Loading the local thread and confirmed business context.",
+                    lease_token=lease_token,
+                )
+                thread = get_email_thread(thread_id)
+                provider = provider_runtime()
+                update_email_job_progress(
+                    job_id,
+                    35,
+                    "AI is preparing an editable reply draft.",
+                    lease_token=lease_token,
+                )
+                generated = await generate_email_reply(
+                    provider,
+                    thread=thread,
+                    workspace=workspace_runtime(),
+                    instruction=str(payload.get("instruction") or ""),
+                )
+                update_email_job_progress(
+                    job_id,
+                    90,
+                    "Saving the draft and approval lock locally.",
+                    lease_token=lease_token,
+                )
+                complete_email_reply_generation(
+                    job_id,
+                    subject=generated.subject,
+                    body=generated.body,
+                    rationale=generated.rationale,
+                    classification=generated.classification,
+                    lease_token=lease_token,
+                )
+                from app.business_os_store import record_ai_decision
+
+                record_ai_decision(
+                    purpose="email.reply",
+                    provider_kind=provider["kind"],
+                    model=provider["model"],
+                    status="completed",
+                    duration_ms=round((time.monotonic() - started) * 1_000),
+                    context_refs=[{"type": "email_thread", "id": thread_id}],
+                )
+                self._last_error = None
+            except Exception as error:  # noqa: BLE001 - drafting is safe to retry before approval.
+                message = error.message if isinstance(error, AppError) else str(error) or "Email reply drafting failed."
+                fail_job(job_id, message, retryable=True, lease_token=lease_token)
+                self._last_error = message
+            return
+        if job.get("kind") == "email.send":
+            payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+            draft_id = str(payload.get("draft_id") or "")
+            reserved = False
+            try:
+                prepared = prepare_email_reply_send(draft_id)
+                reserved = True
+                result = await send_gmail_reply(
+                    prepared["connectorAccountId"],
+                    prepared["providerThreadId"],
+                    to_address=prepared["toAddress"],
+                    subject=prepared["subject"],
+                    body=prepared["body"],
+                    internet_message_id=prepared["internetMessageId"],
+                    references=prepared["references"],
+                    message_id=prepared["messageId"],
+                )
+                finish_email_reply_send(draft_id, str(result.get("id") or ""))
+                complete_job(job_id, lease_token)
+                self._last_error = None
+            except Exception as error:  # noqa: BLE001 - ambiguous email delivery must fail closed.
+                message = error.message if isinstance(error, AppError) else str(error) or "Email send failed."
+                if reserved:
+                    fail_email_reply_send(draft_id, message)
+                fail_job(job_id, message, retryable=False, lease_token=lease_token)
+                self._last_error = message
+            return
         if job.get("kind") == "content.generate":
             payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
             request_payload = payload.get("request") if isinstance(payload.get("request"), dict) else {}

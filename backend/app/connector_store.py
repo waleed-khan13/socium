@@ -278,6 +278,31 @@ def record_connector_test(account_id: str, *, ok: bool, remote_account_id: str |
         )
 
 
+def replace_connector_credentials(
+    account_id: str,
+    *,
+    secrets: dict[str, str],
+    config: dict[str, Any] | None = None,
+) -> None:
+    """Rotate provider-managed credentials without exposing them through an API response."""
+    with write_session() as session:
+        account = session.get(ConnectorAccount, account_id)
+        if account is None:
+            raise AppError("Connector account not found.", 404)
+        current_secrets = _decrypt_secrets(account.encrypted_secrets)
+        current_secrets.update(secrets)
+        next_config = dict(account.config or {}) if config is None else config
+        validate_account_fields(
+            account.adapter_id,
+            next_config,
+            current_secrets,
+            list(account.scopes or []),
+        )
+        account.config = next_config
+        account.encrypted_secrets = _encrypt_secrets(current_secrets)
+        account.updated_at = utc_now()
+
+
 def delete_connector(account_id: str) -> None:
     with write_session() as session:
         account = session.get(ConnectorAccount, account_id)

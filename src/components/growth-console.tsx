@@ -53,6 +53,7 @@ import { AutomationsWorkspace } from "@/components/automations-workspace";
 import { BrandProfileCard } from "@/components/brand-profile-card";
 import { BusinessInbox } from "@/components/business-inbox";
 import { BusinessOsDashboard } from "@/components/business-os-dashboard";
+import { GmailConnectorCard } from "@/components/gmail-connector-card";
 import { KnowledgeWorkspace } from "@/components/knowledge-workspace";
 import { MediaLibrary } from "@/components/media-library";
 import { OnboardingWizard } from "@/components/onboarding-wizard";
@@ -976,6 +977,11 @@ export function GrowthConsole() {
     [appState?.connectors.accounts],
   );
 
+  const gmailAccount = useMemo(
+    () => appState?.connectors.accounts.find((account) => account.adapterId === "gmail") ?? null,
+    [appState?.connectors.accounts],
+  );
+
   const wordpressAccount = useMemo(
     () => appState?.connectors.accounts.find((account) => account.adapterId === "wordpress") ?? null,
     [appState?.connectors.accounts],
@@ -1002,7 +1008,7 @@ export function GrowthConsole() {
   );
 
   const upcomingConnectors = useMemo(
-    () => appState?.connectors.catalog.filter((connector) => !["telegram", "slack", "wordpress", "google-places", "meta", "instagram", "linkedin", "linkedin-organization"].includes(connector.adapterId)) ?? [],
+    () => appState?.connectors.catalog.filter((connector) => !["telegram", "slack", "gmail", "wordpress", "google-places", "meta", "instagram", "linkedin", "linkedin-organization"].includes(connector.adapterId)) ?? [],
     [appState?.connectors.catalog],
   );
 
@@ -1700,7 +1706,7 @@ export function GrowthConsole() {
     }
   }
 
-  async function connectOAuth(provider: "slack" | "linkedin") {
+  async function connectOAuth(provider: "slack" | "linkedin" | "gmail") {
     const popup = window.open("about:blank", `socium-${provider}-oauth`, "popup,width=720,height=820");
     if (!popup) {
       toast.error("Allow pop-ups for localhost so Socium can open the provider consent screen.");
@@ -2525,7 +2531,7 @@ export function GrowthConsole() {
           ) : null}
 
           {!loading && appState && activeView === "inbox" ? (
-            <BusinessInbox onNavigate={(view) => {
+            <BusinessInbox aiConfigured={Boolean(appState.provider.verified)} gmailAccount={gmailAccount} onNavigate={(view) => {
               const aliases: Record<string, ViewId> = { calendar: "scheduler", approvals: "queue" };
               navigate(aliases[view] ?? (view as ViewId));
             }} />
@@ -3111,6 +3117,14 @@ export function GrowthConsole() {
                 oneClickConfigured={appState.connectors.oneClickConfigured}
                 onConnect={() => void connectOAuth("linkedin")}
                 onRemove={() => linkedinAccount && setDeleteConnector(linkedinAccount)}
+              />
+
+              <GmailConnectorCard
+                account={gmailAccount}
+                busy={busy}
+                oneClickConfigured={appState.connectors.oneClickConfigured}
+                onConnect={() => void connectOAuth("gmail")}
+                onRemove={() => gmailAccount && setDeleteConnector(gmailAccount)}
               />
 
               <LinkedInOrganizationConnectorCard

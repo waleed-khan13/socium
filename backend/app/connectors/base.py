@@ -3,7 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-ConnectorCapability = Literal["approval", "notification", "publish", "leads", "analytics", "cms"]
+ConnectorCapability = Literal[
+    "approval",
+    "notification",
+    "publish",
+    "leads",
+    "analytics",
+    "cms",
+    "inbox",
+    "reply",
+]
 ConnectorAvailability = Literal["available", "planned", "access-gated", "notification-only", "built-in"]
 
 
