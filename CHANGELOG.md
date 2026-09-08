@@ -4,6 +4,10 @@ All notable user-facing changes are documented here.
 
 ## Unreleased
 
+### Changed
+
+- Replaced the terminal-style Windows bootstrap experience with a standard per-user setup wizard that supports installation-folder selection, shortcut and startup choices, byte-based 1% progress, registered uninstall, and Finish-page launch without opening a console.
+
 ## 1.4.0 - 2026-09-05
 
 ### Added

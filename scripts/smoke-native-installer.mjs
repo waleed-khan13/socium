@@ -1,12 +1,9 @@
-import { execFile, spawn } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { nativeInstallerFileName } from "./native-installer-names.mjs";
-
-const execFileAsync = promisify(execFile);
 
 const projectRoot = process.cwd();
 const packageJson = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8"));
@@ -21,6 +18,12 @@ if (fragment.file !== installerName || fragment.target !== target || fragment.ve
   throw new Error("Native installer metadata is invalid.");
 }
 await stat(installerPath);
+if (target.startsWith("win32-")) {
+  const executableBytes = await readFile(installerPath);
+  const peOffset = executableBytes.readUInt32LE(0x3c);
+  const subsystem = executableBytes.readUInt16LE(peOffset + 24 + 68);
+  if (subsystem !== 2) throw new Error("Windows installer is not a graphical subsystem executable.");
+}
 
 // DMG and AppImage containers are built from this exact bootstrap executable; smoke the
 // executable directly so CI does not depend on Finder or FUSE.
@@ -32,7 +35,9 @@ try {
   const nativeHome = path.join(testHome, "native-home");
   const child = spawn(
     executable,
-    ["--home", testHome, "--install-only", ...(target.startsWith("win32-") ? [] : ["--no-shortcuts"])],
+    target.startsWith("win32-")
+      ? ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", `/DIR=${testHome}`, "/TASKS="]
+      : ["--home", testHome, "--install-only", "--no-shortcuts"],
     {
       stdio: "inherit",
       windowsHide: true,
@@ -54,19 +59,13 @@ try {
   await stat(path.join(installation.runtimePath, "web", "server.js"));
   await stat(path.join(installation.runtimePath, "backend", target.startsWith("win32-") ? "socium-api.exe" : "socium-api"));
   if (target.startsWith("win32-")) {
-    const desktopShortcut = path.join(nativeHome, "OneDrive", "Desktop", "Socium.lnk");
     const bundledIcon = path.join(installation.runtimePath, "native", "socium.ico");
     await stat(bundledIcon);
-    await stat(desktopShortcut);
-    await stat(path.join(nativeHome, "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs", "Socium.lnk"));
-    const inspectShortcut = [
-      "$shell = New-Object -ComObject WScript.Shell",
-      `$shortcut = $shell.CreateShortcut('${desktopShortcut.replaceAll("'", "''")}')`,
-      "$shortcut.IconLocation",
-    ].join("; ");
-    const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", inspectShortcut], { windowsHide: true });
-    if (!stdout.trim().toLowerCase().startsWith(bundledIcon.toLowerCase())) {
-      throw new Error(`Windows shortcut does not use the bundled Socium icon: ${stdout.trim()}`);
+    await stat(path.join(testHome, "launcher", "node.exe"));
+    await stat(path.join(testHome, "launcher", "launch.mjs"));
+    const uninstallers = ["unins000.exe", "unins001.exe"];
+    if (!(await Promise.all(uninstallers.map((name) => stat(path.join(testHome, name)).then(() => true, () => false)))).some(Boolean)) {
+      throw new Error("Graphical Windows installer did not register an uninstaller.");
     }
   }
   console.log(`Native installer smoke passed for ${target}.`);

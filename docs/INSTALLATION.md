@@ -6,11 +6,13 @@ Socium runs entirely on your computer. The recommended native installers carry t
 
 Open the latest GitHub Release and choose the button for the current operating system:
 
-- Windows downloads `Socium-Setup-<version>.exe`. Open it to install Socium for the current user, create shortcuts, and launch the dashboard.
+- Windows downloads `Socium-Setup-<version>.exe`. Open it to use a normal setup wizard: accept the license, choose an installation folder on any writable drive, select shortcut/startup options, follow byte-based percentage progress, and launch Socium from the Finish page. No terminal window is used.
 - macOS downloads `Socium-<version>.dmg`. Open it, drag **Socium** to **Applications**, then open the app.
 - Linux downloads `Socium-<version>.AppImage`. Mark it executable if the desktop does not do so automatically, then open it.
 
 No administrator access is required because the replaceable runtime and durable state live in the current user's application-data directory. The operating system may show an unknown-publisher warning until the project configures maintainer-owned Windows and Apple signing certificates.
+
+The installation folder contains replaceable application runtimes. The first-run Socium wizard separately lets the user move durable data and local AI models to other folders or drives. Uninstall removes application runtimes and launchers while preserving those durable data/model folders unless the user deletes them explicitly.
 
 ## Optional command-line install
 

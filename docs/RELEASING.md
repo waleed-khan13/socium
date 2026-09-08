@@ -44,6 +44,8 @@ Open **Actions → Native release → Run workflow** and use:
 
 This builds Windows x64/ARM64, macOS Intel/Apple silicon, and Linux x64/ARM64 on native GitHub runners. Each job builds and health-checks the bundled FastAPI service, constructs the checksummed archive, installs it into an empty application-data root, runs `doctor`, enables disposable-profile autostart, boots and controls the installed UI/API, performs an in-place update and rollback, and proves normal uninstall preserves durable data. The dry-run uploads workflow artifacts but skips GitHub Release and npm publication.
 
+The Windows jobs install the pinned Inno Setup compiler and produce a normal graphical setup wizard. Its smoke test verifies the GUI executable subsystem, a custom installation directory, runtime registration, and the uninstaller. Inno Setup is a release-build dependency only; end users do not install it or any other development tool.
+
 Do not continue until all six matrix jobs are green.
 
 ## 3. Tag and publish

@@ -142,6 +142,11 @@ jobs:
         if: startsWith(matrix.target, 'win32-')
         run: pnpm native:build
 
+      - name: Install the pinned Windows setup compiler
+        if: startsWith(matrix.target, 'win32-')
+        shell: pwsh
+        run: choco upgrade innosetup --version=6.7.1 --no-progress -y --allow-downgrade
+
       - name: Build and smoke-test the installed application
         env:
           SOCIUM_RELEASE_TARGET: ${{ matrix.target }}
@@ -149,7 +154,7 @@ jobs:
           pnpm release:bundle -- --target ${{ matrix.target }}
           pnpm release:bundle:smoke
 
-      - name: Build and smoke-test the dependency-free installer
+      - name: Build and smoke-test the native installer
         env:
           SOCIUM_RELEASE_TARGET: ${{ matrix.target }}
         run: |

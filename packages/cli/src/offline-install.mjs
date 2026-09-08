@@ -16,7 +16,12 @@ const runtimePath = path.resolve(value("--runtime-path") || "");
 const version = value("--version");
 const target = value("--target");
 const manifestSource = value("--manifest");
-const paths = sociumPaths();
+const selectedHome = value("--home");
+const paths = sociumPaths({
+  environment: selectedHome
+    ? { ...process.env, SOCIUM_HOME: selectedHome }
+    : process.env,
+});
 
 const installation = await registerBundledRuntime({
   runtimePath,

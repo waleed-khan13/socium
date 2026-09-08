@@ -64,7 +64,7 @@ Publishing adapters for X; Instagram carousel/Reels processing; lead-campaign de
 
 ## Native localhost install
 
-Download the latest Windows `.exe`, macOS `.dmg`, or Linux `.AppImage` from [GitHub Releases](https://github.com/waleed-khan13/socium/releases/latest). These native installers include the complete runtime: users do not need Node.js, Python, Rust, Docker, Git, pnpm, uv, or a source checkout.
+Download the latest Windows `.exe`, macOS `.dmg`, or Linux `.AppImage` from [GitHub Releases](https://github.com/waleed-khan13/socium/releases/latest). The Windows download is a normal graphical setup wizard with an installation-folder picker, shortcut/startup choices, visible 1% progress, and a Finish/Launch step—no terminal window. These native installers include the complete runtime: users do not need Node.js, Python, Rust, Docker, Git, pnpm, uv, or a source checkout.
 
 ### Code signing policy
 
