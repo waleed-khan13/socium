@@ -47,7 +47,7 @@ def test_health_state_and_encrypted_settings(client) -> None:
         "genericWorkflows": True,
     }
     assert initial.json()["onboarding"] == {
-        "version": 1,
+        "version": 2,
         "status": "not-started",
         "showWizard": True,
         "currentStep": "welcome",
@@ -161,6 +161,28 @@ def test_confirmed_brand_profile_persists_assets_preferences_and_revision(client
     assert second.status_code == 200
     assert second.json()["state"]["workspace"]["profileVersion"] == 2
     assert second.json()["state"]["workspace"]["logo"] is None
+    assert second.json()["state"]["contentDefaults"] == {
+        "topic": "Local-first AI",
+        "tone": "Clear, practical, and calm",
+        "objective": "Publish consistently",
+        "callToAction": "Book a practical workflow review.",
+        "confirmedFacts": 22,
+        "profileVersion": 2,
+        "ready": True,
+    }
+    knowledge = client.get("/api/workspaces/1/knowledge").json()["items"]
+    assert any(
+        item["factKey"] == "businessName"
+        and item["value"] == "Northstar Studio"
+        and item["status"] == "confirmed"
+        for item in knowledge
+    )
+    assert any(
+        item["factKey"] == "goals"
+        and item["value"] == '["Publish consistently"]'
+        and item["status"] == "confirmed"
+        for item in knowledge
+    )
     assert any(event["action"] == "brand_profile.confirmed" for event in second.json()["state"]["audit"])
 
     missing_asset = client.put(
@@ -311,7 +333,7 @@ def test_onboarding_is_resumable_and_requires_verified_live_settings(client) -> 
     assert storage.status_code == 200
     onboarding = storage.json()["state"]["onboarding"]
     assert onboarding["storageConfirmed"] is True
-    assert onboarding["currentStep"] == "ai"
+    assert onboarding["currentStep"] == "knowledge"
 
     incomplete = client.put("/api/onboarding", json={"action": "complete"})
     assert incomplete.status_code == 400

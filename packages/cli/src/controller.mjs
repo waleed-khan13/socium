@@ -35,6 +35,20 @@ async function waitForProcessExit(pid, timeoutMs = 120_000) {
   throw new Error("Timed out waiting for Socium to close its database before the storage move.");
 }
 
+async function waitForRuntimeLockRelease(dataDirectory, timeoutMs = 30_000) {
+  const lock = path.join(dataDirectory, ".socium-runtime.json");
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await readFile(lock, "utf8");
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+    }
+    await sleep(250);
+  }
+  throw new Error("Socium closed, but its database lock was not released for the storage move.");
+}
+
 function launchWindowsTray(helper, dataDirectory) {
   const lock = path.join(dataDirectory, ".socium-runtime.json");
   const child = spawn(helper, ["tray", "--state-file", lock], {
@@ -52,7 +66,9 @@ async function main() {
   const webPort = argument("--port", 3000);
   const apiPort = argument("--api-port", 8000);
   if (process.argv[2] === "storage-move") {
+    const currentInstallation = JSON.parse(await readFile(paths.installationFile, "utf8"));
     await waitForProcessExit(Number(stringArgument("--wait-pid")));
+    await waitForRuntimeLockRelease(currentInstallation.dataDirectory || paths.dataDirectory);
     await relocateStorage({
       paths,
       dataDirectory: stringArgument("--data-dir"),

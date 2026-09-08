@@ -68,8 +68,8 @@ type StoragePickerResponse = { ok: boolean; cancelled: boolean; path: string | n
 const steps: Array<{ id: OnboardingStep; label: string }> = [
   { id: "welcome", label: "Welcome" },
   { id: "storage", label: "Storage" },
+  { id: "knowledge", label: "Business Knowledge" },
   { id: "ai", label: "AI" },
-  { id: "brand", label: "Brand" },
   { id: "finish", label: "Ready" },
 ];
 
@@ -87,6 +87,11 @@ function formatBytes(value: number) {
   const units = ["B", "KB", "MB", "GB", "TB"];
   const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
   return `${(value / (1024 ** index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function sameStoragePath(left: string, right: string) {
+  const normalize = (value: string) => value.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+  return normalize(left) === normalize(right);
 }
 
 function ReadinessRow({ complete, label, detail }: { complete: boolean; label: string; detail: string }) {
@@ -230,6 +235,11 @@ export function OnboardingWizard({ open, state, onOpenAdvancedAi, onOpenChange, 
   async function moveStorage() {
     setBusy("storage-move");
     try {
+      const expected = {
+        data: selectedDataDirectory,
+        models: selectedModelsDirectory,
+      };
+      window.sessionStorage.setItem("socium.pendingStorageMove", JSON.stringify(expected));
       await requestJson<{ ok: boolean; restarting: boolean }>("/api/storage/move", {
         method: "POST",
         body: JSON.stringify({
@@ -245,8 +255,11 @@ export function OnboardingWizard({ open, state, onOpenAdvancedAi, onOpenChange, 
       for (let attempt = 0; attempt < 120; attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, 1_000));
         try {
-          const response = await fetch("/api/health", { cache: "no-store" });
-          if (response.ok && attempt > 1) {
+          const next = await requestJson<PublicAppState>("/api/state", { cache: "no-store" });
+          const moved = sameStoragePath(next.storage.locations.data.path, expected.data)
+            && sameStoragePath(next.storage.locations.models.path, expected.models);
+          if (moved && attempt > 1) {
+            window.sessionStorage.removeItem("socium.pendingStorageMove");
             window.location.reload();
             return;
           }
@@ -254,7 +267,7 @@ export function OnboardingWizard({ open, state, onOpenAdvancedAi, onOpenChange, 
           // The local server is expected to be briefly unavailable during the move.
         }
       }
-      throw new Error("Socium did not restart within two minutes. Start it again from the Start menu.");
+      throw new Error("Socium restarted, but the selected storage folders were not activated. Your old data remains safe; open Settings and try again.");
     } catch (error) {
       setStorageRestarting(false);
       toast.error(error instanceof Error ? error.message : "Could not move storage.");
@@ -377,11 +390,11 @@ export function OnboardingWizard({ open, state, onOpenAdvancedAi, onOpenChange, 
             <div className="mx-auto grid size-16 place-items-center rounded-2xl border border-amber-500/30 bg-amber-500/8 text-amber-300 shadow-[0_0_50px_rgba(245,158,11,0.08)]"><Sparkles className="size-7" /></div>
             <Badge className="mt-6 border-emerald-500/25 bg-emerald-500/8 text-emerald-300" variant="outline">LOCAL-FIRST · NO SOCIUM ACCOUNT</Badge>
             <h2 className="mt-5 text-2xl font-semibold tracking-[-0.04em] text-white sm:text-4xl">Welcome to Socium</h2>
-            <p className="mx-auto mt-4 max-w-xl text-sm leading-6 text-zinc-500">Confirm where your private data lives, connect one AI, and teach Socium your brand. Nothing publishes during setup.</p>
+            <p className="mx-auto mt-4 max-w-xl text-sm leading-6 text-zinc-500">Confirm where your private data lives, build verified Business Knowledge, then connect one AI. Nothing publishes during setup.</p>
             <div className="mx-auto mt-8 grid max-w-xl gap-3 text-left sm:grid-cols-3">
               <ReadinessRow complete={false} detail="SQLite, media, credentials, and models stay where you choose." label="Private storage" />
+              <ReadinessRow complete={false} detail="Website analysis prepares an editable profile before AI is required." label="Business Knowledge" />
               <ReadinessRow complete={false} detail="Local Ollama is recommended; your own cloud key also works." label="One AI" />
-              <ReadinessRow complete={false} detail="Only facts you explicitly confirm become generation context." label="Your brand" />
             </div>
             <Button className="mt-8" disabled={busy !== null} onClick={() => void goTo("storage")} size="lg">Start setup <ArrowRight /></Button>
           </div>
@@ -424,10 +437,27 @@ export function OnboardingWizard({ open, state, onOpenAdvancedAi, onOpenChange, 
       );
     }
 
+    if (currentStep === "knowledge") {
+      return (
+        <div className="space-y-5 p-4 sm:p-6">
+          <div>
+            <Badge className="border-zinc-700 text-zinc-400" variant="outline">STEP 2 OF 3</Badge>
+            <h2 className="mt-3 text-xl font-semibold text-white">Build your Business Knowledge</h2>
+            <p className="mt-2 text-xs leading-5 text-zinc-500">Add a website or review the fields below. Saving confirms the facts Socium may reuse across content, images, hashtags, automations, and future modules.</p>
+          </div>
+          <BrandProfileCard key={`${state.workspace.profileVersion}-${state.workspace.updatedAt ?? "new"}`} onStateChange={onStateChange} workspace={state.workspace} />
+          <div className="flex flex-col-reverse gap-2 border-t border-zinc-900 pt-5 sm:flex-row sm:justify-between">
+            <Button onClick={() => void goTo("storage")} variant="ghost"><ArrowLeft />Back</Button>
+            <Button disabled={!state.onboarding.brandConfirmed} onClick={() => void goTo("ai")}>Continue to AI <ArrowRight /></Button>
+          </div>
+        </div>
+      );
+    }
+
     if (currentStep === "ai") {
       return (
         <div className="space-y-5 p-5 sm:p-7">
-          <div><Badge className="border-zinc-700 text-zinc-400" variant="outline">STEP 2 OF 3</Badge><h2 className="mt-3 text-xl font-semibold text-white">Connect one AI</h2><p className="mt-2 text-xs leading-5 text-zinc-500">Local AI keeps brand context on this computer. Cloud AI is optional and sends generation context only when you request a draft.</p></div>
+          <div><Badge className="border-zinc-700 text-zinc-400" variant="outline">STEP 3 OF 3</Badge><h2 className="mt-3 text-xl font-semibold text-white">Connect one AI</h2><p className="mt-2 text-xs leading-5 text-zinc-500">Local AI keeps confirmed Business Knowledge on this computer. Cloud AI is optional and sends generation context only when you request a draft.</p></div>
           {state.onboarding.aiVerified ? <div className="flex items-start gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-4"><CheckCircle2 className="mt-0.5 size-4 text-emerald-300" /><div><p className="text-xs font-semibold text-emerald-200">AI verified</p><p className="mt-1 font-mono text-[10px] text-emerald-200/65">{state.provider.kind} · {state.provider.model}</p></div></div> : null}
           <div className="grid gap-3 sm:grid-cols-2" role="group" aria-label="Onboarding AI type">
             <button aria-label="Set up local AI" aria-pressed={aiMode === "local"} className={cn("rounded-xl border p-4 text-left", aiMode === "local" ? "border-emerald-500/35 bg-emerald-500/8" : "border-zinc-800 bg-black")} onClick={() => { setAiMode("local"); setLocalAi(null); }} type="button"><div className="flex items-center justify-between"><span className="flex items-center gap-2 text-xs font-semibold text-white"><Cpu className="size-4 text-emerald-400" />Local AI</span><Badge className="border-emerald-500/25 text-[9px] text-emerald-300" variant="outline">RECOMMENDED</Badge></div><p className="mt-2 text-[10px] leading-4 text-zinc-500">Private and no per-post API bill.</p></button>
@@ -454,19 +484,13 @@ export function OnboardingWizard({ open, state, onOpenAdvancedAi, onOpenChange, 
             </div>
           )}
           {state.onboarding.aiConfigured && !state.onboarding.aiVerified ? <Button className="w-full" disabled={busy === "provider"} onClick={() => void verifySavedProvider()} variant="outline">{busy === "provider" ? <Loader2 className="animate-spin" /> : <RefreshCw />}Verify saved connection</Button> : null}
-          <div className="flex flex-col-reverse gap-2 border-t border-zinc-900 pt-5 sm:flex-row sm:justify-between"><Button onClick={() => void goTo("storage")} variant="ghost"><ArrowLeft />Back</Button><Button disabled={!state.onboarding.aiVerified} onClick={() => void goTo("brand")}>Continue to brand <ArrowRight /></Button></div>
+          <div className="flex flex-col-reverse gap-2 border-t border-zinc-900 pt-5 sm:flex-row sm:justify-between"><Button onClick={() => void goTo("knowledge")} variant="ghost"><ArrowLeft />Back</Button><Button disabled={!state.onboarding.aiVerified} onClick={() => void goTo("finish")}>Review setup <ArrowRight /></Button></div>
         </div>
       );
     }
 
-    if (currentStep === "brand") {
-      return (
-        <div className="space-y-5 p-4 sm:p-6"><div><Badge className="border-zinc-700 text-zinc-400" variant="outline">STEP 3 OF 3</Badge><h2 className="mt-3 text-xl font-semibold text-white">Confirm your brand</h2><p className="mt-2 text-xs leading-5 text-zinc-500">These are the facts and guardrails Socium may use. Save creates a numbered, auditable revision.</p></div><BrandProfileCard key={`${state.workspace.profileVersion}-${state.workspace.updatedAt ?? "new"}`} onStateChange={onStateChange} workspace={state.workspace} /><div className="flex flex-col-reverse gap-2 border-t border-zinc-900 pt-5 sm:flex-row sm:justify-between"><Button onClick={() => void goTo("ai")} variant="ghost"><ArrowLeft />Back</Button><Button disabled={!state.onboarding.brandConfirmed} onClick={() => void goTo("finish")}>Review setup <ArrowRight /></Button></div></div>
-      );
-    }
-
     return (
-      <div className="grid min-h-[500px] place-items-center p-6 sm:p-10"><div className="w-full max-w-2xl"><div className="text-center"><div className="mx-auto grid size-16 place-items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300"><CheckCircle2 className="size-7" /></div><h2 className="mt-5 text-2xl font-semibold tracking-[-0.04em] text-white">Ready for your first draft</h2><p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-zinc-500">Dashboard approval is already available. Telegram, Slack, and publishing destinations remain optional.</p></div><div className="mt-7 grid gap-3"><ReadinessRow complete={state.onboarding.storageConfirmed} detail={`${state.storage.locations.data.path} · models: ${state.storage.locations.models.path}`} label="Durable storage confirmed" /><ReadinessRow complete={state.onboarding.aiVerified} detail={`${state.provider.kind} · ${state.provider.model}`} label="AI connection verified" /><ReadinessRow complete={state.onboarding.brandConfirmed} detail={`Confirmed brand profile revision ${state.workspace.profileVersion}`} label="Brand context confirmed" /></div><div className="mt-7 flex flex-col-reverse gap-2 sm:flex-row sm:justify-between"><Button onClick={() => void goTo("brand")} variant="ghost"><ArrowLeft />Back</Button><Button disabled={!state.onboarding.ready || busy === "complete"} onClick={() => void complete()} size="lg">{busy === "complete" ? <Loader2 className="animate-spin" /> : <Sparkles />}Finish setup</Button></div></div></div>
+      <div className="grid min-h-[500px] place-items-center p-6 sm:p-10"><div className="w-full max-w-2xl"><div className="text-center"><div className="mx-auto grid size-16 place-items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300"><CheckCircle2 className="size-7" /></div><h2 className="mt-5 text-2xl font-semibold tracking-[-0.04em] text-white">Ready for your first draft</h2><p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-zinc-500">Dashboard approval is already available. Telegram, Slack, and publishing destinations remain optional.</p></div><div className="mt-7 grid gap-3"><ReadinessRow complete={state.onboarding.storageConfirmed} detail={`${state.storage.locations.data.path} · models: ${state.storage.locations.models.path}`} label="Durable storage confirmed" /><ReadinessRow complete={state.onboarding.brandConfirmed} detail={`Confirmed Knowledge revision ${state.workspace.profileVersion}`} label="Business Knowledge confirmed" /><ReadinessRow complete={state.onboarding.aiVerified} detail={`${state.provider.kind} · ${state.provider.model}`} label="AI connection verified" /></div><div className="mt-7 flex flex-col-reverse gap-2 sm:flex-row sm:justify-between"><Button onClick={() => void goTo("ai")} variant="ghost"><ArrowLeft />Back</Button><Button disabled={!state.onboarding.ready || busy === "complete"} onClick={() => void complete()} size="lg">{busy === "complete" ? <Loader2 className="animate-spin" /> : <Sparkles />}Finish setup</Button></div></div></div>
     );
   }
 
@@ -475,7 +499,7 @@ export function OnboardingWizard({ open, state, onOpenAdvancedAi, onOpenChange, 
   return (
     <Dialog onOpenChange={(next) => { if (next) onOpenChange(true); }} open={open}>
       <DialogContent className="h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] gap-0 overflow-hidden border-zinc-700 bg-[#070707] p-0 sm:h-[min(720px,calc(100dvh-2rem))] sm:max-h-[calc(100dvh-2rem)] sm:max-w-[min(1120px,calc(100vw-2rem))]" showCloseButton={false}>
-        <DialogHeader className="sr-only"><DialogTitle>Socium first-run setup</DialogTitle><DialogDescription>Configure private storage, one AI provider, and a confirmed brand profile.</DialogDescription></DialogHeader>
+        <DialogHeader className="sr-only"><DialogTitle>Socium first-run setup</DialogTitle><DialogDescription>Configure private storage, confirmed Business Knowledge, and one AI provider.</DialogDescription></DialogHeader>
         <div className="grid h-full min-h-0 lg:grid-cols-[220px_minmax(0,1fr)]">
           <aside className="hidden border-r border-zinc-900 bg-black/70 p-5 lg:flex lg:flex-col">
             <div><p className="text-xs font-semibold tracking-[0.16em] text-zinc-200 uppercase">SOCIUM</p><p className="mt-1 font-mono text-[9px] text-zinc-700">LOCAL SETUP · V1</p></div>

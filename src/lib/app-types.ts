@@ -116,7 +116,7 @@ export interface PublicProviderSettings {
   updatedAt: string | null;
 }
 
-export type OnboardingStep = "welcome" | "storage" | "ai" | "brand" | "finish";
+export type OnboardingStep = "welcome" | "storage" | "knowledge" | "ai" | "finish";
 
 export interface PublicOnboardingState {
   version: number;
@@ -883,6 +883,15 @@ export interface PublicAppState {
     genericWorkflows: boolean;
   };
   workspace: WorkspaceSettings;
+  contentDefaults: {
+    topic: string;
+    tone: string;
+    objective: string;
+    callToAction: string;
+    confirmedFacts: number;
+    profileVersion: number;
+    ready: boolean;
+  };
   provider: PublicProviderSettings;
   onboarding: PublicOnboardingState;
   imageProvider: PublicImageProviderSettings;

@@ -53,6 +53,7 @@ type TransformPreset = "square" | "portrait" | "landscape";
 
 type Props = {
   imageProvider: PublicImageProviderSettings;
+  showGenerator?: boolean;
   initialGenerationBrief?: {
     id: string;
     prompt: string;
@@ -96,7 +97,7 @@ async function uploadAsset(file: File) {
   return { asset: payload.asset, deduplicated: Boolean(payload.deduplicated) };
 }
 
-export function MediaLibrary({ imageProvider, initialGenerationBrief, onUseInDraft }: Props) {
+export function MediaLibrary({ imageProvider, initialGenerationBrief, onUseInDraft, showGenerator = false }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const generationActiveRef = useRef(false);
   const [library, setLibrary] = useState<MediaLibraryResponse | null>(null);
@@ -159,6 +160,7 @@ export function MediaLibrary({ imageProvider, initialGenerationBrief, onUseInDra
   }, []);
 
   useEffect(() => {
+    if (!showGenerator) return;
     let cancelled = false;
     void requestJson<{ items: MediaGenerationJob[] }>("/api/media/generations?limit=20", {
       cache: "no-store",
@@ -179,10 +181,10 @@ export function MediaLibrary({ imageProvider, initialGenerationBrief, onUseInDra
     return () => {
       cancelled = true;
     };
-  }, [loadGenerationJobs]);
+  }, [loadGenerationJobs, showGenerator]);
 
   useEffect(() => {
-    if (!pollGenerations) return;
+    if (!showGenerator || !pollGenerations) return;
     let cancelled = false;
     const poll = async () => {
       try {
@@ -203,7 +205,7 @@ export function MediaLibrary({ imageProvider, initialGenerationBrief, onUseInDra
       cancelled = true;
       clearInterval(timer);
     };
-  }, [loadGenerationJobs, loadLibrary, pollGenerations]);
+  }, [loadGenerationJobs, loadLibrary, pollGenerations, showGenerator]);
 
   async function submitUpload(event: FormEvent) {
     event.preventDefault();
@@ -345,6 +347,7 @@ export function MediaLibrary({ imageProvider, initialGenerationBrief, onUseInDra
 
   return (
     <div className="space-y-5">
+      {showGenerator ? <>
       <Card className="overflow-hidden border-violet-500/20 bg-[#050505] shadow-[0_0_70px_-36px_rgba(139,92,246,0.55)]">
         <CardHeader className="border-b border-zinc-900 bg-[radial-gradient(circle_at_top_left,rgba(139,92,246,0.18),transparent_34%),radial-gradient(circle_at_top_right,rgba(34,211,238,0.08),transparent_28%)]">
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -456,6 +459,7 @@ export function MediaLibrary({ imageProvider, initialGenerationBrief, onUseInDra
           </CardContent>
         </Card>
       ) : null}
+      </> : null}
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <Card className="overflow-hidden border-zinc-800 bg-[#060606]">

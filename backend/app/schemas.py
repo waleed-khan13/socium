@@ -154,7 +154,7 @@ class BrandDiscoveryDraft(ApiModel):
 
 class OnboardingUpdate(ApiModel):
     action: Literal["start", "set-step", "confirm-storage", "dismiss", "complete", "reset"]
-    step: Literal["welcome", "storage", "ai", "brand", "finish"] | None = None
+    step: Literal["welcome", "storage", "knowledge", "ai", "brand", "finish"] | None = None
     acknowledge_warnings: bool = False
 
     @model_validator(mode="after")
@@ -253,7 +253,7 @@ class PollingUpdate(ApiModel):
 class GeneratePostRequest(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
-    topic: str = Field(min_length=1, max_length=1_000)
+    topic: str = Field(default="", max_length=1_000)
     channel: Literal[
         "linkedin",
         "linkedin-company",
@@ -263,8 +263,8 @@ class GeneratePostRequest(ApiModel):
         "telegram",
         "blog",
     ]
-    tone: str = Field(default="Clear and confident", max_length=160)
-    objective: str = Field(default="Build useful awareness", max_length=500)
+    tone: str = Field(default="", max_length=160)
+    objective: str = Field(default="", max_length=500)
     media_url: str | None = Field(default=None, max_length=2_048)
     notify_telegram: bool = True
     notify_slack: bool = False

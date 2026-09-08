@@ -3,8 +3,25 @@ from __future__ import annotations
 import time
 
 from app.business_os_store import record_knowledge_analysis
+from app.content_service import resolve_content_brief
 from app.services.provider import _generation_prompt
 from app.store import workspace_runtime
+
+
+def test_blank_content_brief_uses_confirmed_business_knowledge() -> None:
+    resolved = resolve_content_brief(
+        {"topic": "", "tone": "", "objective": "", "channel": "linkedin"},
+        {
+            "content_pillars": ["Local-first AI"],
+            "goals": ["Earn qualified conversations"],
+            "tone": "Clear and practical",
+            "products_services": "Private marketing automation",
+            "business_description": "A local software business",
+        },
+    )
+    assert resolved["topic"] == "Local-first AI"
+    assert resolved["tone"] == "Clear and practical"
+    assert resolved["objective"] == "Earn qualified conversations"
 
 
 def test_business_profile_and_confirmed_knowledge_feed_the_workspace(client) -> None:

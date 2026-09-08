@@ -147,19 +147,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await expect(storagePicker).toHaveCount(0);
   await onboarding.getByRole("button", { name: "Confirm these locations" }).click();
 
-  await expect(onboarding.getByRole("heading", { name: "Connect one AI" })).toBeVisible();
-  await onboarding.getByRole("button", { name: "Set up cloud AI" }).click();
-  await onboarding.getByLabel("AI service").click();
-  await page.getByRole("option", { name: "Custom / I'm not sure" }).click();
-  await onboarding.getByLabel("API base URL").fill(mockBaseUrl);
-  await onboarding.getByLabel("Model").fill("e2e-model");
-  await onboarding.getByLabel("API key").fill("e2e-provider-key");
-  await onboarding.getByRole("button", { name: "Connect and verify cloud AI" }).click();
-  await expect(page.getByText("AI connection verified")).toBeVisible();
-  await expect(onboarding.getByText("AI verified", { exact: true })).toBeVisible();
-  await onboarding.getByRole("button", { name: "Continue to brand" }).click();
-
-  await expect(onboarding.getByRole("heading", { name: "Confirm your brand" })).toBeVisible();
+  await expect(onboarding.getByRole("heading", { name: "Build your Business Knowledge" })).toBeVisible();
   await page.route("**/api/settings/brand-profile/discover", async (route) => {
     await route.fulfill({
       contentType: "application/json",
@@ -220,6 +208,18 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await onboarding.getByRole("button", { name: "Save & confirm profile" }).click();
   await expect(page.getByText("Brand profile revision 1 confirmed")).toBeVisible();
   await expect(onboarding.getByText("CONFIRMED · R1")).toBeVisible();
+  await onboarding.getByRole("button", { name: "Continue to AI" }).click();
+
+  await expect(onboarding.getByRole("heading", { name: "Connect one AI" })).toBeVisible();
+  await onboarding.getByRole("button", { name: "Set up cloud AI" }).click();
+  await onboarding.getByLabel("AI service").click();
+  await page.getByRole("option", { name: "Custom / I'm not sure" }).click();
+  await onboarding.getByLabel("API base URL").fill(mockBaseUrl);
+  await onboarding.getByLabel("Model").fill("e2e-model");
+  await onboarding.getByLabel("API key").fill("e2e-provider-key");
+  await onboarding.getByRole("button", { name: "Connect and verify cloud AI" }).click();
+  await expect(page.getByText("AI connection verified")).toBeVisible();
+  await expect(onboarding.getByText("AI verified", { exact: true })).toBeVisible();
   await onboarding.getByRole("button", { name: "Review setup" }).click();
 
   await expect(onboarding.getByRole("heading", { name: "Ready for your first draft" })).toBeVisible();
@@ -317,7 +317,7 @@ test("runs first-run onboarding, publishing, and approval workflows", async ({ p
   await expect(postCard.getByText(/A dark editorial small-business workspace/)).toBeVisible();
   await expect(postCard.getByText(/Small-business workspace arranged/)).toBeVisible();
   await expect(postCard.getByRole("button", { name: "Regenerate image", exact: true })).toBeVisible();
-  await navigate(page, "Media library", "Media library");
+  await navigate(page, "Content studio", "Create a draft");
   await expect(page.getByText(/A dark editorial small-business workspace/)).toBeVisible();
   await expect(page.getByRole("img", { name: /Small-business workspace arranged/ })).toBeVisible();
   await navigate(page, "Approvals", "Approval queue");
@@ -966,12 +966,11 @@ test("manages recurring automations with readable scheduling controls", async ({
   expect((await page.request.delete(`/api/automations/${automation.id}`)).status()).toBe(404);
 });
 
-test("manages a real local media asset and hands its HTTPS source to a draft", async ({ page }) => {
+test("manages a real local content asset inside the centralized studio", async ({ page }) => {
   await page.goto("/");
   await dismissOnboardingIfPresent(page);
   await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
-  await navigate(page, "Media library", "Media library");
-  await expect(page.getByRole("heading", { level: 1, name: "Media library" })).toBeVisible();
+  await navigate(page, "Content studio", "Create a draft");
 
   const providerResponse = await page.request.put("/api/settings/provider", {
     data: {
@@ -983,11 +982,9 @@ test("manages a real local media asset and hands its HTTPS source to a draft", a
   });
   expect(providerResponse.status()).toBe(200);
   await page.reload();
-  await navigate(page, "Media library", "Media library");
-  await expect(page.getByText("One connected AI", { exact: true })).toBeVisible();
-  await expect(page.getByText("No separate image API or adapter is needed.", { exact: true })).toBeVisible();
-  await expect(page.getByText("Choose an image-capable AI in Integrations", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Generate image" })).toBeDisabled();
+  await navigate(page, "Content studio", "Create a draft");
+  await expect(page.getByText("Filled from confirmed Business Knowledge", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Generate image" })).toHaveCount(0);
 
   const png = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -1026,7 +1023,7 @@ test("manages a real local media asset and hands its HTTPS source to a draft", a
   await expect(page.getByRole("heading", { level: 1, name: "Create a draft" })).toBeVisible();
   await expect(page.getByLabel("Public image URL")).toHaveValue("https://cdn.example.test/e2e-campaign.png");
 
-  await navigate(page, "Media library", "Media library");
+  await navigate(page, "Content studio", "Create a draft");
   assetCard = page
     .getByText("e2e-campaign.png", { exact: true })
     .locator('xpath=ancestor::div[@data-slot="card"]');
@@ -1065,8 +1062,8 @@ test("passes automated accessibility checks in core workflow views", async ({ pa
   await navigate(page, "Integrations", "Connections");
   await expectNoAccessibilityViolations(page, testInfo, "connections");
 
-  await navigate(page, "Media library", "Media library");
-  await expectNoAccessibilityViolations(page, testInfo, "media-library");
+  await navigate(page, "Content studio", "Create a draft");
+  await expectNoAccessibilityViolations(page, testInfo, "content-studio");
 
   await navigate(page, "Approvals", "Approval queue");
   await expectNoAccessibilityViolations(page, testInfo, "approval-queue");

@@ -24,6 +24,7 @@ from app.models import (
     IcpProfile,
     ImageProviderSettings,
     KnowledgeItem,
+    KnowledgeSource,
     LocalJob,
     MediaAsset,
     Post,
@@ -556,7 +557,9 @@ def _onboarding_dict(
     dismissed_at = _metadata_value(session, "onboarding_dismissed_at")
     completed_at = _metadata_value(session, "onboarding_completed_at")
     current_step = _metadata_value(session, "onboarding_current_step") or "welcome"
-    if current_step not in {"welcome", "storage", "ai", "brand", "finish"}:
+    if current_step == "brand":
+        current_step = "knowledge"
+    if current_step not in {"welcome", "storage", "knowledge", "ai", "finish"}:
         current_step = "welcome"
     storage_confirmed = bool(
         _metadata_value(session, "onboarding_storage_confirmed_at")
@@ -579,7 +582,7 @@ def _onboarding_dict(
         else "not-started"
     )
     return {
-        "version": 1,
+        "version": 2,
         "status": status,
         "showWizard": status in {"not-started", "in-progress"},
         "currentStep": "finish" if completed_at else current_step,
@@ -642,7 +645,7 @@ def update_onboarding(payload: OnboardingUpdate, storage: dict[str, Any]) -> Non
                 raise AppError("Review and acknowledge the storage warnings before continuing.")
             _set_metadata(session, "onboarding_storage_snapshot", _storage_snapshot(storage))
             _set_metadata(session, "onboarding_storage_confirmed_at", now)
-            _set_metadata(session, "onboarding_current_step", "ai")
+            _set_metadata(session, "onboarding_current_step", "knowledge")
             _append_audit(
                 session,
                 action="onboarding.storage_confirmed",
@@ -745,6 +748,32 @@ def public_state(
             and _metadata_value(session, "provider_verified_snapshot") == _provider_fingerprint(provider)
         )
         provider_capabilities = primary_ai_capabilities(provider.kind)
+        confirmed_knowledge_count = len(
+            session.scalars(
+                select(KnowledgeItem.id).where(
+                    KnowledgeItem.workspace_id == workspace.id,
+                    KnowledgeItem.status == "confirmed",
+                )
+            ).all()
+        )
+        profile_confirmed = bool(workspace.confirmed_at and not _brand_missing(workspace))
+        default_topic = (
+            next(
+                (
+                    value.strip()
+                    for value in [
+                        *(workspace.content_pillars or []),
+                        *(workspace.goals or []),
+                        workspace.products_services,
+                        workspace.description,
+                    ]
+                    if isinstance(value, str) and value.strip()
+                ),
+                "",
+            )
+            if profile_confirmed
+            else ""
+        )
         remote_edit_request: dict[str, Any] | None = None
         raw_edit_request = _metadata_value(session, "remote_edit_request")
         if raw_edit_request:
@@ -756,6 +785,22 @@ def public_state(
                 remote_edit_request = parsed_edit_request
         return {
             "workspace": _workspace_dict(session, workspace),
+            "contentDefaults": {
+                "topic": default_topic,
+                "tone": workspace.tone if profile_confirmed else "Clear, useful and confident",
+                "objective": (
+                    next(
+                        (value.strip() for value in (workspace.goals or []) if value.strip()),
+                        "Build useful awareness",
+                    )
+                    if profile_confirmed
+                    else "Build useful awareness"
+                ),
+                "callToAction": workspace.call_to_action if profile_confirmed else "",
+                "confirmedFacts": confirmed_knowledge_count,
+                "profileVersion": workspace.profile_version,
+                "ready": bool(profile_confirmed and default_topic),
+            },
             "provider": {
                 "kind": provider.kind,
                 "baseUrl": provider.base_url,
@@ -885,6 +930,104 @@ def update_brand_profile(payload: BrandProfileUpdate) -> None:
         workspace.profile_version += 1
         workspace.confirmed_at = now
         workspace.updated_at = now
+
+        manual_source = session.scalar(
+            select(KnowledgeSource).where(
+                KnowledgeSource.workspace_id == workspace.id,
+                KnowledgeSource.kind == "manual",
+                KnowledgeSource.locator == "socium://business-profile",
+            )
+        )
+        if manual_source is None:
+            manual_source = KnowledgeSource(
+                id=str(uuid4()),
+                workspace_id=workspace.id,
+                kind="manual",
+                locator="socium://business-profile",
+                title="Confirmed business profile",
+                status="ready",
+                checksum=None,
+                last_checked_at=now,
+                last_error=None,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(manual_source)
+            session.flush()
+        else:
+            manual_source.status = "ready"
+            manual_source.last_checked_at = now
+            manual_source.updated_at = now
+
+        confirmed_facts: dict[str, Any] = {
+            "workspaceName": payload.name,
+            "businessName": payload.business_name,
+            "description": payload.description,
+            "timezone": payload.timezone,
+            "website": payload.website,
+            "industry": payload.industry,
+            "productsServices": payload.products_services,
+            "targetAudience": payload.target_audience,
+            "location": payload.location,
+            "goals": payload.goals,
+            "callToAction": payload.call_to_action,
+            "language": payload.language,
+            "tone": payload.tone,
+            "contentPillars": payload.content_pillars,
+            "restrictedClaims": payload.restricted_claims,
+            "brandedHashtags": payload.branded_hashtags,
+            "primaryColor": payload.primary_color.lower(),
+            "secondaryColor": payload.secondary_color.lower(),
+            "accentColor": payload.accent_color.lower(),
+            "headingFont": payload.heading_font,
+            "bodyFont": payload.body_font,
+            "visualStyle": payload.visual_style,
+        }
+        for fact_key, raw_value in confirmed_facts.items():
+            existing = list(
+                session.scalars(
+                    select(KnowledgeItem).where(
+                        KnowledgeItem.workspace_id == workspace.id,
+                        KnowledgeItem.fact_key == fact_key,
+                    )
+                ).all()
+            )
+            if raw_value in (None, "", []):
+                for item in existing:
+                    if item.status == "confirmed":
+                        item.status = "stale"
+                        item.updated_at = now
+                continue
+            value = (
+                json.dumps(raw_value, ensure_ascii=False)
+                if isinstance(raw_value, (list, dict))
+                else str(raw_value)
+            )
+            selected = next((item for item in existing if item.value == value), None)
+            for item in existing:
+                if item is not selected and item.status == "confirmed":
+                    item.status = "stale"
+                    item.updated_at = now
+            if selected is None:
+                selected = KnowledgeItem(
+                    id=str(uuid4()),
+                    workspace_id=workspace.id,
+                    source_id=manual_source.id,
+                    fact_key=fact_key,
+                    value=value,
+                    confidence=100,
+                    status="confirmed",
+                    source_excerpt="Confirmed by the user in Socium's business profile.",
+                    verified_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(selected)
+            else:
+                selected.status = "confirmed"
+                selected.confidence = max(selected.confidence, 95)
+                selected.verified_at = now
+                selected.updated_at = now
         _append_audit(
             session,
             action="brand_profile.confirmed",
@@ -1270,8 +1413,8 @@ def workspace_runtime() -> dict[str, Any]:
             raise RuntimeError("Workspace settings are missing.")
         confirmed = bool(workspace.confirmed_at and not _brand_missing(workspace))
         runtime: dict[str, Any] = {
-            "business_name": workspace.business_name,
-            "business_description": workspace.description,
+            "business_name": workspace.business_name if confirmed else "",
+            "business_description": workspace.description if confirmed else "",
             "profile_confirmed": confirmed,
             "confirmed_knowledge": [
                 {

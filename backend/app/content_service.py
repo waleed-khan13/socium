@@ -27,6 +27,38 @@ def _progress(callback: ProgressCallback | None, percent: int, message: str) -> 
         callback(percent, message)
 
 
+def resolve_content_brief(request_data: dict[str, Any], workspace: dict[str, Any]) -> dict[str, Any]:
+    """Fill missing creative inputs only from confirmed local business knowledge."""
+    resolved = dict(request_data)
+    topic_candidates = [
+        *(workspace.get("content_pillars") or []),
+        *(workspace.get("goals") or []),
+        workspace.get("products_services"),
+        workspace.get("business_description"),
+    ]
+    if not str(resolved.get("topic") or "").strip():
+        resolved["topic"] = next(
+            (str(value).strip() for value in topic_candidates if str(value or "").strip()),
+            "",
+        )
+    if not str(resolved.get("topic") or "").strip():
+        raise AppError(
+            "Confirm your Business Knowledge first so Socium knows what content to create."
+        )
+    if not str(resolved.get("tone") or "").strip():
+        resolved["tone"] = str(workspace.get("tone") or "Clear, useful and confident")
+    if not str(resolved.get("objective") or "").strip():
+        resolved["objective"] = next(
+            (
+                str(value).strip()
+                for value in (workspace.get("goals") or [])
+                if str(value or "").strip()
+            ),
+            "Build useful awareness",
+        )
+    return resolved
+
+
 async def generate_content_draft(
     request_data: dict[str, Any],
     *,
@@ -37,6 +69,7 @@ async def generate_content_draft(
     if not provider["base_url"] or not provider["model"]:
         raise AppError("Connect an AI provider and select a model first.")
     workspace = workspace_runtime()
+    request_data = resolve_content_brief(request_data, workspace)
     started = perf_counter()
     _progress(progress, 12, "Preparing confirmed business context.")
     try:

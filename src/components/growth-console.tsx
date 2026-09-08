@@ -142,7 +142,7 @@ import {
   type WordPressConnectorForm,
 } from "@/components/wordpress-connector-card";
 
-type ViewId = "command" | "legacy-command" | "guide" | "create" | "queue" | "media" | "knowledge" | "leads" | "inbox" | "seo" | "analytics" | "automations" | "scheduler" | "integrations" | "system" | "activity";
+type ViewId = "command" | "legacy-command" | "guide" | "create" | "queue" | "knowledge" | "leads" | "inbox" | "seo" | "analytics" | "automations" | "scheduler" | "integrations" | "system" | "activity";
 type QueueFilter = "all" | PostStatus;
 
 type StateResponse = {
@@ -177,7 +177,6 @@ const navigation: NavItem[] = [
   { id: "queue", label: "Approvals", icon: FilePenLine },
   { id: "knowledge", label: "Knowledge Base", icon: BookOpenCheck },
   { id: "create", label: "Content studio", icon: Sparkles },
-  { id: "media", label: "Media library", icon: Images },
   { id: "leads", label: "Leads & Outreach", icon: UsersRound },
   { id: "inbox", label: "Inbox", icon: Inbox },
   { id: "automations", label: "Automations", icon: Zap },
@@ -212,11 +211,6 @@ const pageMeta: Record<ViewId, { eyebrow: string; title: string; description: st
     eyebrow: "Human in the loop",
     title: "Approval queue",
     description: "Review the exact content version before it can leave this machine.",
-  },
-  media: {
-    eyebrow: "Local creative vault",
-    title: "Media library",
-    description: "Verify, store, transform, and reuse campaign images without uploading them to Socium cloud.",
   },
   knowledge: {
     eyebrow: "Verified business context",
@@ -660,6 +654,7 @@ export function GrowthConsole() {
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [appState, setAppState] = useState<PublicAppState | null>(null);
   const handledRemoteEdits = useRef(new Set<string>());
+  const contentDefaultsHydrated = useRef(false);
   const [initialError, setInitialError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -679,12 +674,6 @@ export function GrowthConsole() {
     imageAltText: "",
     mediaUrl: "",
   });
-  const [mediaGenerationBrief, setMediaGenerationBrief] = useState<{
-    id: string;
-    prompt: string;
-    negativePrompt: string;
-    altText: string;
-  } | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<GeneratedPost | null>(null);
   const [scheduleAt, setScheduleAt] = useState(defaultScheduleAt);
   const [selectedRecoveryJobId, setSelectedRecoveryJobId] = useState<string | null>(null);
@@ -770,8 +759,8 @@ export function GrowthConsole() {
   }>({
     topic: "",
     channel: "linkedin",
-    tone: "Clear, useful and confident",
-    objective: "Build awareness and start relevant conversations",
+    tone: "",
+    objective: "",
     mediaUrl: "",
     notifyTelegram: true,
     notifySlack: false,
@@ -866,11 +855,19 @@ export function GrowthConsole() {
           proxyUrl: "",
           useProxy: next.telegram.hasProxy,
         });
-        setGenerateForm((current) => ({
-          ...current,
-          tone: current.tone === "Clear and confident" ? next.workspace.tone || current.tone : current.tone,
-          notifyTelegram: next.telegram.configured,
-        }));
+        setGenerateForm((current) => {
+          if (contentDefaultsHydrated.current) {
+            return { ...current, notifyTelegram: next.telegram.configured };
+          }
+          contentDefaultsHydrated.current = true;
+          return {
+            ...current,
+            topic: next.contentDefaults.topic,
+            tone: next.contentDefaults.tone,
+            objective: next.contentDefaults.objective,
+            notifyTelegram: next.telegram.configured,
+          };
+        });
         const wordpress = next.connectors.accounts.find((account) => account.adapterId === "wordpress");
         if (wordpress) {
           setWordpressForm({
@@ -1292,7 +1289,13 @@ export function GrowthConsole() {
         message: response.job.progressMessage ?? "Content kit ready for review.",
       });
       setAppState(response.state);
-      setGenerateForm((current) => ({ ...current, topic: "", mediaUrl: "" }));
+      setGenerateForm((current) => ({
+        ...current,
+        topic: response.state?.contentDefaults.topic ?? current.topic,
+        tone: response.state?.contentDefaults.tone ?? current.tone,
+        objective: response.state?.contentDefaults.objective ?? current.objective,
+        mediaUrl: "",
+      }));
       toast.success("Draft generated", { description: `${channelLabels[response.post.channel]} · ${response.post.model}` });
       const notifications = response.job.notifications;
       notifications.forEach((notification) => {
@@ -2026,7 +2029,12 @@ export function GrowthConsole() {
           onOpenChange={setOnboardingOpen}
           onStateChange={(state) => {
             setAppState(state);
-            setGenerateForm((current) => ({ ...current, tone: state.workspace.tone || current.tone }));
+            setGenerateForm((current) => ({
+              ...current,
+              topic: state.contentDefaults.topic || current.topic,
+              tone: state.contentDefaults.tone || current.tone,
+              objective: state.contentDefaults.objective || current.objective,
+            }));
           }}
           open={onboardingOpen}
           state={appState}
@@ -2222,13 +2230,16 @@ export function GrowthConsole() {
                 </CardHeader>
                 <CardContent>
                   <form className="space-y-5" onSubmit={generatePost}>
-                    <Field htmlFor="topic" label="Topic or source brief" hint="Required">
+                    <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs leading-5 text-emerald-100">
+                      <div className="flex items-center gap-2 font-medium"><BookOpenCheck className="size-4" />Filled from confirmed Business Knowledge</div>
+                      <p className="mt-1 text-emerald-200/65">{appState.contentDefaults.confirmedFacts} confirmed facts · profile revision {appState.contentDefaults.profileVersion}. You can change any field for this draft.</p>
+                    </div>
+                    <Field htmlFor="topic" label="Topic or source brief" hint="Optional">
                       <Textarea
                         id="topic"
                         maxLength={1000}
                         onChange={(event) => setGenerateForm((current) => ({ ...current, topic: event.target.value }))}
                         placeholder="Example: Explain how our accounting service helps small retailers close monthly books faster. Do not invent statistics."
-                        required
                         rows={7}
                         value={generateForm.topic}
                       />
@@ -2319,7 +2330,7 @@ export function GrowthConsole() {
                         </div>
                       ) : null}
                       <div className="flex justify-end">
-                        <Button disabled={!appState.provider.configured || !generateForm.topic.trim() || (generateForm.channel === "instagram" && !generateForm.mediaUrl.trim()) || busy === "generate"} size="lg" type="submit">
+                        <Button disabled={!appState.provider.configured || (!generateForm.topic.trim() && !appState.contentDefaults.ready) || (generateForm.channel === "instagram" && !generateForm.mediaUrl.trim()) || busy === "generate"} size="lg" type="submit">
                           {busy === "generate" ? <Loader2 className="animate-spin" /> : <Sparkles />}
                           {busy === "generate" ? `${generationProgress?.percent ?? 0}% generating` : "Generate review draft"}
                         </Button>
@@ -2359,6 +2370,21 @@ export function GrowthConsole() {
                     <div className="flex gap-3"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-zinc-400" /><p>Editing an approved draft automatically invalidates that approval.</p></div>
                   </CardContent>
                 </Card>
+              </div>
+              <div className="xl:col-span-2">
+                <MediaLibrary
+                  imageProvider={appState.imageProvider}
+                  onStateChange={setAppState}
+                  onUseInDraft={(asset) => {
+                    if (!asset.publicSourceUrl) return;
+                    setGenerateForm((current) => ({
+                      ...current,
+                      channel: "instagram",
+                      mediaUrl: asset.publicSourceUrl ?? "",
+                    }));
+                    toast.success("Asset attached to this draft", { description: asset.originalName });
+                  }}
+                />
               </div>
             </div>
           ) : null}
@@ -2431,7 +2457,7 @@ export function GrowthConsole() {
                                 {post.imagePrompt ? <div><p className="font-mono text-[9px] tracking-[0.12em] text-zinc-600 uppercase">Image prompt</p><p className="mt-1 leading-5 text-zinc-400">{post.imagePrompt}</p></div> : null}
                                 {post.imageNegativePrompt ? <div><p className="font-mono text-[9px] tracking-[0.12em] text-zinc-600 uppercase">Visual exclusions</p><p className="mt-1 leading-5 text-zinc-500">{post.imageNegativePrompt}</p></div> : null}
                                 {post.imageAltText ? <div><p className="font-mono text-[9px] tracking-[0.12em] text-zinc-600 uppercase">Planned alt text</p><p className="mt-1 leading-5 text-zinc-400">{post.imageAltText}</p></div> : null}
-                                {post.imagePrompt && !post.mediaAssetId ? <Button onClick={() => { setMediaGenerationBrief({ id: `${post.id}:${post.revision}`, prompt: post.imagePrompt, negativePrompt: post.imageNegativePrompt, altText: post.imageAltText }); navigate("media"); toast.success("Brand image brief opened in Media Studio"); }} size="sm" variant="outline"><Images />Create image from this brief</Button> : null}
+                                {post.imagePrompt && !post.mediaAssetId ? <p className="text-amber-300">The content package has no saved image yet. Use Regenerate image below to retry with the same confirmed knowledge.</p> : null}
                               </div>
                             </details>
                           ) : null}
@@ -2466,7 +2492,7 @@ export function GrowthConsole() {
                                   <Button disabled={busy === `slack-approval-${post.id}`} onClick={() => void sendSlackApproval(post)} size="sm" variant="outline">{busy === `slack-approval-${post.id}` ? <Loader2 className="animate-spin" /> : <MessageCircle />} Send to Slack</Button>
                                 ) : null}
                                 <Button disabled={busy === `regenerate-${post.id}`} onClick={() => void regeneratePost(post)} size="sm" variant="outline">{busy === `regenerate-${post.id}` ? <Loader2 className="animate-spin" /> : <RefreshCw />} Regenerate post</Button>
-                                {post.mediaAssetId ? <Button disabled={busy === `regenerate-image-${post.id}`} onClick={() => void regeneratePostImage(post)} size="sm" variant="outline">{busy === `regenerate-image-${post.id}` ? <Loader2 className="animate-spin" /> : <Images />} Regenerate image</Button> : null}
+                                {post.imagePrompt ? <Button disabled={busy === `regenerate-image-${post.id}`} onClick={() => void regeneratePostImage(post)} size="sm" variant="outline">{busy === `regenerate-image-${post.id}` ? <Loader2 className="animate-spin" /> : <Images />} Regenerate image</Button> : null}
                                 <Button disabled={busy === `skip-${post.id}`} onClick={() => void decidePost(post, "skip")} size="sm" variant="ghost">{busy === `skip-${post.id}` ? <Loader2 className="animate-spin" /> : <X />} Skip</Button>
                                 <Button disabled={busy === `approve-${post.id}`} onClick={() => void decidePost(post, "approve")} size="sm">{busy === `approve-${post.id}` ? <Loader2 className="animate-spin" /> : <Check />} Approve</Button>
                               </>
@@ -2535,26 +2561,6 @@ export function GrowthConsole() {
               const aliases: Record<string, ViewId> = { calendar: "scheduler", approvals: "queue" };
               navigate(aliases[view] ?? (view as ViewId));
             }} />
-          ) : null}
-
-          {!loading && appState && activeView === "media" ? (
-            <MediaLibrary
-              imageProvider={appState.imageProvider}
-              initialGenerationBrief={mediaGenerationBrief}
-              onStateChange={setAppState}
-              onUseInDraft={(asset) => {
-                if (!asset.publicSourceUrl) return;
-                setGenerateForm((current) => ({
-                  ...current,
-                  channel: "instagram",
-                  mediaUrl: asset.publicSourceUrl ?? "",
-                }));
-                toast.success("Media source added to an Instagram draft", {
-                  description: asset.originalName,
-                });
-                navigate("create");
-              }}
-            />
           ) : null}
 
           {!loading && appState && activeView === "seo" ? (
@@ -2753,7 +2759,12 @@ export function GrowthConsole() {
                 key={`${appState.workspace.profileVersion}-${appState.workspace.updatedAt ?? "new"}`}
                 onStateChange={(state) => {
                   setAppState(state);
-                  setGenerateForm((current) => ({ ...current, tone: state.workspace.tone || current.tone }));
+                  setGenerateForm((current) => ({
+                    ...current,
+                    topic: state.contentDefaults.topic || current.topic,
+                    tone: state.contentDefaults.tone || current.tone,
+                    objective: state.contentDefaults.objective || current.objective,
+                  }));
                 }}
                 workspace={appState.workspace}
               />
