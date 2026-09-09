@@ -2,7 +2,11 @@
 
 All notable user-facing changes are documented here.
 
-## Unreleased
+## 1.4.1 - 2026-09-09
+
+### Added
+
+- Added optional Gmail threads and approved reply drafts in the Unified Inbox, plus the consent-aware local lead campaign foundation.
 
 ### Security
 
