@@ -425,17 +425,17 @@ function SidebarContent({
         })}
       </nav>
       <div className="border-t border-zinc-900 p-3">
-        <button className="mb-3 w-full rounded-xl border border-fuchsia-400/15 bg-gradient-to-br from-fuchsia-500/[0.08] to-orange-400/[0.04] p-3 text-left transition-colors hover:border-fuchsia-400/25" onClick={() => onNavigate("create")} type="button">
-          <div className="flex items-center gap-2 text-sm font-medium text-zinc-100"><Sparkles className="size-4 text-fuchsia-300" />Socium AI Copilot</div>
-          <p className="mt-1.5 text-xs leading-5 text-zinc-400">Create business content from your confirmed local knowledge.</p>
-        </button>
         <div className="rounded-lg border border-zinc-800 bg-black/40 p-3">
           <div className="flex items-center gap-2 text-xs font-medium text-zinc-200">
             <Database className="size-3.5 text-emerald-400" />
             {state?.workspace.name || "Local workspace"}
           </div>
-          <p className="mt-1.5 text-[11px] leading-4 text-zinc-500">Encrypted SQLite · data stays on this computer.</p>
+          <p className="mt-1.5 text-xs leading-5 text-zinc-400">Local data on this computer. API credentials are encrypted.</p>
         </div>
+        <Button className="mt-3 min-h-11 w-full justify-start" onClick={() => onNavigate("system")} variant="outline">
+          <Download className="size-4" />
+          {state?.lifecycle.status === "ready" && state.lifecycle.updateAvailable ? `Update to v${state.lifecycle.latestVersion}` : "Updates"}
+        </Button>
         <div className="mt-3 flex items-center justify-between px-1">
           <RuntimeBadge state={state} />
           <Tooltip>
@@ -927,6 +927,25 @@ export function GrowthConsole() {
     !appState?.scheduler.paused
       && appState?.jobs.some((job) => ["queued", "retrying", "running"].includes(job.status)),
   );
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const controller = new AbortController();
+    async function refreshUpdates() {
+      if (document.visibilityState === "visible") {
+        try {
+          const result = await requestJson<{ lifecycle: PublicAppState["lifecycle"] }>("/api/lifecycle", {
+            cache: "no-store", signal: controller.signal,
+          });
+          if (!cancelled) setAppState((current) => current ? { ...current, lifecycle: result.lifecycle } : current);
+        } catch { /* Keep the last known result while the runtime restarts. */ }
+      }
+      if (!cancelled) timer = setTimeout(refreshUpdates, activeView === "system" && appState?.lifecycle.automaticInstall ? 2_000 : 60_000);
+    }
+    void refreshUpdates();
+    return () => { cancelled = true; controller.abort(); clearTimeout(timer); };
+  }, [activeView, appState?.lifecycle.automaticInstall]);
+
   const slackShouldRefresh = Boolean(
     appState?.connectors.accounts.some(
       (account) => account.adapterId === "slack" && account.enabled && account.status === "verified",
@@ -1442,6 +1461,7 @@ export function GrowthConsole() {
       toast.success(response.lifecycle.updateAvailable ? `Socium ${response.lifecycle.latestVersion} is ready` : "Socium is up to date");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not check for updates.");
+      setAppState((current) => current ? { ...current, lifecycle: { ...current.lifecycle, status: "error", lastError: "Could not check for updates. Check your connection and try again." } } : current);
     } finally {
       setBusy(null);
     }
@@ -1455,6 +1475,21 @@ export function GrowthConsole() {
       toast.success("Verified local backup created");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not create the backup.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveAutomaticUpdates(automaticInstall: boolean) {
+    setBusy("update-preferences");
+    try {
+      const response = await requestJson<{ lifecycle: PublicAppState["lifecycle"] }>("/api/lifecycle/preferences", {
+        method: "PUT", body: JSON.stringify({ automaticInstall }),
+      });
+      setAppState((current) => current ? { ...current, lifecycle: response.lifecycle } : current);
+      toast.success(automaticInstall ? "Automatic installation enabled" : "Automatic installation disabled; daily checks stay enabled");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save update preferences.");
     } finally {
       setBusy(null);
     }
@@ -3177,8 +3212,8 @@ export function GrowthConsole() {
                     <div><CardTitle>Application updates</CardTitle><CardDescription>One release check per day while idle. Only version and platform metadata leave this machine.</CardDescription></div>
                   </div>
                   <CardAction>
-                    <Badge className={appState.lifecycle.updateAvailable ? "border-amber-500/25 bg-amber-500/8 text-amber-300" : "border-emerald-500/25 bg-emerald-500/8 text-emerald-300"} variant="outline">
-                      {appState.lifecycle.updateAvailable ? "UPDATE READY" : "UP TO DATE"}
+                    <Badge className={appState.lifecycle.status === "error" ? "border-red-500/25 bg-red-500/8 text-red-300" : appState.lifecycle.status !== "ready" ? "border-zinc-700 text-zinc-300" : appState.lifecycle.updateAvailable ? "border-amber-500/25 bg-amber-500/8 text-amber-300" : "border-emerald-500/25 bg-emerald-500/8 text-emerald-300"} variant="outline">
+                      {appState.lifecycle.status === "error" ? "CHECK FAILED" : appState.lifecycle.status !== "ready" ? "NOT CHECKED" : appState.lifecycle.updateAvailable ? "UPDATE READY" : "UP TO DATE"}
                     </Badge>
                   </CardAction>
                 </CardHeader>
@@ -3192,9 +3227,20 @@ export function GrowthConsole() {
                   {appState.lifecycle.lastError ? <p className="flex gap-2 rounded-md border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-300"><AlertTriangle className="size-4 shrink-0" />{appState.lifecycle.lastError}</p> : null}
                   {updateDownload ? <div className="space-y-2 rounded-md border border-amber-500/20 bg-amber-500/5 p-3"><div className="flex items-center justify-between text-xs"><span className="text-amber-200">Downloading verified release</span><span className="font-mono text-amber-300">{updateDownload.percentage}%</span></div><Progress aria-label="Update download progress" className="h-1.5" value={updateDownload.percentage} /><p className="text-[10px] text-zinc-500">{formatBytes(updateDownload.downloadedBytes)}{updateDownload.totalBytes ? ` / ${formatBytes(updateDownload.totalBytes)}` : ""}</p></div> : null}
                   <div className="flex flex-wrap justify-end gap-2">
-                    <Button disabled={busy === "update-check"} onClick={() => void checkForAppUpdate()} variant="outline">{busy === "update-check" ? <Loader2 className="animate-spin" /> : <RefreshCw />} Check now</Button>
-                    <Button disabled={!appState.lifecycle.updateAvailable || !appState.lifecycle.managedRuntime || busy === "update-prepare" || busy === "lifecycle-update"} onClick={() => void installAppUpdate()}>{busy === "update-prepare" || busy === "lifecycle-update" ? <Loader2 className="animate-spin" /> : <Download />} Install safely</Button>
+                    <Button disabled={busy === "update-check" || busy === "update-prepare" || busy === "lifecycle-update"} onClick={() => void checkForAppUpdate()} variant="outline">{busy === "update-check" ? <Loader2 className="animate-spin" /> : <RefreshCw />} Check for updates</Button>
+                    <Button disabled={appState.lifecycle.status !== "ready" || !appState.lifecycle.updateAvailable || !appState.lifecycle.managedRuntime || busy === "update-prepare" || busy === "lifecycle-update" || ["downloading", "restarting"].includes(appState.lifecycle.automaticProgress?.status ?? "")} onClick={() => void installAppUpdate()}>{busy === "update-prepare" || busy === "lifecycle-update" ? <Loader2 className="animate-spin" /> : <Download />} Update now</Button>
                   </div>
+                  <div className="flex items-start justify-between gap-4 rounded-lg border border-zinc-800 p-4">
+                    <div>
+                      <Label htmlFor="automatic-updates" className="text-base">Install updates automatically</Label>
+                      <p id="automatic-updates-help" className="mt-1 text-sm leading-6 text-zinc-400">Downloads verified releases in the background, then backs up and restarts when scheduled work is idle. Leave off to install with Update now.</p>
+                      <p className="mt-2 text-sm text-zinc-400">Automatic daily checks: {appState.lifecycle.automaticChecks ? "on" : "disabled by runtime configuration"}.</p>
+                    </div>
+                    <Switch id="automatic-updates" aria-describedby="automatic-updates-help" checked={appState.lifecycle.automaticInstall ?? false} disabled={busy === "update-preferences" || !appState.lifecycle.managedRuntime || !appState.lifecycle.automaticChecks} onCheckedChange={(checked) => void saveAutomaticUpdates(checked)} />
+                  </div>
+                  {appState.lifecycle.automaticProgress && appState.lifecycle.automaticProgress.status !== "error" ? <p role="status" className="text-sm text-amber-300">{appState.lifecycle.automaticProgress.status === "restarting" ? "Update verified. Socium is restarting…" : appState.lifecycle.automaticProgress.status === "ready" ? "Update downloaded. Waiting for scheduled work to finish." : `Automatic download: ${appState.lifecycle.automaticProgress.percentage == null ? "in progress" : `${appState.lifecycle.automaticProgress.percentage}%`}`}</p> : null}
+                  {appState.lifecycle.automaticError ? <p role="alert" className="text-sm text-red-300">{appState.lifecycle.automaticError}</p> : null}
+                  <p className="text-sm leading-6 text-zinc-400">Updates install published releases only. Changes pushed to GitHub will appear here after a newer release is published.</p>
                   {!appState.lifecycle.managedRuntime ? <p className="text-right text-[11px] text-zinc-600">Install/update controls activate in the packaged Socium runtime.</p> : null}
                 </CardContent>
               </Card>

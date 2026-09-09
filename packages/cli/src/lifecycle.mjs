@@ -4,6 +4,7 @@ import path from "node:path";
 import net from "node:net";
 
 import { createBackup, restoreBackup } from "./backup.mjs";
+import { DEFAULT_MANIFEST_URL } from "./constants.mjs";
 import { installRelease } from "./installation.mjs";
 import { readJsonSource, validateManifest } from "./manifest.mjs";
 import { releaseTarget } from "./platform.mjs";
@@ -27,7 +28,7 @@ export function compareVersions(left, right) {
 export async function checkForUpdate({ manifestSource, paths = sociumPaths(), target = releaseTarget() } = {}) {
   const installation = await loadInstallation(paths);
   if (!installation) throw new Error("Socium is not installed.");
-  const manifest = await readJsonSource(manifestSource || installation.manifestSource);
+  const manifest = await readJsonSource(manifestSource || process.env.SOCIUM_RELEASE_MANIFEST || DEFAULT_MANIFEST_URL);
   validateManifest(manifest, target);
   return {
     currentVersion: installation.version,
@@ -144,7 +145,7 @@ export async function applyUpdate({
   if (!previous) throw new Error("Socium is not installed.");
   const backup = await createBackup({ paths, reason: "pre-update", log });
   try {
-    const installed = await installRelease({ manifestSource: manifestSource || previous.manifestSource, paths, target, force, backupPath: backup.path, onDownloadProgress, log });
+    const installed = await installRelease({ manifestSource: manifestSource || process.env.SOCIUM_RELEASE_MANIFEST || DEFAULT_MANIFEST_URL, paths, target, force, backupPath: backup.path, onDownloadProgress, log });
     await migrationVerifier(installed);
     await rm(path.join(installed.dataDirectory, ".updates"), { recursive: true, force: true });
     log("Update migration and health checks passed.");

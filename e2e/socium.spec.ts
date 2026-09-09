@@ -1101,12 +1101,15 @@ test("supports keyboard navigation on the mobile layout", async ({ page }, testI
 test("shows safe update, backup, and runtime controls", async ({ page }, testInfo) => {
   await page.goto("/");
   await dismissOnboardingIfPresent(page);
-  await navigate(page, "Settings", "System & updates");
+  await expect(page.getByText("Socium AI Copilot", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Updates", exact: true }).click();
   await expect(page.getByText("Application updates", { exact: true })).toBeVisible();
   await expect(page.getByText("Only version and platform metadata leave this machine.")).toBeVisible();
   await page.getByRole("button", { name: "Back up local data now" }).click();
   await expect(page.getByText("Verified local backup created")).toBeVisible();
   await expect(page.getByText(/\d+ SAVED/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Install safely" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Check for updates", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Update now", exact: true })).toBeDisabled();
+  await expect(page.getByRole("switch", { name: "Install updates automatically" })).toBeDisabled();
   await expectNoAccessibilityViolations(page, testInfo, "system-lifecycle");
 });

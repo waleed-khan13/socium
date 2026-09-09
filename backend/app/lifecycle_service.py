@@ -6,9 +6,10 @@ import json
 import os
 import platform
 import sys
+import threading
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,8 @@ from app.models import AppMetadata
 DEFAULT_MANIFEST = "https://github.com/waleed-khan13/socium/releases/latest/download/socium-manifest.json"
 CHECK_INTERVAL = timedelta(hours=24)
 MAX_UPDATE_BYTES = 8 * 1024 * 1024 * 1024
+_prepare_lock = threading.Lock()
+_automatic_progress: dict[str, Any] | None = None
 
 
 def _metadata(key: str) -> str | None:
@@ -78,8 +81,15 @@ def _cached_state() -> dict[str, Any]:
 
 def lifecycle_state() -> dict[str, Any]:
     state = _cached_state()
-    state["managedRuntime"] = bool(os.getenv("SOCIUM_CONTROL_URL") and os.getenv("SOCIUM_CONTROL_TOKEN"))
+    # A cache copied during an upgrade must not report the old installed version.
+    state["currentVersion"] = os.getenv("SOCIUM_APP_VERSION", __version__)
+    if state.get("latestVersion"):
+        state["updateAvailable"] = _parts(state["currentVersion"]) < _parts(state["latestVersion"])
+    state["managedRuntime"] = runtime_controller_available()
     state["automaticChecks"] = os.getenv("SOCIUM_AUTO_UPDATE_CHECKS", "1").strip().lower() not in {"0", "false", "no", "off"}
+    state["automaticInstall"] = _metadata("lifecycle_automatic_install") == "true"
+    state["automaticProgress"] = _automatic_progress
+    state["automaticError"] = _metadata("lifecycle_automatic_error") or None
     state["rollbackAvailable"] = False
     runtime_dir = os.getenv("SOCIUM_RUNTIME_DIR", "").strip()
     if runtime_dir:
@@ -89,6 +99,14 @@ def lifecycle_state() -> dict[str, Any]:
         except (OSError, ValueError, IndexError):
             pass
     return state
+
+
+def save_update_preferences(automatic_install: bool) -> dict[str, Any]:
+    state = lifecycle_state()
+    if automatic_install and (not state["managedRuntime"] or not state["automaticChecks"]):
+        raise AppError("Automatic installation requires the installed runtime with automatic checks enabled.", status_code=409)
+    _set_metadata("lifecycle_automatic_install", "true" if automatic_install else "false")
+    return lifecycle_state()
 
 
 def check_for_updates(*, force: bool = False) -> dict[str, Any]:
@@ -151,6 +169,16 @@ def _release_target() -> str:
 
 
 def prepare_update_stream():
+    if not _prepare_lock.acquire(blocking=False):
+        yield json.dumps({"status": "error", "error": "An update download is already in progress."}) + "\n"
+        return
+    try:
+        yield from _prepare_update_stream()
+    finally:
+        _prepare_lock.release()
+
+
+def _prepare_update_stream():
     partial: Path | None = None
     request = urllib.request.Request(
         _manifest_url(),
@@ -301,9 +329,16 @@ def request_storage_move(data_directory: str, models_directory: str) -> dict[str
 
 
 class UpdateMonitor:
-    def __init__(self, idle_check: Callable[[], bool] | None = None) -> None:
+    def __init__(self, idle_check: Callable[[], bool] | None = None,
+                 install_action: Callable[[], Awaitable[bool]] | None = None) -> None:
         self._task: asyncio.Task[None] | None = None
         self._idle_check = idle_check or (lambda: True)
+        self._install_action = install_action
+        self._prepared_version: str | None = None
+        self._wake = asyncio.Event()
+
+    def wake(self) -> None:
+        self._wake.set()
 
     def start(self) -> None:
         if not lifecycle_state()["automaticChecks"]:
@@ -320,17 +355,63 @@ class UpdateMonitor:
                 pass
             self._task = None
 
+    def _prepare_automatic(self) -> bool:
+        global _automatic_progress
+        for line in prepare_update_stream():
+            event = json.loads(line)
+            _automatic_progress = {key: event[key] for key in ("status", "percentage") if key in event}
+            if event["status"] == "error":
+                _set_metadata("lifecycle_automatic_error", "Automatic download failed. Use Update now to retry.")
+                return False
+            if event["status"] == "ready":
+                return True
+        return False
+
+    async def tick(self) -> None:
+        global _automatic_progress
+        if not self._idle_check() or not lifecycle_state()["automaticChecks"]:
+            return
+        state = await asyncio.to_thread(check_for_updates)
+        if not (state["status"] == "ready" and state["updateAvailable"]
+                and state["automaticInstall"] and state["managedRuntime"] and self._install_action):
+            return
+        version = state["latestVersion"]
+        if self._prepared_version != version:
+            # Persist before download, so a failed release cannot create a
+            # download/restart loop, including after rollback or a power loss.
+            if _metadata("lifecycle_automatic_attempt") == version:
+                return
+            if _prepare_lock.locked():
+                return
+            _set_metadata("lifecycle_automatic_attempt", version)
+            _set_metadata("lifecycle_automatic_error", "")
+            if not await asyncio.to_thread(self._prepare_automatic):
+                return
+            self._prepared_version = version
+        # Settings and work can change during the download. Never restart on
+        # the basis of the earlier idle/consent snapshot.
+        if not lifecycle_state()["automaticInstall"] or not self._idle_check():
+            return
+        try:
+            if await self._install_action():
+                self._prepared_version = None
+                _automatic_progress = {"status": "restarting", "percentage": 100}
+        except AppError:
+            self._prepared_version = None
+            _automatic_progress = {"status": "error"}
+            _set_metadata("lifecycle_automatic_error", "Automatic installation could not start. Use Update now to retry.")
+
     async def _run(self) -> None:
+        await asyncio.sleep(10)
         while True:
-            await asyncio.sleep(10)
-            if not self._idle_check():
-                await asyncio.sleep(60)
-                continue
-            await asyncio.to_thread(check_for_updates)
-            state = _cached_state()
             try:
-                checked = datetime.fromisoformat(state["checkedAt"]) if state.get("checkedAt") else datetime.now(UTC)
-            except (TypeError, ValueError):
-                checked = datetime.now(UTC)
-            delay = max(60.0, (checked + CHECK_INTERVAL - datetime.now(UTC)).total_seconds())
-            await asyncio.sleep(delay)
+                await self.tick()
+            except (AppError, OSError, ValueError):
+                # Keep the monitor alive without exposing provider URLs or
+                # credentials, and without tight retry loops.
+                _set_metadata("lifecycle_automatic_error", "The update monitor could not finish. Check for updates manually.")
+            try:
+                await asyncio.wait_for(self._wake.wait(), timeout=60)
+            except TimeoutError:
+                pass
+            self._wake.clear()

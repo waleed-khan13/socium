@@ -124,7 +124,11 @@ The update verifies and activates the newest runtime while preserving the local 
 npx socium@latest update --force
 ```
 
-The installed **System & updates** screen can check and apply releases, create a consistent local backup, restart or stop the managed runtime, and roll back the previous release. CLI recovery remains available:
+Use the sidebar **Updates** button, then **Check for updates** and **Update now**. Manual downloads report percentage progress and verify the checksum before installation. Daily background checks remain enabled; **Install updates automatically** is an optional, locally saved setting for packaged installations. It downloads a verified release, waits for scheduled work to be idle, then uses the same backup and restart flow. A failed automatic attempt is not repeated for the same release; use **Update now** to retry. Automatic checks can be disabled by the runtime's `SOCIUM_AUTO_UPDATE_CHECKS=0` override.
+
+Only a **newer published release** can update an installation; pushing commits to GitHub without publishing a new version does not create an update. Updates follow the latest-release channel, not the offline/pinned manifest used during installation. Source/dev installations cannot self-install packaged releases.
+
+The installed **System & updates** screen can also create a consistent local backup, restart or stop the managed runtime, and roll back the previous release. CLI recovery remains available:
 
 ```bash
 npx socium backup create

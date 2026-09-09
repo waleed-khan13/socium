@@ -12,11 +12,11 @@ import * as tar from "tar";
 
 import { main } from "../src/cli.mjs";
 import { createBackup, listBackups, restoreBackup } from "../src/backup.mjs";
-import { CLI_VERSION } from "../src/constants.mjs";
+import { CLI_VERSION, DEFAULT_MANIFEST_URL } from "../src/constants.mjs";
 import { createDownloadReporter, formatDownloadProgress } from "../src/download-progress.mjs";
 import { diagnose } from "../src/doctor.mjs";
 import { installRelease, loadInstallation, registerBundledRuntime } from "../src/installation.mjs";
-import { applyUpdate, compareVersions, terminateMigrationCheck } from "../src/lifecycle.mjs";
+import { applyUpdate, checkForUpdate, compareVersions, terminateMigrationCheck } from "../src/lifecycle.mjs";
 import { resolveAssetSource, validateManifest } from "../src/manifest.mjs";
 import {
   autostartStatus,
@@ -69,6 +69,32 @@ async function fixture() {
   const release = await writeReleaseFixture({ root, target, version: "1.0.5" });
   return { ...release, paths: sociumPaths({ environment: { SOCIUM_HOME: path.join(root, "home") } }), root, target };
 }
+
+test("updates use the live release channel instead of an offline install manifest", async (t) => {
+  const current = await fixture();
+  t.after(() => rm(current.root, { recursive: true, force: true }));
+  await installRelease({ manifestSource: current.manifest, paths: current.paths, target: current.target, log() {} });
+  const previousOverride = process.env.SOCIUM_RELEASE_MANIFEST;
+  delete process.env.SOCIUM_RELEASE_MANIFEST;
+  t.after(() => {
+    if (previousOverride === undefined) delete process.env.SOCIUM_RELEASE_MANIFEST;
+    else process.env.SOCIUM_RELEASE_MANIFEST = previousOverride;
+  });
+  const release = JSON.parse(await readFile(current.manifest, "utf8"));
+  release.version = "1.4.1";
+  const requested = [];
+  t.mock.method(globalThis, "fetch", async (url) => {
+    requested.push(url);
+    return { ok: true, url, json: async () => release };
+  });
+  assert.equal((await checkForUpdate({ paths: current.paths, target: current.target })).updateAvailable, true);
+  assert.deepEqual(requested, [DEFAULT_MANIFEST_URL]);
+  process.env.SOCIUM_RELEASE_MANIFEST = "https://updates.example/custom.json";
+  await checkForUpdate({ paths: current.paths, target: current.target });
+  assert.equal(requested.at(-1), process.env.SOCIUM_RELEASE_MANIFEST);
+  await checkForUpdate({ manifestSource: "https://updates.example/explicit.json", paths: current.paths, target: current.target });
+  assert.equal(requested.at(-1), "https://updates.example/explicit.json");
+});
 
 test("maps application data to native OS locations", () => {
   assert.equal(

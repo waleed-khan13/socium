@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { DEFAULT_API_PORT, DEFAULT_WEB_PORT } from "./constants.mjs";
+import { DEFAULT_API_PORT, DEFAULT_WEB_PORT, DEFAULT_MANIFEST_URL } from "./constants.mjs";
 import { loadInstallation } from "./state.mjs";
 import { backendFileName, nativeHelperFileName } from "./platform.mjs";
 import { sociumPaths } from "./paths.mjs";
@@ -137,7 +137,8 @@ async function readJsonBody(request, maximumBytes = 16_384) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-async function createControlServer({ token, state, onAction }) {
+export async function createControlServer({ token, state, onAction }) {
+  let pendingAction = false;
   const server = createServer(async (request, response) => {
     response.setHeader("content-type", "application/json");
     if (request.headers.authorization !== `Bearer ${token}`) {
@@ -149,18 +150,25 @@ async function createControlServer({ token, state, onAction }) {
       return;
     }
     if (request.method === "POST" && ["/stop", "/restart", "/update", "/rollback", "/storage-move"].includes(request.url)) {
+      if (pendingAction) {
+        response.writeHead(409).end(JSON.stringify({ ok: false, error: "A runtime action is already in progress." }));
+        return;
+      }
+      pendingAction = true;
       const action = request.url.slice(1);
       try {
         const payload = action === "storage-move" ? await readJsonBody(request) : {};
-        if (action === "storage-move") await onAction(action, payload, { prepareOnly: true });
+        const requiresHelper = ["storage-move", "update", "rollback"].includes(action);
+        if (requiresHelper) await onAction(action, payload, { prepareOnly: true });
         response.end(JSON.stringify({ ok: true, action, restarting: action === "storage-move" }));
         setTimeout(
           () => Promise.resolve(
-            onAction(action, payload, action === "storage-move" ? { prepared: true } : {}),
-          ).catch(() => undefined),
+            onAction(action, payload, requiresHelper ? { prepared: true } : {}),
+          ).catch(() => { pendingAction = false; }),
           150,
         ).unref?.();
       } catch (error) {
+        pendingAction = false;
         response.writeHead(400).end(JSON.stringify({ ok: false, error: error?.message || "Invalid request" }));
       }
       return;
@@ -277,6 +285,11 @@ export async function startRuntime({
     state: () => ({ version: installation.version, webPort, apiPort, pid: process.pid }),
     async onAction(action, payload = {}, phase = {}) {
       if (phase.prepareOnly) {
+        if (action === "update") {
+          const preparedManifest = path.join(installation.dataDirectory, ".updates", "prepared-manifest.json");
+          await launchUpdateHelper({ manifestSource: await exists(preparedManifest) ? preparedManifest : updateManifest || process.env.SOCIUM_RELEASE_MANIFEST || DEFAULT_MANIFEST_URL, restart: true, waitPid: process.pid });
+        }
+        if (action === "rollback") await launchUpdateHelper({ restart: true, waitPid: process.pid, rollback: true });
         if (action === "storage-move") {
           if (typeof payload.dataDir !== "string" || typeof payload.modelsDir !== "string") {
             throw new Error("Data and model folders are required.");
@@ -296,11 +309,6 @@ export async function startRuntime({
         stop(action);
         return;
       }
-      if (action === "update") {
-        const preparedManifest = path.join(installation.dataDirectory, ".updates", "prepared-manifest.json");
-        await launchUpdateHelper({ manifestSource: await exists(preparedManifest) ? preparedManifest : updateManifest || installation.manifestSource, restart: true, waitPid: process.pid });
-      }
-      if (action === "rollback") await launchUpdateHelper({ restart: true, waitPid: process.pid, rollback: true });
       stop(action);
     },
   });
@@ -327,7 +335,9 @@ export async function startRuntime({
     SOCIUM_CONTROL_TOKEN: controlToken,
     SOCIUM_APP_VERSION: installation.version,
     SOCIUM_RELEASE_TARGET: installation.target,
-    SOCIUM_RELEASE_MANIFEST: updateManifest || installation.manifestSource || "",
+    // Installation manifests may be offline files or pinned release URLs. They
+    // are not an update channel (and prepared manifests are deleted on success).
+    SOCIUM_RELEASE_MANIFEST: updateManifest || process.env.SOCIUM_RELEASE_MANIFEST || DEFAULT_MANIFEST_URL,
     SOCIUM_WINDOWS_HELPER: layout.nativeHelper || "",
   };
 

@@ -93,7 +93,9 @@ async function proxyRequest(request: Request, context: RouteContext) {
       `/api/${path.map(encodeURIComponent).join("/")}${sourceUrl.search}`,
       baseUrl,
     );
-    const timeoutMs = routePath === "providers/local/pull"
+    const timeoutMs = routePath === "lifecycle/prepare"
+      ? 30 * 60_000
+      : routePath === "providers/local/pull"
       ? 6 * 60 * 60_000
       : routePath === "storage/pick-directory" || routePath === "settings/brand-profile/discover"
         ? 10 * 60_000

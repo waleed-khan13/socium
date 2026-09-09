@@ -27,6 +27,10 @@ class ApiModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, str_strip_whitespace=True)
 
 
+class UpdatePreferences(ApiModel):
+    automatic_install: bool
+
+
 class WorkspaceUpdate(ApiModel):
     name: str = Field(min_length=1, max_length=80)
     business_name: str = Field(min_length=1, max_length=120)

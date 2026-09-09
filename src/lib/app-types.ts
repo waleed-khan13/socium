@@ -943,6 +943,9 @@ export interface PublicAppState {
     lastError: string | null;
     managedRuntime: boolean;
     automaticChecks: boolean;
+    automaticInstall: boolean;
+    automaticProgress: { status: string; percentage?: number | null } | null;
+    automaticError: string | null;
     rollbackAvailable: boolean;
   };
   backups: Array<{

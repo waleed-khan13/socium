@@ -92,6 +92,7 @@ from app.lifecycle_service import (
     request_controller_action,
     request_storage_move,
     runtime_controller_available,
+    save_update_preferences,
 )
 from app.media_job_store import (
     cancel_media_generation,
@@ -182,6 +183,7 @@ from app.schemas import (
     TelegramConnectRequest,
     TelegramProxyTestRequest,
     TelegramUpdate,
+    UpdatePreferences,
     WebsiteCrawlRequest,
     WorkflowDefinitionCreate,
     WorkflowRunCreate,
@@ -284,7 +286,29 @@ local_scheduler = LocalScheduler(
     approval_wake=lambda: (telegram_poller.wake(), slack_listener.wake()),
 )
 register_scheduler_wake(local_scheduler.wake)
-update_monitor = UpdateMonitor(lambda: not bool(local_scheduler.status().get("workersActive")))
+
+
+async def install_automatic_update() -> bool:
+    if local_scheduler.status().get("workersActive"):
+        return False
+    # Stop claiming jobs before handing over to the native controller. On a
+    # rejected request restore the scheduler, without changing its saved mode.
+    await local_scheduler.stop()
+    if not lifecycle_state()["automaticInstall"]:
+        local_scheduler.start()
+        return False
+    try:
+        await asyncio.to_thread(request_controller_action, "update")
+    except Exception:
+        local_scheduler.start()
+        raise
+    return True
+
+
+update_monitor = UpdateMonitor(
+    lambda: not bool(local_scheduler.status().get("workersActive")),
+    install_action=install_automatic_update,
+)
 
 
 @asynccontextmanager
@@ -734,6 +758,13 @@ def get_lifecycle() -> JSONResponse:
 @app.post("/api/lifecycle/check")
 def check_update() -> dict[str, Any]:
     return {"ok": True, "lifecycle": check_for_updates(force=True)}
+
+
+@app.put("/api/lifecycle/preferences")
+async def update_preferences(payload: UpdatePreferences) -> dict[str, Any]:
+    state = save_update_preferences(payload.automatic_install)
+    update_monitor.wake()
+    return {"ok": True, "lifecycle": state}
 
 
 @app.post("/api/lifecycle/backup")
