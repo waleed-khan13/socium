@@ -4,9 +4,15 @@ All notable user-facing changes are documented here.
 
 ## Unreleased
 
+### Security
+
+- Updated Next.js and its ESLint integration to 16.3.4, and the bundled image-processing runtime to sharp 0.35.4, addressing the dependency audit failures that blocked release preparation.
+
 ### Changed
 
 - Replaced the terminal-style Windows bootstrap experience with a standard per-user setup wizard that supports installation-folder selection, shortcut and startup choices, byte-based 1% progress, registered uninstall, and Finish-page launch without opening a console.
+- Made confirmed Business Knowledge the center of setup and content defaults, with generated assets available inside Content Studio.
+- Added a visible Updates shortcut and an opt-in automatic installation setting, corrected the latest-release channel, and protected update handover against duplicate requests.
 
 ## 1.4.0 - 2026-09-05
 
