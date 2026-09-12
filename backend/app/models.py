@@ -135,11 +135,46 @@ class Post(Base):
     published_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     remote_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     remote_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    browser_account_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    browser_account_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    browser_account_identity: Mapped[str | None] = mapped_column(String(500), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     automation_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("automation_rules.id", ondelete="SET NULL"), nullable=True, index=True
     )
     automation_publish_at: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+
+
+class SocialBrowserAccount(Base):
+    __tablename__ = "social_browser_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    platform: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    identity: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="not_connected")
+    preferred: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    last_verified_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class BrowserPublishAttempt(Base):
+    __tablename__ = "browser_publish_attempts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    key: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
+    post_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    account_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    step: Mapped[str] = mapped_column(String(80), nullable=False)
+    adapter_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    remote_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
 
 
 class ApprovalAction(Base):

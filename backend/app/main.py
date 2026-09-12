@@ -4,6 +4,7 @@ import asyncio
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from time import perf_counter
 from typing import Annotated, Any
 from urllib.parse import urlsplit
@@ -227,6 +228,7 @@ from app.services.telegram import (
     validate_proxy_url,
 )
 from app.slack_listener import SlackSocketListener
+from app.social_automation.routes import create_router as create_browser_router
 from app.storage_health import storage_state
 from app.store import (
     acknowledge_remote_edit,
@@ -317,6 +319,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if settings.migration_check:
         yield
         return
+    from app.social_automation.store import recover_interrupted_attempts
+    recover_interrupted_attempts()
     ensure_automation_jobs()
     telegram_poller.start()
     slack_listener.start()
@@ -340,6 +344,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     redoc_url=None,
 )
+app.include_router(create_browser_router(local_scheduler.wake))
 
 
 @app.exception_handler(AppError)
@@ -373,6 +378,8 @@ def state_response() -> dict[str, Any]:
     state["onboarding"] = onboarding_state(state["storage"])
     state["lifecycle"] = lifecycle_state()
     state["backups"] = list_backups()
+    from app.social_automation.store import public_state as browser_state
+    state["socialBrowser"] = browser_state()
     return state
 
 
@@ -1599,6 +1606,18 @@ async def request_slack_approval(post_id: str, payload: ApprovalRequest) -> dict
 
 @app.post("/api/posts/{post_id}/publish")
 async def post_publish(post_id: str, payload: PublishRequest) -> dict[str, Any]:
+    from app.store import post_browser_account
+    if post_browser_account(post_id):
+        job, created = schedule_post(
+            post_id, SchedulePostRequest(revision=payload.revision, run_at=datetime.now(UTC)),
+            settings.scheduler_catch_up_hours,
+        )
+        if not created and job["status"] not in {"queued", "retrying", "running"}:
+            raise AppError("This revision already has a finished or stopped publish job. Review its result in the queue; use job recovery rather than submitting it again.", 409)
+        local_scheduler.wake()
+        return JSONResponse({"ok": True, "job": job, "created": created,
+                             "message": "Browser publish queued; track its result in the queue.",
+                             "state": state_response()}, status_code=202)
     reserved = reserve_publish(post_id, payload.revision)
     try:
         target = resolve_publish_target(str(reserved["channel"]))

@@ -156,11 +156,14 @@ def test_missed_publish_requires_run_now_reschedule_or_skip(client, monkeypatch)
     ).status_code == 200
 
 
-def test_worker_lease_rejects_stale_owner_and_recovers_expiry(client) -> None:
+def test_worker_lease_rejects_stale_owner_and_recovers_expiry(client, monkeypatch) -> None:
     from app.database import read_session, write_session
     from app.models import AppMetadata, LocalJob
     from app.store import complete_job, recover_stale_jobs, utc_now
 
+    # Pausing publishing does not stop maintenance. Keep the live supervisor
+    # from recovering this test's expired lease before the explicit assertion.
+    monkeypatch.setattr("app.scheduler.recover_stale_jobs", lambda _minutes: 0)
     assert client.put("/api/scheduler", json={"paused": True}).status_code == 200
     now = utc_now()
     active_id = str(uuid4())

@@ -2,6 +2,24 @@
 
 All notable user-facing changes are documented here.
 
+## 1.4.2 - 2026-09-12
+
+### Added
+
+- Added experimental local-browser publishing for LinkedIn personal profiles, supporting approved text and one local image with alt text without LinkedIn developer API credentials. The optional Chromium download, account setup, login, verification, and cancellation live in Connections.
+- Added isolated local browser sessions and frozen publishing destinations for new drafts. Existing API drafts and saved workspace settings keep their original behavior through an additive migration.
+
+### Reliability and safety
+
+- Reused the durable scheduler and shared dashboard, Slack, and Telegram approvals. A persisted final-click guard prevents repeated approval or retry from clicking Publish twice for the same revision; uncertain results require review.
+- Added bounded browser operations, exclusive profile ownership, restart recovery, sanitized errors, and packaged browser-driver smoke checks.
+- Added real Chromium fixture tests for text/image publishing and responsive, keyboard, and accessibility tests for setup. No automated test publishes to a real LinkedIn account.
+
+### Requirements and limitations
+
+- Browser publishing is experimental and has not yet been validated against a live LinkedIn account. It currently requires an English LinkedIn interface and manual login, MFA, or CAPTCHA completion when requested. LinkedIn restricts third-party website automation; review the platform-risk notice before using this mode. Official API publishing remains available.
+- Chromium requires an additional download and disk space; Linux may also need browser system libraries. Sessions are sensitive local files and are not encrypted by the API-key vault. Local AI avoids cloud AI API charges; cloud AI and optional Slack/Telegram approval connectors still require their own configuration.
+
 ## 1.4.1 - 2026-09-09
 
 ### Added

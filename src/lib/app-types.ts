@@ -159,6 +159,9 @@ export interface PublicTelegramSettings {
 }
 
 export interface GeneratedPost {
+  browserAccountId?: string | null;
+  browserAccountName?: string | null;
+  browserAccountIdentity?: string | null;
   id: string;
   revision: number;
   topic: string;
@@ -872,7 +875,25 @@ export interface EmailJob {
   updatedAt: string;
 }
 
+export interface SocialBrowserAccount {
+  id: string;
+  platform: "linkedin";
+  name: string;
+  identity: string | null;
+  status: string;
+  preferred: boolean;
+  lastErrorCode: string | null;
+  lastVerifiedAt: string | null;
+}
+
+export interface SocialBrowserState {
+  accounts: SocialBrowserAccount[];
+  jobs: Array<{ id: string; kind: string; status: string; message: string | null; error: string | null; progress: number | null; accountId: string | null }>;
+  attempts: Array<{ id: string; postId: string; revision: number; accountId: string; status: string; step: string; errorCode: string | null; remoteUrl: string | null; adapterVersion: string }>;
+}
+
 export interface PublicAppState {
+  socialBrowser?: SocialBrowserState;
   features: {
     edition: "business-os-v1.4";
     labsEnabled: boolean;

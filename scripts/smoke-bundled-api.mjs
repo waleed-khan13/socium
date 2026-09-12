@@ -78,6 +78,12 @@ try {
   });
   if (!stateResponse.ok) throw new Error(`Bundled API state request returned ${stateResponse.status}.`);
   const state = await stateResponse.json();
+  const browserResponse = await fetch(`http://127.0.0.1:${port}/api/social-browser`, {
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!browserResponse.ok || !(await browserResponse.json()).driverAvailable) {
+    throw new Error("Bundled API is missing the Playwright browser driver.");
+  }
   const providerResponse = await fetch(`http://127.0.0.1:${port}/api/settings/provider`, {
     method: "PUT",
     headers: { "content-type": "application/json" },

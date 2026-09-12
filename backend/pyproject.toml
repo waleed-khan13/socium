@@ -1,6 +1,6 @@
 [project]
 name = "socium-api"
-version = "1.4.1"
+version = "1.4.2"
 description = "Local-only FastAPI service for Socium"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,6 +9,7 @@ dependencies = [
   "fastapi>=0.139,<1",
   "httpx[socks]>=0.28,<1",
   "pillow>=11.3,<13",
+  "playwright==1.62.0",
   "pydantic-settings>=2.10,<3",
   "python-multipart>=0.0.20,<1",
   "sqlalchemy>=2.0,<3",

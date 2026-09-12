@@ -23,6 +23,8 @@
 **/.wrangler/
 /data/
 /storage/
+**/browser_profiles/
+**/browser-runtime/
 
 # logs and test output
 *.log

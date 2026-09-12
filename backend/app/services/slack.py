@@ -173,6 +173,9 @@ async def send_approval_message(
             "text": {"type": "plain_text", "text": f"{post['title']}\n\n{preview}"[:3_000]},
         },
     ]
+    if post.get("browserAccountId"):
+        blocks.append({"type": "section", "text": {"type": "plain_text", "text":
+            f"Browser destination: {post.get('browserAccountName')}\n{post.get('browserAccountIdentity')}"}})
     media_asset_id = str(post.get("mediaAssetId") or "")
     if media_asset_id:
         slack_file_id = await upload_approval_image(

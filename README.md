@@ -1,6 +1,6 @@
 # Socium
 
-Socium is an open-source, local-first **AI Business Operating System**. Version `1.4.1` combines social publishing, confirmed business knowledge, approvals, inbox work, automations, and honest operational analytics in one Next.js console backed by a local FastAPI service and SQLite database. It does not require a hosted Socium account or server.
+Socium is an open-source, local-first **AI Business Operating System**. Version `1.4.2` combines social publishing, confirmed business knowledge, approvals, inbox work, automations, and honest operational analytics in one Next.js console backed by a local FastAPI service and SQLite database. It does not require a hosted Socium account or server.
 
 ## Version 1.4 scope
 
@@ -10,6 +10,7 @@ See [docs/V1_4_RELEASE.md](docs/V1_4_RELEASE.md) for the current release contrac
 
 ## What works today
 
+- Optionally try experimental local-browser LinkedIn personal-profile publishing for text or one image without LinkedIn developer API credentials. Install Chromium from Connections, use an English LinkedIn interface, and complete login/MFA yourself. Platform-policy risks, session protection, and live-site validation limitations are documented in [Browser publishing](docs/BROWSER_PUBLISHING.md); existing official API publishing remains available.
 - Use the redesigned Business OS overview with real attention counts, AI health, connected channels, upcoming work, pending approvals, a real calendar, and honest unavailable states when analytics data is not connected.
 - Maintain a local Business Profile and Knowledge Base where every extracted fact retains its source URL, confidence, and proposed/confirmed/rejected state; only confirmed knowledge can enter AI prompts.
 - Analyze websites into editable knowledge proposals with safe public crawling and header/footer/metadata/structured-data logo discovery.

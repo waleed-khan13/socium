@@ -30,7 +30,13 @@ class PublishResult:
     remote_url: str | None = None
 
 
-def resolve_publish_target(channel: str) -> PublishTarget:
+def resolve_publish_target(channel: str, browser_account_id: str | None = None) -> PublishTarget:
+    if browser_account_id:
+        from app.social_automation.store import account_by_id
+        account = account_by_id(browser_account_id)
+        if channel != "linkedin" or account["platform"] != channel or account["status"] != "connected":
+            raise AppError("Reconnect the browser account approved for this post.")
+        return PublishTarget(channel, account["name"], {"browser_account_id": browser_account_id})
     if channel == "telegram":
         runtime = telegram_runtime()
         if not runtime["bot_token"] or not runtime["chat_id"]:
@@ -57,6 +63,12 @@ def resolve_publish_target(channel: str) -> PublishTarget:
 async def publish_to_target(target: PublishTarget, post: dict[str, Any]) -> PublishResult:
     media_asset_id = str(post.get("mediaAssetId") or "")
     media = media_asset_delivery(media_asset_id) if media_asset_id else None
+    if post.get("browserAccountId"):
+        from app.social_automation.manager import publish
+        if target.runtime.get("browser_account_id") != post["browserAccountId"]:
+            raise AppError("Publishing destination does not match this approved post.")
+        result = await publish(post, media)
+        return PublishResult(remote_id=result.remote_id, remote_url=result.remote_url)
     if target.channel == "telegram":
         remote_id = await publish_telegram_post(
             str(target.runtime["bot_token"]),

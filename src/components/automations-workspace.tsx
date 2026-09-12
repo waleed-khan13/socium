@@ -95,6 +95,8 @@ const automationChannels: ContentChannel[] = [
 
 function isPublishingDestinationReady(state: PublicAppState, channel: ContentChannel) {
   if (channel === "telegram") return state.telegram.configured;
+  const browserAccount = state.socialBrowser?.accounts.find((account) => account.platform === channel && account.preferred);
+  if (browserAccount) return browserAccount.status === "connected" && Boolean(browserAccount.identity);
   const adapterId = channel === "linkedin"
     ? "linkedin"
     : channel === "linkedin-company"

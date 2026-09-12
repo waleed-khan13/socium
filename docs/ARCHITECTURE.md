@@ -40,6 +40,10 @@ The browser never calls the internal API port directly. This avoids cross-origin
 
 ## Runtime rules
 
+### Optional browser publishing transport (v1.4.2 experimental)
+
+`app/social_automation` adds an experimental Playwright LinkedIn member adapter to the existing publisher and SQLite job queue. It does not replace API connectors or introduce another approval system. New browser-bound posts freeze the account ID and identity; existing posts default to their original API transport. A durable intent precedes the final click, and ambiguous outcomes prohibit automatic replay. UUID-isolated profiles live under the selected data directory, with optional browser binaries under the models directory. These session files are sensitive and are not encrypted by the connector-secret vault. See [browser publishing](BROWSER_PUBLISHING.md) for setup, limitations, policy risk and verification.
+
 - Bind the web console and native API to `127.0.0.1`, never `0.0.0.0`, by default.
 - Store the SQLite database, master encryption key, exports, and generated media under one configurable local data directory.
 - Keep connector secrets encrypted with a local 256-bit master key. Never return decrypted secrets to the browser or logs.

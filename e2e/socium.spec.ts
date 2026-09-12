@@ -6,6 +6,60 @@ import type { PublicAppState } from "../src/lib/app-types";
 
 const mockBaseUrl = `http://127.0.0.1:${process.env.SOCIUM_E2E_MOCK_PORT ?? "4100"}`;
 
+test("browser publishing setup is accessible, responsive, and requires explicit consent", async ({ page }) => {
+  const browserState = {
+    browserInstalled: true, driverAvailable: true, accounts: [] as object[],
+    jobs: [] as object[], attempts: [],
+  };
+  const accountId = "baed685c-bfee-4cde-9454-85c09ef1ae27";
+  let creates = 0;
+  await page.route("**/api/social-browser**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (route.request().method() === "GET") {
+      await route.fulfill({ json: browserState });
+      return;
+    }
+    if (path.endsWith("/accounts")) {
+      const payload = route.request().postDataJSON();
+      expect(payload.acknowledge_policy_risk).toBe(true);
+      creates += 1;
+      browserState.accounts = [{ id: accountId, name: payload.name, platform: "linkedin", status: "not_connected", identity: null, preferred: false }];
+    } else if (path.endsWith("/connect")) {
+      browserState.jobs = [{ id: "fixture-job", status: "running", kind: "social.connect", message: "Complete login in the browser window.", accountId }];
+    } else if (path.endsWith("/cancel")) {
+      browserState.jobs = [{ id: "fixture-job", status: "cancelled", kind: "social.connect", message: "Cancelled", accountId }];
+    } else {
+      throw new Error(`Unexpected browser action in UI test: ${path}`);
+    }
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.goto("/");
+  await dismissOnboardingIfPresent(page);
+  await navigate(page, "AI & Integrations", "Connections");
+  const card = page.locator("#browser-publishing");
+  await expect(card.getByText("Publishing browser installed", { exact: true })).toBeVisible();
+  const add = card.getByRole("button", { name: "Add LinkedIn browser account" });
+  await expect(add).toBeDisabled();
+  await card.getByRole("checkbox").check();
+  await card.getByLabel("Account label").fill("My fixture profile");
+  await add.click();
+  await expect(card.getByRole("heading", { name: "My fixture profile" })).toBeVisible();
+  expect(creates).toBe(1);
+  for (const width of [375, 768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    expect(await card.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+    const result = await new AxeBuilder({ page }).include("#browser-publishing")
+      .withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+    expect(result.violations).toEqual([]);
+  }
+  await card.screenshot({ path: "output/playwright/browser-publishing-card.png" });
+  await card.getByRole("button", { name: "Open login" }).click();
+  await expect(card.getByRole("status")).toHaveText("Complete login in the browser window.");
+  await card.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(card.getByRole("button", { name: "Open login" })).toBeEnabled();
+  await page.request.put("/api/onboarding", { data: { action: "start" } });
+});
+
 test("rejects cross-origin requests at the localhost API proxy", async ({ request }) => {
   const response = await request.post("/api/state", {
     data: {},

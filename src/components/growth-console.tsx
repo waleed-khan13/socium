@@ -1,5 +1,7 @@
 "use client";
 
+import { SocialBrowserCard } from "@/components/social-browser-card";
+
 import Image from "next/image";
 import {
   Activity,
@@ -1399,7 +1401,7 @@ export function GrowthConsole() {
         body: JSON.stringify({ revision: post.revision }),
       });
       setAppState(response.state);
-      toast.success(`Published to ${publisherDisplayName(post.channel)}`);
+      toast.success(post.browserAccountId ? "Browser publish queued. Check the queue for the result." : `Published to ${publisherDisplayName(post.channel)}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Publish failed.");
       await loadState();
@@ -2461,7 +2463,9 @@ export function GrowthConsole() {
                       || (post.channel === "blog" && wordpressAccount?.status === "verified" && wordpressAccount.enabled)
                       || (post.channel === "facebook" && metaAccount?.status === "verified" && metaAccount.enabled)
                       || (post.channel === "instagram" && Boolean(post.mediaUrl) && instagramAccount?.status === "verified" && instagramAccount.enabled)
-                      || (post.channel === "linkedin" && linkedinAccount?.status === "verified" && linkedinAccount.enabled)
+                      || (post.channel === "linkedin" && (post.browserAccountId
+                        ? appState.socialBrowser?.accounts.some((account) => account.id === post.browserAccountId && account.status === "connected" && account.identity === post.browserAccountIdentity)
+                        : linkedinAccount?.status === "verified" && linkedinAccount.enabled))
                       || (post.channel === "linkedin-company" && linkedinOrganizationAccount?.status === "verified" && linkedinOrganizationAccount.enabled);
                     return (
                     <Card className="min-w-0" key={post.id}>
@@ -2477,6 +2481,7 @@ export function GrowthConsole() {
                       <CardContent className="flex flex-1 flex-col">
                         <div className="flex-1">
                           <h2 className="text-base font-semibold leading-6 text-zinc-100">{post.title}</h2>
+                          {post.browserAccountId ? <p className="mt-2 break-words text-sm text-zinc-300">Browser destination: {post.browserAccountName} · {post.browserAccountIdentity}</p> : null}
                           <p className="mt-3 max-w-[75ch] whitespace-pre-wrap text-sm leading-6 text-zinc-400">{post.body}</p>
                           {post.mediaPreviewUrl || post.mediaUrl ? <div className="mt-4 max-w-96"><MediaPreview label={`Media preview for ${post.title}`} url={post.mediaPreviewUrl || post.mediaUrl || ""} /></div> : null}
                           {post.hashtags.length > 0 ? (
@@ -2538,7 +2543,7 @@ export function GrowthConsole() {
                                 <Button disabled={busy === `publish-${post.id}` || Boolean(scheduledJob)} onClick={() => void publishPost(post)} size="sm">{busy === `publish-${post.id}` ? <Loader2 className="animate-spin" /> : <Send />} {post.channel === "blog" ? "Publish to WordPress" : post.channel === "facebook" ? "Publish to Facebook" : post.channel === "instagram" ? "Publish to Instagram" : post.channel === "linkedin" ? "Publish to LinkedIn" : post.channel === "linkedin-company" ? "Publish to Company Page" : "Publish now"}</Button>
                               </>
                             ) : null}
-                            {post.status === "approved" && ["linkedin", "linkedin-company"].includes(post.channel) ? (
+                            {post.status === "approved" && !post.browserAccountId && ["linkedin", "linkedin-company"].includes(post.channel) ? (
                               <Button onClick={() => void openBrowserHandoff(post)} size="sm" variant="outline">
                                 <SquareArrowOutUpRight /> Browser handoff
                               </Button>
@@ -2556,7 +2561,7 @@ export function GrowthConsole() {
                               <Button onClick={() => navigate("integrations")} size="sm" variant="outline"><PlugZap /> Connect Instagram</Button>
                             ) : null}
                             {post.status === "approved" && post.channel === "linkedin" && !publisherReady ? (
-                              <Button onClick={() => navigate("integrations")} size="sm" variant="ghost"><PlugZap /> Connect for full auto</Button>
+                              <Button onClick={() => navigate("integrations")} size="sm" variant="ghost"><PlugZap /> {post.browserAccountId ? "Reconnect approved browser account" : "Connect for publishing"}</Button>
                             ) : null}
                             {post.status === "approved" && post.channel === "linkedin-company" && !publisherReady ? (
                               <Button onClick={() => navigate("integrations")} size="sm" variant="ghost"><PlugZap /> Connect Page for full auto</Button>
@@ -3156,6 +3161,8 @@ export function GrowthConsole() {
                 onSave={(event) => void saveInstagramConnector(event)}
                 onTest={() => void testInstagramConnection()}
               />
+
+              <SocialBrowserCard onChanged={loadState} />
 
               <LinkedInConnectorCard
                 account={linkedinAccount}

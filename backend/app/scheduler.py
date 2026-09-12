@@ -45,9 +45,11 @@ from app.store import (
     complete_job,
     fail_automation_occurrence,
     fail_job,
+    fail_publish,
     fail_publish_uncertain,
     finish_publish,
     next_job_run_at,
+    post_browser_account,
     primary_image_runtime,
     provider_runtime,
     publish_reservation_active,
@@ -236,12 +238,13 @@ class LocalScheduler:
         await self._sleep(self._seconds_until(self._next_wake_at))
 
     async def _execute_bounded(self, job: dict[str, Any]) -> None:
+        timeout = max(1800, self.worker_timeout_seconds) if job.get("kind") == "social.browser.install" else self.worker_timeout_seconds
         try:
-            await asyncio.wait_for(self._execute(job), timeout=self.worker_timeout_seconds)
+            await asyncio.wait_for(self._execute(job), timeout=timeout)
         except TimeoutError:
             job_id = str(job["id"])
             lease_token = str(job.get("leaseToken") or "") or None
-            message = f"Local worker exceeded the {self.worker_timeout_seconds}-second safety timeout."
+            message = f"Local worker exceeded the {timeout}-second safety timeout."
             if job.get("kind") == "post.publish":
                 payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
                 post_id = str(payload.get("post_id") or "")
@@ -271,6 +274,23 @@ class LocalScheduler:
     async def _execute(self, job: dict[str, Any]) -> None:
         job_id = str(job["id"])
         lease_token = str(job.get("leaseToken") or "") or None
+        if job.get("kind") in {"social.connect", "social.verify", "social.browser.install"}:
+            from app.social_automation.manager import run_operation
+            try:
+                await run_operation(job)
+                complete_job(job_id, lease_token)
+                self._last_error = None
+            except Exception as error:  # noqa: BLE001 - never expose browser exception page content.
+                from app.social_automation.contracts import BrowserError
+                from app.social_automation.store import finish_cancelled_operation
+                if isinstance(error, BrowserError) and error.code == "CANCELLED":
+                    finish_cancelled_operation(job_id)
+                    self._last_error = None
+                    return
+                message = error.message if isinstance(error, AppError) else "Browser operation failed."
+                fail_job(job_id, message, retryable=False, lease_token=lease_token)
+                self._last_error = message
+            return
         if job.get("kind") == "campaign.prepare":
             payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
             try:
@@ -524,7 +544,9 @@ class LocalScheduler:
         revision = int(payload.get("revision") or 0)
         channel = str(payload.get("channel") or "")
         try:
-            target = resolve_publish_target(channel)
+            browser_account_id = post_browser_account(post_id)
+            target = (resolve_publish_target(channel, browser_account_id)
+                      if browser_account_id else resolve_publish_target(channel))
         except AppError as error:
             fail_job(job_id, error.message, retryable=True, lease_token=lease_token)
             self._last_error = error.message
@@ -546,6 +568,10 @@ class LocalScheduler:
             message = (
                 error.message if isinstance(error, AppError) else str(error) or "Scheduled publish failed."
             )
-            fail_publish_uncertain(post_id, revision, message)
+            from app.social_automation.contracts import BrowserError
+            if isinstance(error, BrowserError) and not error.uncertain:
+                fail_publish(post_id, revision, message)
+            else:
+                fail_publish_uncertain(post_id, revision, message)
             fail_job(job_id, message, retryable=False, lease_token=lease_token)
             self._last_error = message

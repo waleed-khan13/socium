@@ -272,6 +272,8 @@ async def send_approval_request(
     }
     heading = f"Approval requested · {post['channel']} · revision {post['revision']}"
     full_text = f"{heading}\n\n{post['title']}\n\n{post['body']}{hashtag_line}"
+    if post.get("browserAccountId"):
+        full_text = f"{heading}\nBrowser destination: {post.get('browserAccountName')}\n{post.get('browserAccountIdentity')}\n\n{post['title']}\n\n{post['body']}{hashtag_line}"
     media_asset_id = str(post.get("mediaAssetId") or "")
     if media_asset_id:
         media = media_asset_delivery(media_asset_id)

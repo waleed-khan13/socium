@@ -29,6 +29,7 @@ from app.models import (
     MediaAsset,
     Post,
     ProviderSettings,
+    SocialBrowserAccount,
     TelegramSettings,
     Workspace,
 )
@@ -374,6 +375,9 @@ def _post_dict(post: Post) -> dict[str, Any]:
         "publishedAt": post.published_at,
         "remoteId": post.remote_id,
         "remoteUrl": post.remote_url,
+        "browserAccountId": post.browser_account_id,
+        "browserAccountName": post.browser_account_name,
+        "browserAccountIdentity": post.browser_account_identity,
         "lastError": post.last_error,
         "automationId": post.automation_id,
         "automationPublishAt": post.automation_publish_at,
@@ -1505,6 +1509,15 @@ def create_post(
         automation_publish_at=automation_publish_at,
     )
     with write_session() as session:
+        account = session.scalar(select(SocialBrowserAccount).where(
+            SocialBrowserAccount.platform == post.channel, SocialBrowserAccount.preferred.is_(True),
+        ))
+        if account:
+            if account.status != "connected" or not account.identity:
+                raise AppError("Reconnect your selected browser account before creating new drafts.")
+            post.browser_account_id = account.id
+            post.browser_account_name = account.name
+            post.browser_account_identity = account.identity
         session.add(post)
         _append_audit(
             session,
@@ -2010,6 +2023,14 @@ def process_telegram_update(update: dict[str, Any]) -> dict[str, str] | None:
                 }
             )
         return parsed
+
+
+def post_browser_account(post_id: str) -> str | None:
+    with read_session() as session:
+        post = session.get(Post, post_id)
+        if post is None:
+            raise AppError("Draft not found.", 404)
+        return post.browser_account_id
 
 
 def reserve_publish(post_id: str, revision: int) -> dict[str, Any]:
@@ -2840,7 +2861,8 @@ def claim_due_job(lease_seconds: int = 360) -> dict[str, Any] | None:
         )
         if metadata is not None and metadata.value == "true":
             query = query.where(
-                LocalJob.kind.in_({"content.generate", "media.generate", "email.reply.generate"})
+                LocalJob.kind.in_({"content.generate", "media.generate", "email.reply.generate",
+                                   "social.connect", "social.verify", "social.browser.install"})
             )
         job = session.scalar(query)
         if job is None:
@@ -2851,7 +2873,8 @@ def claim_due_job(lease_seconds: int = 360) -> dict[str, Any] | None:
         job.attempts += 1
         job.locked_at = now
         job.lease_token = lease_token
-        job.lease_expires_at = _utc_iso(datetime.now(UTC) + timedelta(seconds=lease_seconds))
+        duration = max(lease_seconds, 1830) if job.kind == "social.browser.install" else lease_seconds
+        job.lease_expires_at = _utc_iso(datetime.now(UTC) + timedelta(seconds=duration))
         job.updated_at = now
         job.last_error = None
         if job.kind in {"media.generate", "content.generate", "email.reply.generate"}:
