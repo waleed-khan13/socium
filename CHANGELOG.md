@@ -2,6 +2,18 @@
 
 All notable user-facing changes are documented here.
 
+## 1.4.3 - 2026-09-13
+
+### Changed
+
+- Approving a manually created draft from Slack or Telegram now queues it to publish immediately when its destination is connected. The approval reply says whether publishing was queued or why it could not start. Automation drafts keep their rule's publish time, dashboard approval still uses the Publish button, and the existing one-job-per-revision guard prevents duplicate posts.
+
+### Fixed
+
+- Browser publishing now waits up to 15 seconds for the LinkedIn feed to render before checking the session. A page that never settles no longer marks a connected account as unknown or blocks new drafts.
+- An optional Chromium download interrupted by a restart is now released on startup instead of blocking browser setup for up to 30 minutes.
+- Browser publishing keeps the Media Library image alt text when the draft has no alt text of its own.
+
 ## 1.4.2 - 2026-09-12
 
 ### Added

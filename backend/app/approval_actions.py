@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Literal
 
+from app.config import get_settings
 from app.errors import AppError
 from app.runtime_signals import wake_scheduler
+from app.schemas import SchedulePostRequest
 from app.services.content_package import regenerate_post_image
 from app.services.provider import generate_content
+from app.services.publishing import resolve_publish_target
 from app.store import (
     claim_remote_approval_action,
     fail_remote_regeneration,
@@ -14,6 +18,7 @@ from app.store import (
     finish_post_regeneration,
     post_for_regeneration,
     provider_runtime,
+    schedule_post,
     workspace_runtime,
 )
 
@@ -101,6 +106,30 @@ async def regenerate_image_revision(
     )
 
 
+def _publish_after_remote_approval(post: dict[str, Any], revision: int) -> ApprovalActionResult:
+    """Queue an immediate publish for a manual draft approved from Slack or Telegram."""
+    channel = str(post.get("channel") or "")
+    browser_account_id = str(post.get("browserAccountId") or "") or None
+    try:
+        resolve_publish_target(channel, browser_account_id)
+        schedule_post(
+            str(post["id"]),
+            SchedulePostRequest(revision=revision, run_at=datetime.now(UTC)),
+            get_settings().scheduler_catch_up_hours,
+        )
+    except AppError as error:
+        return ApprovalActionResult(
+            f"Revision {revision} approved and locked, but it was not published: {error.message} "
+            "Publish it from Socium once the destination is ready.",
+            post,
+        )
+    wake_scheduler()
+    return ApprovalActionResult(
+        f"Revision {revision} approved and queued to publish now. Check the Socium queue for the result.",
+        post,
+    )
+
+
 async def apply_remote_approval_action(
     action_id: str,
     action: ApprovalChoice,
@@ -126,8 +155,11 @@ async def apply_remote_approval_action(
                 f"Revision {revision} was already approved. No duplicate publish job was created.",
                 post,
             )
-        wake_scheduler()
-        return ApprovalActionResult(f"Revision {revision} approved and locked.", post)
+        if post.get("automationId"):
+            # Automation posts keep their rule's publish-after-approval setting and time.
+            wake_scheduler()
+            return ApprovalActionResult(f"Revision {revision} approved and locked.", post)
+        return _publish_after_remote_approval(post, revision)
     if action == "skip":
         if approval_replay:
             return ApprovalActionResult(

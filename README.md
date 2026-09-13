@@ -1,6 +1,6 @@
 # Socium
 
-Socium is an open-source, local-first **AI Business Operating System**. Version `1.4.2` combines social publishing, confirmed business knowledge, approvals, inbox work, automations, and honest operational analytics in one Next.js console backed by a local FastAPI service and SQLite database. It does not require a hosted Socium account or server.
+Socium is an open-source, local-first **AI Business Operating System**. Version `1.4.3` combines social publishing, confirmed business knowledge, approvals, inbox work, automations, and honest operational analytics in one Next.js console backed by a local FastAPI service and SQLite database. It does not require a hosted Socium account or server.
 
 ## Version 1.4 scope
 

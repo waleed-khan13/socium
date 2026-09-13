@@ -66,9 +66,25 @@ async def run_operation(job: dict[str, Any]) -> None:
         ) from error
 
 
+AUTH_SETTLE_ATTEMPTS = 15
+AUTH_SETTLE_SECONDS = 1.0
+
+
+async def settled_authentication(adapter: Any, page: Any) -> Authentication:
+    """Wait for a client-rendered page to show a definite session state before deciding."""
+    auth = Authentication(AuthState.UNKNOWN)
+    for attempt in range(AUTH_SETTLE_ATTEMPTS):
+        auth = await adapter.authenticate(page)
+        if auth.state != AuthState.UNKNOWN:
+            return auth
+        if attempt + 1 < AUTH_SETTLE_ATTEMPTS:
+            await asyncio.sleep(AUTH_SETTLE_SECONDS)
+    return auth
+
+
 async def publish(post: dict[str, Any], media: dict[str, Any] | None) -> BrowserResult:
     if media:
-        media = {**media, "altText": str(post.get("imageAltText") or "")}
+        media = {**media, "altText": str(post.get("imageAltText") or media.get("altText") or "")}
     account = account_by_id(str(post.get("browserAccountId") or ""))
     adapter = get_adapter(account["platform"])
     adapter.validate(post, media)
@@ -85,8 +101,10 @@ async def publish(post: dict[str, Any], media: dict[str, Any] | None) -> Browser
         async with open_browser(account["id"]) as page:
             attempt_id = claim_attempt(post, adapter.version)
             await page.goto(adapter.login_url, wait_until="domcontentloaded")
-            auth = await adapter.authenticate(page)
-            record_auth(account["id"], auth)
+            auth = await settled_authentication(adapter, page)
+            # A page that never settled proves nothing, so it must not demote a connected account.
+            if auth.state != AuthState.UNKNOWN:
+                record_auth(account["id"], auth)
             if auth.state != AuthState.AUTHENTICATED or auth.identity != post.get("browserAccountIdentity"):
                 raise BrowserError(
                     "AUTH_REQUIRED",

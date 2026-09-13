@@ -1679,7 +1679,8 @@ def test_connector_vault_redacts_secrets_and_validates_slack(client, monkeypatch
         )
     )
     assert reconnect is False
-    assert feedback == ["Revision 1 approved and locked."]
+    assert len(feedback) == 1
+    assert feedback[0].startswith("Revision 1 approved and locked, but it was not published:")
     approved = next(item for item in client.get("/api/state").json()["posts"] if item["id"] == post["id"])
     assert approved["status"] == "approved"
     repeated_socket = FakeSocket()

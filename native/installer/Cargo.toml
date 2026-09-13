@@ -1,6 +1,6 @@
 [package]
 name = "socium-native-installer"
-version = "1.4.2"
+version = "1.4.3"
 edition = "2024"
 license = "MIT"
 description = "Dependency-free native installer for Socium"

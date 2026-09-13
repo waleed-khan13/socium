@@ -277,6 +277,111 @@ def test_manager_sanitizes_errors_and_records_uncertainty(monkeypatch, after_cli
     assert public_state()["attempts"][0]["status"] == ("uncertain" if after_click else "safe_failed")
 
 
+def _fake_publish_browser(monkeypatch, adapter):
+    class Page:
+        async def goto(self, *_args, **_kwargs):
+            pass
+
+    @asynccontextmanager
+    async def fake_browser(*_args, **_kwargs):
+        yield Page()
+
+    monkeypatch.setattr(manager, "open_browser", fake_browser)
+    monkeypatch.setattr(manager, "get_adapter", lambda _: adapter)
+    monkeypatch.setattr(manager, "AUTH_SETTLE_SECONDS", 0)
+
+
+def test_publish_waits_for_slow_feed_before_checking_session(monkeypatch):
+    connected = account()
+    post = reserved()
+    checks = []
+
+    class Adapter:
+        version = "fixture"
+        login_url = "https://www.linkedin.com/feed/"
+
+        def validate(self, *_args):
+            pass
+
+        async def authenticate(self, _page):
+            checks.append(True)
+            if len(checks) < 3:
+                return Authentication(AuthState.UNKNOWN)
+            return Authentication(AuthState.AUTHENTICATED, connected["identity"])
+
+        async def publish(self, _page, _post, _media, before_click):
+            before_click()
+            return BrowserResult("urn:li:activity:1", "https://www.linkedin.com/feed/update/urn:li:activity:1/")
+
+    _fake_publish_browser(monkeypatch, Adapter())
+    assert asyncio.run(manager.publish(post, None)).remote_id == "urn:li:activity:1"
+    assert len(checks) == 3
+    assert account_by_id(connected["id"])["status"] == "connected"
+
+
+def test_unsettled_page_does_not_demote_connected_account(monkeypatch):
+    connected = account()
+    post = reserved()
+
+    class Adapter:
+        version = "fixture"
+        login_url = "https://www.linkedin.com/feed/"
+
+        def validate(self, *_args):
+            pass
+
+        async def authenticate(self, _page):
+            return Authentication(AuthState.UNKNOWN)
+
+        async def publish(self, *_args):
+            raise AssertionError("publish must not run without a confirmed session")
+
+    _fake_publish_browser(monkeypatch, Adapter())
+    with pytest.raises(BrowserError, match="Nothing was published") as caught:
+        asyncio.run(manager.publish(post, None))
+    assert not caught.value.uncertain
+    assert account_by_id(connected["id"])["status"] == "connected"
+    assert public_state()["attempts"][0]["status"] == "safe_failed"
+
+
+def test_publish_keeps_media_library_alt_text_when_post_has_none(monkeypatch):
+    connected = account()
+    post = {**reserved(), "imageAltText": ""}
+    received = []
+
+    class Adapter:
+        version = "fixture"
+        login_url = "https://www.linkedin.com/feed/"
+
+        def validate(self, *_args):
+            pass
+
+        async def authenticate(self, _page):
+            return Authentication(AuthState.AUTHENTICATED, connected["identity"])
+
+        async def publish(self, _page, _post, media, before_click):
+            received.append(media)
+            before_click()
+            return BrowserResult("urn:li:activity:2", "https://www.linkedin.com/feed/update/urn:li:activity:2/")
+
+    _fake_publish_browser(monkeypatch, Adapter())
+    media = {"filename": "a.png", "mimeType": "image/png", "data": b"png", "altText": "Library description"}
+    asyncio.run(manager.publish(post, media))
+    assert received[0]["altText"] == "Library description"
+
+
+def test_restart_releases_interrupted_browser_install():
+    job = queue_operation("social.browser.install")
+    with write_session() as session:
+        item = session.get(LocalJob, job["id"])
+        item.status = "running"
+        item.lease_token = "dead-worker"
+    recover_interrupted_attempts()
+    installs = [item for item in public_state()["jobs"] if item["id"] == job["id"]]
+    assert installs[0]["status"] == "cancelled"
+    assert queue_operation("social.browser.install")["id"] != job["id"]
+
+
 def test_duplicate_channels_reserve_only_once():
     account()
     post = draft()

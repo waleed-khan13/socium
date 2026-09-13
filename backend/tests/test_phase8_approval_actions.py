@@ -337,6 +337,70 @@ def test_remote_actions_are_durable_expiring_and_replay_protected(
     assert "restarted" in recovered[1]
 
 
+def test_remote_approval_of_manual_draft_queues_immediate_publish(
+    client,
+    generated_content,
+    monkeypatch,
+) -> None:
+    from app.approval_actions import apply_remote_approval_action
+    from app.config import get_settings
+    from app.store import create_approval_action, record_approval_sent
+
+    resolved: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        "app.approval_actions.resolve_publish_target",
+        lambda channel, browser_account_id=None: resolved.append((channel, browser_account_id)),
+    )
+    _configure_provider(client)
+    post = _generate(client, "Approve and publish from Slack")
+    slack = create_approval_action(post["id"], post["revision"], "slack")
+    record_approval_sent(slack["id"], "slack-message")
+
+    result = asyncio.run(apply_remote_approval_action(slack["id"], "approve", "slack"))
+
+    assert result.post["status"] == "approved"
+    assert "queued to publish now" in result.message
+    assert resolved == [("linkedin", None)]
+    with sqlite3.connect(get_settings().database_path) as connection:
+        jobs = connection.execute(
+            "SELECT kind FROM local_jobs WHERE idempotency_key = ?",
+            (f"post.publish:{post['id']}:{post['revision']}",),
+        ).fetchall()
+    # The live test scheduler may already have claimed or retried the job; creation is the contract.
+    assert jobs == [("post.publish",)]
+
+
+def test_remote_approval_without_ready_destination_only_approves(
+    client,
+    generated_content,
+    monkeypatch,
+) -> None:
+    from app.approval_actions import apply_remote_approval_action
+    from app.config import get_settings
+    from app.errors import AppError
+    from app.store import create_approval_action, record_approval_sent
+
+    def not_ready(*_args, **_kwargs):
+        raise AppError("Configure a verified LinkedIn Member connector first.")
+
+    monkeypatch.setattr("app.approval_actions.resolve_publish_target", not_ready)
+    _configure_provider(client)
+    post = _generate(client, "Approve without a LinkedIn connector")
+    telegram = create_approval_action(post["id"], post["revision"], "telegram")
+    record_approval_sent(telegram["id"], "telegram-message")
+
+    result = asyncio.run(apply_remote_approval_action(telegram["id"], "approve", "telegram"))
+
+    assert result.post["status"] == "approved"
+    assert "not published" in result.message
+    with sqlite3.connect(get_settings().database_path) as connection:
+        jobs = connection.execute(
+            "SELECT COUNT(*) FROM local_jobs WHERE idempotency_key = ?",
+            (f"post.publish:{post['id']}:{post['revision']}",),
+        ).fetchone()
+    assert jobs == (0,)
+
+
 def test_slack_and_telegram_approval_share_one_terminal_decision(
     client,
     generated_content,

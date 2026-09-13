@@ -308,7 +308,7 @@ def recover_interrupted_attempts() -> None:
     with write_session() as session:
         for job in session.scalars(
             select(LocalJob).where(
-                LocalJob.kind.in_(["social.connect", "social.verify"]),
+                LocalJob.kind.in_(["social.connect", "social.verify", "social.browser.install"]),
                 LocalJob.status.in_(["queued", "retrying", "running"]),
             )
         ):
@@ -317,7 +317,11 @@ def recover_interrupted_attempts() -> None:
             job.locked_at = None
             job.lease_token = None
             job.lease_expires_at = None
-            job.progress_message = "Socium restarted. Open login or verify again when ready."
+            job.progress_message = (
+                "Socium restarted. Install the publishing browser again when ready."
+                if job.kind == "social.browser.install"
+                else "Socium restarted. Open login or verify again when ready."
+            )
         for attempt in session.scalars(
             select(BrowserPublishAttempt).where(
                 BrowserPublishAttempt.status.in_(["preparing", "click_intent"]),
