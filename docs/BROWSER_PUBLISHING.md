@@ -41,7 +41,7 @@ Later slices: user-approved live LinkedIn validation; policy-reviewed Instagram/
 ## Using the v1.4.2 experimental browser mode
 
 1. Open **Integrations → Publish through your browser**.
-2. Install the optional Chromium download. The driver is bundled with Socium; Chromium is stored in the selected models directory under `browser-runtime`. The download has a cancellable status indicator (not a fabricated percentage) and a 30-minute worker limit. Linux can require Chromium OS libraries; visible login needs a desktop session, so this flow is not a headless Docker login solution.
+2. Install the optional Chromium download. The driver is bundled with Socium; Chromium is stored in the selected models directory under `browser-runtime`. The download has a cancellable status indicator (not a fabricated percentage) and a 30-minute worker limit. Linux can require Chromium OS libraries; visible login needs a desktop session, not a headless environment.
 3. Review the platform-risk notice, add an account label and choose **Open login**. Complete login/MFA yourself; this does not reuse your everyday browser cookies. The initial adapter requires an English LinkedIn interface.
 4. After verification choose **Use for new drafts**. New LinkedIn drafts freeze this account and public profile identity. Existing API drafts keep their original destination.
 5. Generate and approve the content kit, then publish or schedule it. The usual Slack/Telegram approvals also apply; their API credentials are still required. Local AI avoids cloud AI API charges; choosing a cloud AI provider does not make that provider free.

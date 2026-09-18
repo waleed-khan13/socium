@@ -20,12 +20,12 @@ The implementation order, fixed boundaries, storage and recovery rules, and rele
 - [x] Structured content generation with revision-bound approval.
 - [x] Telegram notifications and Telegram publishing.
 - [x] Encrypted connector secrets and local persistence.
-- [x] Checksummed one-command native installation plus loopback-only source and Docker packaging.
+- [x] Checksummed one-command native installation plus loopback-only source development.
 - [x] Automated Playwright UI, WCAG A/AA, mobile keyboard, and real localhost workflow tests.
 
 ## Milestone 1 — local application core (complete)
 
-- [x] FastAPI service bound only to `127.0.0.1` or the private Compose network.
+- [x] FastAPI service bound only to loopback.
 - [x] SQLite WAL database with SQLAlchemy models and Alembic migrations.
 - [x] One-time import from the v0.2 JSON store without exposing saved secrets.
 - [x] Next.js same-origin proxy so the browser exposes only port `3000`.

@@ -31,4 +31,4 @@ If a configured data drive is disconnected, Socium reports `Data drive unavailab
 
 Uninstall preserves the SQLite database, encryption key, media, and exports by default. Add `--purge-data` only when that local business data should be permanently removed.
 
-Docker Compose remains an optional deployment path and is not required by this CLI.
+The CLI installs the same native localhost runtime as the desktop installers; no container engine is involved.

@@ -2,6 +2,13 @@
 
 All notable user-facing changes are documented here.
 
+## Unreleased
+
+### Removed
+
+- Removed unused Dockerfiles, Compose configuration, container build ignores, and container deployment instructions. Native installers, the npm CLI, and source development remain supported; existing published releases and user data are unchanged.
+- Removed the Docker-only `api` upstream hostname from the Next.js proxy. API forwarding now accepts loopback hosts only.
+
 ## 1.4.3 - 2026-09-13
 
 ### Changed

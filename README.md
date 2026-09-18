@@ -248,14 +248,6 @@ The native launcher waits for FastAPI migrations and health checks before starti
 
 Back up the complete data directory together. `socium.db` needs its matching `master.key` to decrypt connector secrets. If `socium.json` from v0.2 exists when SQLite is first created, its settings, posts, audit events, and encrypted secrets are imported automatically while the JSON file remains untouched.
 
-## Optional Docker localhost run
-
-```bash
-docker compose up --build
-```
-
-Compose runs the FastAPI service on a private container network and exposes only `127.0.0.1:3000`. Application data lives in the `socium-data` volume. When connecting Ollama running on the host, use `http://host.docker.internal:11434` in provider settings.
-
 ## Telegram approvals without hosting
 
 Telegram notifications and publishing are outbound API calls. Approval buttons use Telegram `getUpdates` long polling from the local worker, so no domain, public HTTPS endpoint, tunnel, webhook, or Socium cloud service is required.
@@ -323,7 +315,6 @@ pnpm check
 - `docs/CODE_SIGNING_POLICY.md` — signing scope, maintainer roles, approval, release verification, and privacy references.
 - `docs/TERMS.md` and `docs/PRIVACY.md` — localhost product/provider terms and data-flow disclosure.
 - `design-system/socium/MASTER.md` — persisted visual system.
-- `Dockerfile`, `backend/Dockerfile`, and `compose.yaml` — loopback-only container packaging.
 
 ## Safety boundary
 

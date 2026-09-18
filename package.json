@@ -23,6 +23,7 @@
     "start": "node scripts/start.mjs",
     "cli": "pnpm --filter socium socium",
     "cli:test": "pnpm --filter socium test",
+    "proxy:test": "node --test scripts/test-api-proxy.mjs",
     "broker:test": "pnpm --filter @socium/connect-broker test",
     "backend:sync": "uv sync --project backend",
     "backend:bundle": "uv run --directory backend pyinstaller --clean --noconfirm socium-api.spec",
@@ -45,7 +46,7 @@
     "release:verify": "node scripts/verify-release-version.mjs",
     "security:audit": "node scripts/security-audit.mjs",
     "runtime:sync": "npm ci --omit=dev --ignore-scripts --prefix packaging/web-runtime",
-    "check": "pnpm typecheck && pnpm lint && pnpm cli:test && pnpm broker:test && pnpm backend:lint && pnpm backend:test && pnpm test:e2e && pnpm build"
+    "check": "pnpm typecheck && pnpm lint && pnpm proxy:test && pnpm cli:test && pnpm broker:test && pnpm backend:lint && pnpm backend:test && pnpm test:e2e && pnpm build"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

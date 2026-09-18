@@ -146,4 +146,4 @@ Lead intelligence and Local SEO remain preview workspaces in v1. Start them expl
 
 Every GitHub Release shows three recommended Windows/macOS/Linux native downloads and retains architecture-specific archives for the command-line installer and updater. Native-installer and archive checksums are stored in `socium-manifest.json`, so users do not need separate `.sha256` downloads. The CLI verifies the published archive checksum before extraction and validates the version/target metadata inside the archive. It refuses plain HTTP release downloads by default. The dashboard checks no more than once per day while idle and sends only the installed version, operating system, and CPU architecture needed to select a release.
 
-Docker Compose remains available as an optional advanced deployment path. It is not used by the native or command-line installer.
+Use the native installer, the npm CLI, or the source-development instructions above. Container deployment files are no longer maintained in this repository.

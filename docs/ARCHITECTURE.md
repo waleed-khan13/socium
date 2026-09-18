@@ -4,7 +4,7 @@
 
 Socium is a single-operator, localhost-only application. The project does not operate a cloud control plane, hosted database, multi-tenant API, or SaaS account system. Internet access is used only when the operator explicitly connects an AI, approval, lead, analytics, or publishing provider.
 
-All application services bind to loopback in a native install. Docker Compose exposes only the web console on `127.0.0.1:3000`; the API remains on the private Compose network.
+All application services bind to loopback. The browser reaches FastAPI through the Next.js same-origin proxy; both services run directly on the user's computer.
 
 ## Stack
 
@@ -20,7 +20,7 @@ All application services bind to loopback in a native install. Docker Compose ex
 | Cloud AI | OpenAI, Gemini, Anthropic, OpenRouter, NVIDIA, and generic compatible adapters | Ready-made official endpoints with user-owned credentials plus an explicit advanced custom option. |
 | Image AI | Capability of the verified primary AI connection | One setup and credential drives copy plus images; no second provider configuration surface. |
 | Desktop integration | Small Rust helper on Windows | Native tray, folder picker, `.lnk` shortcuts, and login startup without PowerShell at runtime. |
-| Packaging | Native launcher plus optional Docker Compose | A normal localhost install first, with a reproducible container option. |
+| Packaging | Native installers and the npm CLI | Bundled localhost runtimes without a container engine or database server. |
 
 ## Process layout
 
@@ -36,7 +36,7 @@ Browser → 127.0.0.1:3000 (Next.js)
           AI, Telegram, Slack, social and data APIs
 ```
 
-The browser never calls the internal API port directly. This avoids cross-origin configuration and keeps a single public localhost surface. Native startup launches the API before the web console. Compose places both processes on an internal network and publishes only port `3000` to loopback.
+The browser never calls the internal API port directly. This avoids cross-origin configuration and keeps a single public localhost surface. Native startup launches the API before the web console. Both ports fall back to available localhost ports when the preferred ports are occupied; the proxy accepts only loopback upstream hosts.
 
 ## Runtime rules
 
@@ -187,4 +187,4 @@ The primary stable installation uses the platform-native `.exe`, `.dmg`, or `.Ap
 
 Mutable state is never placed inside the versioned runtime. SQLite, `master.key`, media, exports, logs, checksum-backed backups, and the installation record live outside the active version under the native application-data root documented in [INSTALLATION.md](INSTALLATION.md). A stable launcher reads that record and starts the controller from the active version; the controller launches the bundled Node/FastAPI runtime on loopback and exposes a random-token loopback control endpoint to the backend and native tray only. On Windows, a signed-release-ready Rust helper owns the tray, native folder dialog, shortcuts, and login-start entry; Socium does not launch PowerShell for these runtime operations. The helper reads the random control token from the local runtime-state file instead of exposing it in a process argument. `socium update` backs up data, verifies and stages the new runtime, runs its migrations behind a temporary health endpoint, and atomically retains one rollback target. Normal uninstall removes runtimes and native launchers while preserving data unless the operator explicitly adds `--purge-data`.
 
-Source development (`pnpm install`, `pnpm backend:sync`, `pnpm dev`) and Docker Compose remain supported secondary paths. Every mode opens only `http://127.0.0.1:3000`. The application continues working offline for local data, drafts, dashboard approvals, and Ollama; provider-backed features naturally require their provider connection.
+Source development (`pnpm install`, `pnpm backend:sync`, `pnpm dev`) remains a supported secondary path. The dashboard opens on loopback, using port `3000` when available. The application continues working offline for local data, drafts, dashboard approvals, and Ollama; provider-backed features naturally require their provider connection.

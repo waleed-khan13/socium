@@ -11,7 +11,7 @@ Version 1.0 is the stable, localhost-only social publishing edition. Its promise
 - Immediate and scheduled publishing for Telegram, WordPress, Facebook Pages, Instagram Professional single images, LinkedIn Members, and access-approved LinkedIn Company Pages.
 - Revision invalidation, idempotent publishing, retries, restart recovery, and a local audit trail.
 - WhatsApp Cloud approved-template review notifications. Approval still happens in the dashboard, Telegram, or Slack.
-- Checksummed one-command native installation on Windows, macOS, and Linux; source and Docker Compose runs remain available for contributors and advanced operators.
+- Checksummed one-command native installation on Windows, macOS, and Linux; source runs remain available for contributors and advanced operators.
 
 ## Explicit v1 limitations
 
@@ -42,7 +42,7 @@ A v1 release candidate is acceptable only when all of the following pass from a 
 3. The default navigation does not expose Labs modules.
 4. The API reports edition `social-v1`, Labs disabled, version `1.0.5`, loopback mode, and SQLite persistence.
 5. The real localhost browser workflow proves generation, edit invalidation, approval, immediate publishing, scheduling, media handling, and durable image generation against deterministic provider stand-ins.
-6. The installed native runtime boots its bundled FastAPI executable, applies SQLite migrations, serves the Next.js console through loopback, and passes `/api/health`; the optional Docker launcher preserves the same network boundary.
+6. The installed native runtime boots its bundled FastAPI executable, applies SQLite migrations, serves the Next.js console through loopback, and passes `/api/health`.
 
 ## Release sequence
 

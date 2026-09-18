@@ -8,7 +8,6 @@ type RouteContext = {
 };
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
-const API_UPSTREAM_HOSTS = new Set([...LOOPBACK_HOSTS, "api"]);
 
 function isLoopbackHost(hostname: string) {
   return LOOPBACK_HOSTS.has(hostname.toLowerCase());
@@ -18,14 +17,14 @@ function localApiBase(value: string) {
   const url = new URL(value);
   if (
     url.protocol !== "http:"
-    || !API_UPSTREAM_HOSTS.has(url.hostname.toLowerCase())
+    || !isLoopbackHost(url.hostname)
     || url.username
     || url.password
     || url.search
     || url.hash
   ) {
     throw new Error(
-      "SOCIUM_API_URL must target localhost or the bundled Docker API without credentials or query data.",
+      "SOCIUM_API_URL must target localhost without credentials or query data.",
     );
   }
   return url;
